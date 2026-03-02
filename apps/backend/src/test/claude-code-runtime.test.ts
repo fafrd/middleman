@@ -218,6 +218,22 @@ describe('ClaudeCodeRuntime', () => {
       },
     })
 
+    expect(bridgeMockState.buildClaudeCodeMcpServer).toHaveBeenCalledTimes(1)
+    const bridgeBuildCall = bridgeMockState.buildClaudeCodeMcpServer.mock.calls.at(0) as
+      | [Array<{ name: string }>, { serverName: string }]
+      | undefined
+    expect(bridgeBuildCall).toBeDefined()
+    expect(bridgeBuildCall?.[0]).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: 'list_agents' }),
+        expect.objectContaining({ name: 'send_message_to_agent' }),
+      ]),
+    )
+    expect(bridgeBuildCall?.[1]).toEqual({
+      serverName: 'middleman-swarm',
+    })
+    expect(bridgeMockState.getClaudeCodeAllowedToolNames).toHaveBeenCalledTimes(1)
+
     const queryParams = sdkMockState.lastQueryParams
     expect(queryParams?.options?.permissionMode).toBe('bypassPermissions')
     expect(queryParams?.options?.allowDangerouslySkipPermissions).toBe(true)
@@ -354,7 +370,7 @@ describe('ClaudeCodeRuntime', () => {
           {
             type: 'tool_use',
             id: 'tool-call-1',
-            name: 'send_message_to_agent',
+            name: 'mcp__middleman-swarm__send_message_to_agent',
             input: {
               targetAgentId: 'worker-2',
               message: 'hello',
@@ -370,7 +386,7 @@ describe('ClaudeCodeRuntime', () => {
     query.push({
       type: 'tool_progress',
       tool_use_id: 'tool-call-1',
-      tool_name: 'send_message_to_agent',
+      tool_name: 'mcp__middleman-swarm__send_message_to_agent',
       parent_tool_use_id: null,
       elapsed_time_seconds: 1,
       uuid: 'progress-1',
@@ -384,7 +400,6 @@ describe('ClaudeCodeRuntime', () => {
         content: '',
       },
       parent_tool_use_id: 'tool-call-1',
-      isSynthetic: true,
       tool_use_result: {
         status: 'completed',
       },
@@ -432,7 +447,7 @@ describe('ClaudeCodeRuntime', () => {
         },
         {
           type: 'tool_execution_start',
-          toolName: 'send_message_to_agent',
+          toolName: 'mcp__middleman-swarm__send_message_to_agent',
           toolCallId: 'tool-call-1',
           args: {
             targetAgentId: 'worker-2',
@@ -441,7 +456,7 @@ describe('ClaudeCodeRuntime', () => {
         },
         {
           type: 'tool_execution_update',
-          toolName: 'send_message_to_agent',
+          toolName: 'mcp__middleman-swarm__send_message_to_agent',
           toolCallId: 'tool-call-1',
           partialResult: {
             elapsedTimeSeconds: 1,
@@ -450,7 +465,7 @@ describe('ClaudeCodeRuntime', () => {
         },
         {
           type: 'tool_execution_end',
-          toolName: 'send_message_to_agent',
+          toolName: 'mcp__middleman-swarm__send_message_to_agent',
           toolCallId: 'tool-call-1',
           result: {
             status: 'completed',

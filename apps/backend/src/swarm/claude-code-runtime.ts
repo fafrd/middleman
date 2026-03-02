@@ -444,7 +444,6 @@ export class ClaudeCodeRuntime implements SwarmAgentRuntime {
     }
 
     if (
-      message.isSynthetic === true &&
       typeof message.parent_tool_use_id === "string" &&
       message.parent_tool_use_id.length > 0 &&
       message.tool_use_result !== undefined

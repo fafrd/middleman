@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { ToolDefinition } from '@mariozechner/pi-coding-agent'
+import { buildSwarmTools, type SwarmToolHost } from '../swarm/swarm-tools.js'
+import type { AgentDescriptor } from '../swarm/types.js'
 import {
   buildClaudeCodeMcpServer,
   CLAUDE_CODE_MCP_SERVER_NAME,
@@ -139,5 +141,61 @@ describe('buildClaudeCodeMcpServer', () => {
 
     expect(killAgentResult.isError).toBe(true)
     expect(killAgentResult.content[0].text).toContain('Tool kill_agent failed: blocked')
+  })
+
+  it('wires MCP handlers through swarm tools into host callbacks', async () => {
+    const descriptor: AgentDescriptor = {
+      agentId: 'manager',
+      displayName: 'Manager',
+      role: 'manager',
+      managerId: 'manager',
+      status: 'idle',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+      cwd: '/tmp/swarm',
+      model: {
+        provider: 'anthropic-claude-code',
+        modelId: 'claude-opus-4-6',
+        thinkingLevel: 'xhigh',
+      },
+      sessionFile: '/tmp/swarm/manager.jsonl',
+    }
+
+    const listAgents = vi.fn(() => [descriptor])
+    const sendMessage = vi.fn(async () => ({
+      targetAgentId: 'worker-1',
+      deliveryId: 'delivery-1',
+      acceptedMode: 'prompt' as const,
+    }))
+
+    const host: SwarmToolHost = {
+      listAgents,
+      sendMessage,
+      spawnAgent: vi.fn(async () => descriptor),
+      killAgent: vi.fn(async () => {}),
+      publishToUser: async () => ({
+        targetContext: {
+          channel: 'web' as const,
+        },
+      }),
+    }
+
+    const server = buildClaudeCodeMcpServer(buildSwarmTools(host, descriptor))
+    const registeredTools = (server.instance as any)._registeredTools
+
+    const listResult = await registeredTools.list_agents.handler({}, {})
+    expect(listAgents).toHaveBeenCalledTimes(1)
+    expect(listResult.content[0]?.text).toContain('"agentId": "manager"')
+
+    const sendResult = await registeredTools.send_message_to_agent.handler(
+      {
+        targetAgentId: 'worker-1',
+        message: 'hello',
+      },
+      {},
+    )
+    expect(sendMessage).toHaveBeenCalledTimes(1)
+    expect(sendMessage).toHaveBeenCalledWith('manager', 'worker-1', 'hello', undefined)
+    expect(sendResult.content[0]?.text).toContain('Queued message for worker-1')
   })
 })

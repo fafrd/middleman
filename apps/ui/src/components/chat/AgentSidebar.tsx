@@ -27,6 +27,15 @@ type AgentLiveStatus = {
   pendingCount: number
 }
 
+function ClaudeCodeIconPair({ className }: { className?: string }) {
+  return (
+    <span className="inline-flex items-center -space-x-1" aria-hidden="true">
+      <img src="/agents/claude-logo.svg" alt="" className={cn('size-3 shrink-0 object-contain', className)} />
+      <img src="/agents/claude-logo.svg" alt="" className={cn('size-3 shrink-0 object-contain opacity-70', className)} />
+    </span>
+  )
+}
+
 function getAgentLiveStatus(
   agent: AgentDescriptor,
   statuses: Record<string, { status: AgentStatus; pendingCount: number; contextUsage?: AgentContextUsage }>,
@@ -73,8 +82,8 @@ function RuntimeIcon({ agent, className }: { agent: AgentDescriptor; className?:
     )
   }
 
-  if (preset === 'claude-code') {
-    return <img src="/agents/claude-logo.svg" alt="" aria-hidden="true" className={className} />
+  if (preset === 'claude-code' || provider === 'anthropic-claude-code') {
+    return <ClaudeCodeIconPair className={className} />
   }
 
   if (provider.includes('anthropic') || provider.includes('claude')) {

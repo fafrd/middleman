@@ -136,6 +136,10 @@ describe('AgentSidebar', () => {
     expect(getByText(container, 'claude-code')).toBeTruthy()
     expect(container.querySelectorAll('img[src="/pi-logo.svg"]').length).toBeGreaterThanOrEqual(2)
     expect(container.querySelector('img[src="/agents/codex-logo.svg"]')).toBeTruthy()
+
+    const claudeCodeRow = getByText(container, 'worker-claude-code').closest('button') as HTMLButtonElement
+    expect(claudeCodeRow).toBeTruthy()
+    expect(claudeCodeRow.querySelectorAll('img[src="/agents/claude-logo.svg"]').length).toBe(2)
   })
 
   it('keeps manager selection behavior working while collapse state changes', () => {
