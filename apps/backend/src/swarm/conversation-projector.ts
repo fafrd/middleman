@@ -55,6 +55,15 @@ export class ConversationProjector {
     return history.slice(startIndex).map((entry) => ({ ...entry }));
   }
 
+  getVisibleTranscript(agentId: string, limit?: number): ConversationMessageEvent[] {
+    const history = this.getOrLoadConversationHistory(agentId);
+    const visibleEntries = history.filter(isVisibleConversationEntry);
+    const normalizedLimit =
+      typeof limit === "number" && Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : undefined;
+    const startIndex = normalizedLimit ? Math.max(0, visibleEntries.length - normalizedLimit) : 0;
+    return visibleEntries.slice(startIndex).map((entry) => ({ ...entry }));
+  }
+
   resetConversationHistory(agentId: string): void {
     this.deps.conversationEntriesByAgentId.set(agentId, []);
   }
@@ -445,7 +454,7 @@ function buildManagerErrorConversationText(options: {
   return `⚠️ Manager reply failed. ${MANAGER_ERROR_GENERIC_HINT}`;
 }
 
-function isVisibleConversationEntry(entry: ConversationEntryEvent): boolean {
+function isVisibleConversationEntry(entry: ConversationEntryEvent): entry is ConversationMessageEvent {
   return entry.type === "conversation_message" && (entry.source === "user_input" || entry.source === "speak_to_user");
 }
 
