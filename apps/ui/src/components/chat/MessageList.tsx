@@ -21,6 +21,7 @@ interface MessageListProps {
   activeAgentId?: string | null
   onSuggestionClick?: (suggestion: string) => void
   onArtifactClick?: (artifact: ArtifactReference) => void
+  wsUrl?: string
 }
 
 const AUTO_SCROLL_THRESHOLD_PX = 100
@@ -209,6 +210,7 @@ export function MessageList({
   activeAgentId,
   onSuggestionClick,
   onArtifactClick,
+  wsUrl,
 }: MessageListProps) {
   const scrollContainerRef = useRef<HTMLDivElement | null>(null)
   const bottomRef = useRef<HTMLDivElement | null>(null)
@@ -311,6 +313,7 @@ export function MessageList({
                   key={entry.id}
                   message={entry.message}
                   onArtifactClick={onArtifactClick}
+                  wsUrl={wsUrl}
                 />
               )
             }

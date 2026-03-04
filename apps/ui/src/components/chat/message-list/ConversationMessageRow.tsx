@@ -7,11 +7,13 @@ import type { ConversationMessageEntry } from './types'
 interface ConversationMessageRowProps {
   message: ConversationMessageEntry
   onArtifactClick?: (artifact: ArtifactReference) => void
+  wsUrl?: string
 }
 
 export function ConversationMessageRow({
   message,
   onArtifactClick,
+  wsUrl,
 }: ConversationMessageRowProps) {
   const normalizedText = message.text.trim()
   const hasText = normalizedText.length > 0 && normalizedText !== '.'
@@ -36,7 +38,7 @@ export function ConversationMessageRow({
               {normalizedText}
             </p>
           ) : null}
-          <MessageAttachments attachments={attachments} isUser={false} />
+          <MessageAttachments attachments={attachments} isUser={false} wsUrl={wsUrl} />
         </div>
         {timestampLabel || sourceContext ? (
           <div className="mt-1 flex items-center gap-1.5 text-[11px] text-amber-700/80 dark:text-amber-300/80">
@@ -53,7 +55,7 @@ export function ConversationMessageRow({
       <div className="flex justify-end">
         <div className="max-w-[85%] rounded-lg rounded-tr-sm bg-primary px-3 py-2 text-primary-foreground">
           <div className="space-y-2">
-            <MessageAttachments attachments={attachments} isUser />
+            <MessageAttachments attachments={attachments} isUser wsUrl={wsUrl} />
             {hasText ? (
               <p className="whitespace-pre-wrap break-words text-sm leading-relaxed">
                 {normalizedText}
@@ -80,7 +82,7 @@ export function ConversationMessageRow({
       {hasText ? (
         <MarkdownMessage content={normalizedText} onArtifactClick={onArtifactClick} />
       ) : null}
-      <MessageAttachments attachments={attachments} isUser={false} />
+      <MessageAttachments attachments={attachments} isUser={false} wsUrl={wsUrl} />
       {timestampLabel || sourceContext ? (
         <div className="flex items-center gap-1.5 text-[11px] leading-none text-muted-foreground/70">
           <SourceBadge sourceContext={sourceContext} />
