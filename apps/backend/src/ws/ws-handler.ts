@@ -9,6 +9,7 @@ import { handleManagerCommand } from "./routes/manager-routes.js";
 
 const BOOTSTRAP_SUBSCRIPTION_AGENT_ID = "__bootstrap_manager__";
 const BOOTSTRAP_HISTORY_LIMIT = 200;
+const BOOTSTRAP_HISTORY_TRUNCATED_CODE = "HISTORY_TRUNCATED";
 const MAX_WS_EVENT_BYTES = 5 * 1024 * 1024;
 const MAX_WS_BUFFERED_AMOUNT_BYTES = 5 * 1024 * 1024;
 
@@ -281,19 +282,72 @@ export class WsHandler {
       type: "agents_snapshot",
       agents: this.swarmManager.listAgents()
     });
-    this.send(socket, {
-      type: "conversation_history",
-      agentId: targetAgentId,
-      messages: this.swarmManager.getConversationHistory(targetAgentId, {
-        limit: BOOTSTRAP_HISTORY_LIMIT
-      })
-    });
+    this.sendBootstrapConversationHistory(socket, targetAgentId);
 
     const managerContextId = this.resolveManagerContextAgentId(targetAgentId);
     if (this.integrationRegistry && managerContextId) {
       this.send(socket, this.integrationRegistry.getStatus(managerContextId, "slack"));
       this.send(socket, this.integrationRegistry.getStatus(managerContextId, "telegram"));
     }
+  }
+
+  private sendBootstrapConversationHistory(socket: WebSocket, targetAgentId: string): void {
+    const transcriptMessages = this.swarmManager.getVisibleTranscript(targetAgentId, {
+      limit: BOOTSTRAP_HISTORY_LIMIT
+    });
+
+    if (transcriptMessages.length === 0) {
+      this.send(socket, {
+        type: "conversation_history",
+        agentId: targetAgentId,
+        messages: []
+      });
+      return;
+    }
+
+    const totalCount = transcriptMessages.length;
+    let sendCount = totalCount;
+
+    while (sendCount > 0) {
+      const messages = transcriptMessages.slice(totalCount - sendCount);
+      const event: ServerEvent = {
+        type: "conversation_history",
+        agentId: targetAgentId,
+        messages
+      };
+
+      if (this.isEventWithinSizeLimit(event)) {
+        this.send(socket, event);
+
+        if (sendCount < totalCount) {
+          this.sendBootstrapHistoryTruncatedNotice(socket, targetAgentId, totalCount, sendCount);
+        }
+        return;
+      }
+
+      const halvedCount = Math.floor(sendCount / 2);
+      sendCount = halvedCount < sendCount ? halvedCount : sendCount - 1;
+    }
+
+    this.send(socket, {
+      type: "conversation_history",
+      agentId: targetAgentId,
+      messages: []
+    });
+    this.sendBootstrapHistoryTruncatedNotice(socket, targetAgentId, totalCount, 0);
+  }
+
+  private sendBootstrapHistoryTruncatedNotice(
+    socket: WebSocket,
+    targetAgentId: string,
+    originalCount: number,
+    deliveredCount: number
+  ): void {
+    this.send(socket, {
+      type: "error",
+      code: BOOTSTRAP_HISTORY_TRUNCATED_CODE,
+      message: `Conversation history was truncated for ${targetAgentId}: loaded ${deliveredCount} of ${originalCount} transcript messages due payload limits.`
+    });
   }
 
   private resolveDefaultSubscriptionAgentId(): string {
@@ -390,5 +444,14 @@ export class WsHandler {
     }
 
     socket.send(serialized);
+  }
+
+  private isEventWithinSizeLimit(event: ServerEvent): boolean {
+    try {
+      const serialized = JSON.stringify(event);
+      return Buffer.byteLength(serialized, "utf8") <= MAX_WS_EVENT_BYTES;
+    } catch {
+      return false;
+    }
   }
 }

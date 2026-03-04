@@ -1075,7 +1075,7 @@ describe('SwarmWebSocketServer', () => {
     await server.stop()
   })
 
-  it('applies bootstrap history limits to visible transcript messages and keeps interleaved raw events', async () => {
+  it('applies bootstrap history limits using transcript-only bootstrap payloads', async () => {
     const port = await getAvailablePort()
     const config = await makeTempConfig(port)
 
@@ -1117,33 +1117,70 @@ describe('SwarmWebSocketServer', () => {
     const historyEvent = await waitForEvent(events, (event) => event.type === 'conversation_history')
     expect(historyEvent.type).toBe('conversation_history')
     if (historyEvent.type === 'conversation_history') {
-      const visibleMessages = historyEvent.messages.filter(
-        (entry) =>
-          entry.type === 'conversation_message' &&
-          (entry.source === 'user_input' || entry.source === 'speak_to_user'),
-      )
+      expect(historyEvent.messages).toHaveLength(200)
+      expect(historyEvent.messages.every((entry) => entry.type === 'conversation_message')).toBe(true)
 
-      expect(visibleMessages).toHaveLength(200)
-      expect(visibleMessages[0]?.text).toBe('visible-reply-5')
-      expect(visibleMessages.at(-1)?.text).toBe('visible-reply-204')
-
-      expect(historyEvent.messages).toHaveLength(400)
+      const transcriptMessages = historyEvent.messages.filter((entry) => entry.type === 'conversation_message')
+      expect(transcriptMessages[0]?.text).toBe('visible-reply-5')
+      expect(transcriptMessages.at(-1)?.text).toBe('visible-reply-204')
       expect(
-        historyEvent.messages.some(
-          (entry) => entry.type === 'conversation_log' && entry.toolCallId === 'tool-5' && entry.text === 'tool-log-5',
+        transcriptMessages.every(
+          (entry) => entry.source === 'user_input' || entry.source === 'speak_to_user',
         ),
       ).toBe(true)
-      expect(
-        historyEvent.messages.some(
-          (entry) => entry.type === 'conversation_log' && entry.toolCallId === 'tool-4' && entry.text === 'tool-log-4',
-        ),
-      ).toBe(false)
+    }
 
-      const firstEntry = historyEvent.messages[0]
-      expect(firstEntry.type).toBe('conversation_message')
-      if (firstEntry.type === 'conversation_message') {
-        expect(firstEntry.text).toBe('visible-reply-5')
-      }
+    client.close()
+    await once(client, 'close')
+    await server.stop()
+  })
+
+  it('truncates oversized bootstrap history payloads and emits a truncation error event', async () => {
+    const port = await getAvailablePort()
+    const config = await makeTempConfig(port)
+
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const largeChunk = 'x'.repeat(400_000)
+    for (let index = 0; index < 20; index += 1) {
+      await manager.publishToUser('manager', `${index}:${largeChunk}`, 'speak_to_user')
+    }
+
+    const server = new SwarmWebSocketServer({
+      swarmManager: manager,
+      host: config.host,
+      port: config.port,
+      allowNonManagerSubscriptions: config.allowNonManagerSubscriptions,
+    })
+
+    await server.start()
+
+    const client = new WebSocket(`ws://${config.host}:${config.port}`)
+    const events: ServerEvent[] = []
+    client.on('message', (raw) => {
+      events.push(JSON.parse(raw.toString()) as ServerEvent)
+    })
+
+    await once(client, 'open')
+    client.send(JSON.stringify({ type: 'subscribe' }))
+
+    const historyEvent = await waitForEvent(events, (event) => event.type === 'conversation_history')
+    expect(historyEvent.type).toBe('conversation_history')
+    if (historyEvent.type === 'conversation_history') {
+      expect(historyEvent.messages.length).toBeGreaterThan(0)
+      expect(historyEvent.messages.length).toBeLessThan(20)
+      expect(historyEvent.messages.every((entry) => entry.type === 'conversation_message')).toBe(true)
+    }
+
+    const truncationEvent = await waitForEvent(
+      events,
+      (event) => event.type === 'error' && event.code === 'HISTORY_TRUNCATED',
+    )
+    expect(truncationEvent.type).toBe('error')
+    if (truncationEvent.type === 'error') {
+      expect(truncationEvent.message).toContain('loaded')
+      expect(truncationEvent.message).toContain('payload limits')
     }
 
     client.close()
