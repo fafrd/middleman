@@ -404,6 +404,7 @@ export function IndexPage() {
                   activeAgentId={activeAgentId}
                   onSuggestionClick={handleSuggestionClick}
                   onArtifactClick={handleOpenArtifact}
+                  wsUrl={wsUrl}
                 />
 
                 <MessageInput
