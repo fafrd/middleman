@@ -2,6 +2,8 @@ import type { AgentModelDescriptor, SwarmModelPreset } from "./types.js";
 import { SWARM_MODEL_PRESETS } from "./types.js";
 
 export const DEFAULT_SWARM_MODEL_PRESET: SwarmModelPreset = "pi-codex";
+const CODEX_APP_MODEL_ID = "gpt-5.4";
+const LEGACY_CODEX_APP_MODEL_ID = "default";
 
 const MODEL_PRESET_DESCRIPTORS: Record<SwarmModelPreset, AgentModelDescriptor> = {
   "pi-codex": {
@@ -18,7 +20,7 @@ const MODEL_PRESET_DESCRIPTORS: Record<SwarmModelPreset, AgentModelDescriptor> =
   },
   "codex-app": {
     provider: "openai-codex-app-server",
-    modelId: "default",
+    modelId: CODEX_APP_MODEL_ID,
     thinkingLevel: "xhigh"
   },
   "claude-code": {
@@ -77,7 +79,10 @@ export function inferSwarmModelPresetFromDescriptor(
     return "pi-opus";
   }
 
-  if (provider === "openai-codex-app-server" && modelId === "default") {
+  if (
+    provider === "openai-codex-app-server" &&
+    (modelId === CODEX_APP_MODEL_ID || modelId === LEGACY_CODEX_APP_MODEL_ID)
+  ) {
     return "codex-app";
   }
 

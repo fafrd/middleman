@@ -1963,7 +1963,7 @@ describe('SwarmManager', () => {
     })
     expect(codexAppManager.model).toEqual({
       provider: 'openai-codex-app-server',
-      modelId: 'default',
+      modelId: 'gpt-5.4',
       thinkingLevel: 'xhigh',
     })
     expect(claudeCodeManager.model).toEqual({
@@ -2041,7 +2041,7 @@ describe('SwarmManager', () => {
     })
     expect(codexAppWorker.model).toEqual({
       provider: 'openai-codex-app-server',
-      modelId: 'default',
+      modelId: 'gpt-5.4',
       thinkingLevel: 'xhigh',
     })
     expect(claudeCodeWorker.model).toEqual({

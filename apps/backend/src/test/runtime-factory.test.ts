@@ -62,7 +62,7 @@ describe('RuntimeFactory routing', () => {
     ;(factory as any).createClaudeCodeRuntimeForDescriptor = createClaudeCodeRuntimeForDescriptor
 
     const piDescriptor = makeDescriptor('openai-codex', 'gpt-5.3-codex')
-    const codexDescriptor = makeDescriptor('openai-codex-app-server', 'default')
+    const codexDescriptor = makeDescriptor('openai-codex-app-server', 'gpt-5.4')
     const claudeDescriptor = makeDescriptor('anthropic-claude-code', 'claude-opus-4-6')
 
     await expect(factory.createRuntimeForDescriptor(piDescriptor, 'pi-system')).resolves.toBe(piRuntime)
