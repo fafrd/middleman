@@ -135,7 +135,7 @@ describe('AgentSidebar', () => {
       agents: [
         manager('manager-pi', { provider: 'openai-codex', modelId: 'gpt-5.3-codex' }),
         worker('worker-opus', 'manager-pi', { provider: 'anthropic', modelId: 'claude-opus-4-6' }),
-        worker('worker-codex', 'manager-pi', { provider: 'openai-codex-app-server', modelId: 'default' }),
+        worker('worker-codex', 'manager-pi', { provider: 'openai-codex-app-server', modelId: 'gpt-5.4' }),
         worker('worker-claude-code', 'manager-pi', { provider: 'anthropic-claude-code', modelId: 'claude-opus-4-6' }),
       ],
     })

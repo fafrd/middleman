@@ -1,5 +1,8 @@
 import type { AgentDescriptor, ManagerModelPreset } from '@middleman/protocol'
 
+const CODEX_APP_MODEL_ID = 'gpt-5.4'
+const LEGACY_CODEX_APP_MODEL_ID = 'default'
+
 export function inferModelPreset(agent: AgentDescriptor): ManagerModelPreset | undefined {
   const provider = agent.model.provider.trim().toLowerCase()
   const modelId = agent.model.modelId.trim().toLowerCase()
@@ -12,7 +15,10 @@ export function inferModelPreset(agent: AgentDescriptor): ManagerModelPreset | u
     return 'pi-opus'
   }
 
-  if (provider === 'openai-codex-app-server' && modelId === 'default') {
+  if (
+    provider === 'openai-codex-app-server' &&
+    (modelId === CODEX_APP_MODEL_ID || modelId === LEGACY_CODEX_APP_MODEL_ID)
+  ) {
     return 'codex-app'
   }
 

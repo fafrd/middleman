@@ -68,7 +68,7 @@ function makeDescriptor(baseDir: string): AgentDescriptor {
     cwd: baseDir,
     model: {
       provider: 'openai-codex-app-server',
-      modelId: 'default',
+      modelId: 'gpt-5.4',
       thinkingLevel: 'xhigh',
     },
     sessionFile: join(baseDir, 'sessions', 'codex-worker.jsonl'),
