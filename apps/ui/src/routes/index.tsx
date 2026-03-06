@@ -29,6 +29,7 @@ import { useVisibleMessages } from '@/hooks/index-page/use-visible-messages'
 import { useContextWindow } from '@/hooks/index-page/use-context-window'
 import { usePendingResponse } from '@/hooks/index-page/use-pending-response'
 import { useFileDrop } from '@/hooks/index-page/use-file-drop'
+import { useDynamicFavicon } from '@/hooks/index-page/use-dynamic-favicon'
 import type {
   ConversationAttachment,
   ManagerModelPreset,
@@ -141,6 +142,12 @@ export function IndexPage() {
       return workerStatus === 'streaming' ? count + 1 : count
     }, 0)
   }, [activeAgent, activeAgentId, state.agents, state.statuses])
+
+  useDynamicFavicon({
+    managerId: activeManagerId,
+    agents: state.agents,
+    statuses: state.statuses,
+  })
 
   const { contextWindowUsage } = useContextWindow({
     activeAgent,
