@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import * as DialogPrimitive from '@radix-ui/react-dialog'
+import { Dialog as DialogPrimitive } from '@base-ui/react/dialog'
 import { ExternalLink, FileCode2, FileImage, FileText, Loader2, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogOverlay, DialogPortal, DialogTitle } from '@/components/ui/dialog'
@@ -173,7 +173,7 @@ export function ArtifactPanel({ artifact, wsUrl, onClose, onArtifactClick }: Art
             isClosing && !isVisible && 'pointer-events-none',
           )}
         />
-        <DialogPrimitive.Content
+        <DialogPrimitive.Popup
           className={cn(
             'fixed right-0 top-0 z-50 flex h-full w-full flex-col',
             'max-md:max-w-full md:max-w-[min(880px,90vw)]',
@@ -184,10 +184,6 @@ export function ArtifactPanel({ artifact, wsUrl, onClose, onArtifactClick }: Art
               ? 'translate-x-0 opacity-100'
               : 'translate-x-[40%] opacity-0',
           )}
-          onEscapeKeyDown={(event) => {
-            event.preventDefault()
-            handleAnimatedClose()
-          }}
         >
           <DialogTitle className="sr-only">{artifact ? `Artifact: ${artifact.fileName}` : 'Artifact panel'}</DialogTitle>
           {/* Header */}
@@ -288,7 +284,7 @@ export function ArtifactPanel({ artifact, wsUrl, onClose, onArtifactClick }: Art
               )}
           </div>
         </ScrollArea>
-        </DialogPrimitive.Content>
+        </DialogPrimitive.Popup>
       </DialogPortal>
     </Dialog>
   )

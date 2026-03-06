@@ -38,40 +38,42 @@ export function ContextWindowIndicator({
 
   return (
     <Tooltip>
-      <TooltipTrigger asChild>
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-8 w-8 shrink-0 text-muted-foreground hover:bg-accent/70 hover:text-foreground"
-          aria-label={`Context window ${percentFull}% full, ${formatTokens(usedTokens)} of ${formatTokens(contextWindow)} tokens used`}
+      <TooltipTrigger
+        render={
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8 shrink-0 text-muted-foreground hover:bg-accent/70 hover:text-foreground"
+            aria-label={`Context window ${percentFull}% full, ${formatTokens(usedTokens)} of ${formatTokens(contextWindow)} tokens used`}
+          />
+        }
+      >
+        <svg
+          viewBox="0 0 20 20"
+          className="size-4 -rotate-90"
+          role="img"
+          aria-hidden="true"
         >
-          <svg
-            viewBox="0 0 20 20"
-            className="size-4 -rotate-90"
-            role="img"
-            aria-hidden="true"
-          >
-            <circle
-              cx="10"
-              cy="10"
-              r={RING_RADIUS}
-              strokeWidth={RING_STROKE_WIDTH}
-              fill="none"
-              className="stroke-muted-foreground/25"
-            />
-            <circle
-              cx="10"
-              cy="10"
-              r={RING_RADIUS}
-              strokeWidth={RING_STROKE_WIDTH}
-              strokeLinecap="round"
-              fill="none"
-              className={progressColorClass}
-              strokeDasharray={RING_CIRCUMFERENCE}
-              strokeDashoffset={progressOffset}
-            />
-          </svg>
-        </Button>
+          <circle
+            cx="10"
+            cy="10"
+            r={RING_RADIUS}
+            strokeWidth={RING_STROKE_WIDTH}
+            fill="none"
+            className="stroke-muted-foreground/25"
+          />
+          <circle
+            cx="10"
+            cy="10"
+            r={RING_RADIUS}
+            strokeWidth={RING_STROKE_WIDTH}
+            strokeLinecap="round"
+            fill="none"
+            className={progressColorClass}
+            strokeDasharray={RING_CIRCUMFERENCE}
+            strokeDashoffset={progressOffset}
+          />
+        </svg>
       </TooltipTrigger>
       <TooltipContent side="bottom" align="end" sideOffset={6} className="px-3 py-2 text-xs">
         <p className="text-muted-foreground">Context window {percentFull}% full</p>

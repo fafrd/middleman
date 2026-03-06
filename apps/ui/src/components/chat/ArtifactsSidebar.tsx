@@ -363,13 +363,13 @@ export function ArtifactsSidebar({
           <TabsList className="h-7 w-full bg-muted/60 p-0.5">
             <TabsTrigger
               value="artifacts"
-              className="h-6 rounded-sm px-2.5 text-[11px] font-medium data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm"
+              className="h-6 rounded-sm px-2.5 text-[11px] font-medium data-active:bg-background data-active:text-foreground data-active:shadow-sm"
             >
               Artifacts
             </TabsTrigger>
             <TabsTrigger
               value="schedules"
-              className="h-6 rounded-sm px-2.5 text-[11px] font-medium data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm"
+              className="h-6 rounded-sm px-2.5 text-[11px] font-medium data-active:bg-background data-active:text-foreground data-active:shadow-sm"
             >
               Schedules
             </TabsTrigger>

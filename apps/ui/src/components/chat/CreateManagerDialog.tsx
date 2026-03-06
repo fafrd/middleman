@@ -120,7 +120,11 @@ export function CreateManagerDialog({
             </Label>
             <Select
               value={newManagerModel}
-              onValueChange={(value) => onModelChange(value as ManagerModelPreset)}
+              onValueChange={(value) => {
+                if (value) {
+                  onModelChange(value as ManagerModelPreset)
+                }
+              }}
               disabled={isCreatingManager || isPickingDirectory}
             >
               <SelectTrigger id="manager-model" className="w-full">

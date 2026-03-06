@@ -434,7 +434,7 @@ export function SettingsIntegrations({
             value={hasSelectedIntegrationManager ? selectedIntegrationManagerId : undefined}
             disabled={managerOptions.length === 0}
             onValueChange={(value) => {
-              setSelectedIntegrationManagerId(value)
+              setSelectedIntegrationManagerId(value ?? '')
               setSlackError(null); setSlackSuccess(null)
               setTelegramError(null); setTelegramSuccess(null)
             }}
