@@ -230,7 +230,7 @@ export function TaskView({
   return (
     <div className="flex min-h-0 flex-1 flex-col bg-background">
       {/* ── Header ── */}
-      <div className="flex h-12 shrink-0 items-center justify-between border-b border-border/50 px-4 sm:px-5">
+      <div className="mb-2 flex h-[62px] shrink-0 items-center justify-between border-b border-border/50 px-4 sm:px-5">
         <div className="flex min-w-0 items-center gap-3">
           <Button
             type="button"
@@ -324,19 +324,16 @@ export function TaskView({
                         }}
                         className="min-w-0 flex-1 text-left"
                       >
-                        <div className="flex items-center gap-2">
-                          <StatusDot status={task.status} />
-                          <span
-                            className={cn(
-                              'truncate text-[13px] font-medium',
-                              task.status === 'completed'
-                                ? 'text-muted-foreground line-through decoration-muted-foreground/40'
-                                : 'text-foreground',
-                            )}
-                          >
-                            {task.title}
-                          </span>
-                        </div>
+                        <span
+                          className={cn(
+                            'truncate text-[13px] font-medium',
+                            task.status === 'completed'
+                              ? 'text-muted-foreground line-through decoration-muted-foreground/40'
+                              : 'text-foreground',
+                          )}
+                        >
+                          {task.title}
+                        </span>
                         <div className="mt-0.5 flex items-center gap-2 pl-4 text-[11px] text-muted-foreground/70">
                           <span className="truncate">{managerName}</span>
                           <span className="shrink-0">&middot;</span>
