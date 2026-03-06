@@ -7,7 +7,7 @@ import type {
   DeliveryMode,
   DirectoryItem,
   MessageSourceContext,
-  UserTask,
+  UserEscalation,
 } from './shared-types.js'
 
 export interface ConversationMessageEvent {
@@ -156,42 +156,30 @@ export interface TelegramStatusEvent {
   botUsername?: string
 }
 
-export interface TasksSnapshotEvent {
-  type: 'tasks_snapshot'
-  tasks: UserTask[]
+export interface EscalationsSnapshotEvent {
+  type: 'escalations_snapshot'
+  escalations: UserEscalation[]
   requestId?: string
 }
 
-export interface TaskCreatedEvent {
-  type: 'task_created'
-  task: UserTask
+export interface EscalationCreatedEvent {
+  type: 'escalation_created'
+  escalation: UserEscalation
 }
 
-export interface TaskUpdatedEvent {
-  type: 'task_updated'
-  task: UserTask
+export interface EscalationUpdatedEvent {
+  type: 'escalation_updated'
+  escalation: UserEscalation
 }
 
-export interface TasksDeletedEvent {
-  type: 'tasks_deleted'
-  taskIds: string[]
+export interface EscalationsDeletedEvent {
+  type: 'escalations_deleted'
+  escalationIds: string[]
 }
 
-export interface TaskCompletionResultEvent {
-  type: 'task_completion_result'
-  task: UserTask
-  requestId?: string
-}
-
-export interface TaskCommentResultEvent {
-  type: 'task_comment_result'
-  task: UserTask
-  requestId?: string
-}
-
-export interface TaskUpdateResultEvent {
-  type: 'task_update_result'
-  task: UserTask
+export interface EscalationResolutionResultEvent {
+  type: 'escalation_resolution_result'
+  escalation: UserEscalation
   requestId?: string
 }
 
@@ -235,11 +223,9 @@ export type ServerEvent =
   | DirectoryPickedEvent
   | SlackStatusEvent
   | TelegramStatusEvent
-  | TasksSnapshotEvent
-  | TaskCreatedEvent
-  | TaskUpdatedEvent
-  | TasksDeletedEvent
-  | TaskCompletionResultEvent
-  | TaskCommentResultEvent
-  | TaskUpdateResultEvent
+  | EscalationsSnapshotEvent
+  | EscalationCreatedEvent
+  | EscalationUpdatedEvent
+  | EscalationsDeletedEvent
+  | EscalationResolutionResultEvent
   | { type: 'error'; code: string; message: string; requestId?: string }

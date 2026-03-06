@@ -41,25 +41,23 @@ export interface AgentsStoreFile {
   agents: AgentDescriptor[];
 }
 
-export type UserTaskStatus = "pending" | "completed";
+export type UserEscalationStatus = "open" | "resolved";
 
-export interface UserTaskComment {
-  id: string;
-  body: string;
-  createdAt: string;
-  type: "comment" | "completion";
+export interface UserEscalationResponse {
+  choice: string;
+  isCustom: boolean;
 }
 
-export interface UserTask {
+export interface UserEscalation {
   id: string;
   managerId: string;
   title: string;
-  description?: string;
-  status: UserTaskStatus;
+  description: string;
+  options: string[];
+  status: UserEscalationStatus;
+  response?: UserEscalationResponse;
   createdAt: string;
-  completedAt?: string;
-  completionComment?: string;
-  comments?: UserTaskComment[];
+  resolvedAt?: string;
 }
 
 export type RequestedDeliveryMode = "auto" | "followUp" | "steer";

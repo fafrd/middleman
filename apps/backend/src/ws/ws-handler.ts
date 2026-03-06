@@ -5,8 +5,8 @@ import { WebSocketServer, type RawData, WebSocket } from "ws";
 import { extractRequestId, parseClientCommand } from "./ws-command-parser.js";
 import { handleAgentCommand } from "./routes/agent-routes.js";
 import { handleConversationCommand } from "./routes/conversation-routes.js";
+import { handleEscalationCommand } from "./routes/escalation-routes.js";
 import { handleManagerCommand } from "./routes/manager-routes.js";
-import { handleTaskCommand } from "./routes/task-routes.js";
 
 const BOOTSTRAP_SUBSCRIPTION_AGENT_ID = "__bootstrap_manager__";
 const BOOTSTRAP_HISTORY_LIMIT = 200;
@@ -199,13 +199,13 @@ export class WsHandler {
       return;
     }
 
-    const taskHandled = await handleTaskCommand({
+    const escalationHandled = await handleEscalationCommand({
       command,
       socket,
       swarmManager: this.swarmManager,
       send: (targetSocket, event) => this.send(targetSocket, event)
     });
-    if (taskHandled) {
+    if (escalationHandled) {
       return;
     }
 

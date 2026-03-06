@@ -3,9 +3,9 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { SessionManager } from '@mariozechner/pi-coding-agent'
+import { getEscalationsFilePath } from '../escalations/escalation-storage.js'
 import { getScheduleFilePath } from '../scheduler/schedule-storage.js'
 import { SwarmManager } from '../swarm/swarm-manager.js'
-import { getTasksFilePath } from '../tasks/task-storage.js'
 import type {
   AgentContextUsage,
   AgentDescriptor,
@@ -387,7 +387,7 @@ describe('SwarmManager', () => {
     expect(managerPrompt).toContain('End users only see two things')
     expect(managerPrompt).toContain('prefixed with "SYSTEM:"')
     expect(managerPrompt).toContain('Your manager memory file is `${SWARM_MEMORY_FILE}`')
-    expect(managerPrompt).toContain('middleman task add --title')
+    expect(managerPrompt).toContain('middleman escalation add --title')
     expect(managerPrompt).not.toContain('assign_task')
     expect(managerPrompt).not.toContain('get_outstanding_tasks')
 
@@ -2136,124 +2136,136 @@ describe('SwarmManager', () => {
     expect(workerRuntime?.sendCalls.at(-1)?.message).toBe('hello owned worker')
   })
 
-  it('assigns user tasks, stores user comments separately, and delivers generic completion messages back to the manager', async () => {
+  it('creates escalations with options and resolves them with a predefined choice', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)
     await bootWithDefaultManager(manager, config)
 
-    const assignedTask = await manager.createTaskForManager('manager', {
+    const escalation = await manager.createEscalationForManager('manager', {
       title: 'Review the deployment checklist',
       description: 'Confirm the release notes and monitoring links are correct.',
+      options: ['Looks good', 'Needs changes'],
     })
 
-    expect(manager.listAllTasks()).toEqual([
+    expect(manager.listAllEscalations()).toEqual([
       {
-        ...assignedTask,
+        ...escalation,
         description: 'Confirm the release notes and monitoring links are correct.',
+        options: ['Looks good', 'Needs changes'],
       },
     ])
-    await expect(readFile(getTasksFilePath(config.paths.dataDir), 'utf8')).resolves.toContain(
+    await expect(readFile(getEscalationsFilePath(config.paths.dataDir), 'utf8')).resolves.toContain(
       'Review the deployment checklist',
     )
 
     const managerRuntime = manager.runtimeByAgentId.get('manager')
     expect(managerRuntime).toBeDefined()
 
-    const completedTask = await manager.completeTask(assignedTask.id, {
-      comment: 'Finished and verified the dashboard links.',
+    const resolvedEscalation = await manager.resolveEscalation(escalation.id, {
+      choice: 'Looks good',
+      isCustom: false,
       sourceContext: { channel: 'web' },
     })
 
-    expect(completedTask.status).toBe('completed')
-    expect(completedTask.completionComment).toBeUndefined()
-    expect(completedTask.comments).toMatchObject([
-      {
-        body: 'Finished and verified the dashboard links.',
-        type: 'comment',
+    expect(resolvedEscalation).toMatchObject({
+      id: escalation.id,
+      status: 'resolved',
+      response: {
+        choice: 'Looks good',
+        isCustom: false,
       },
-      {
-        body: 'User completed this task.',
-        type: 'completion',
-      },
-    ])
-    await expect(readFile(getTasksFilePath(config.paths.dataDir), 'utf8')).resolves.toContain('"status": "completed"')
-    await expect(manager.listOutstandingTasksForManager('manager')).resolves.toEqual([])
+    })
+    expect(resolvedEscalation.resolvedAt).toBeDefined()
+    await expect(readFile(getEscalationsFilePath(config.paths.dataDir), 'utf8')).resolves.toContain('"status": "resolved"')
+    await expect(manager.listOpenEscalationsForManager('manager')).resolves.toEqual([])
 
     const completionMessage = managerRuntime?.sendCalls.at(-1)?.message
     expect(typeof completionMessage).toBe('string')
-    expect(completionMessage).toContain('User completed task: Review the deployment checklist')
-    expect(completionMessage).toContain('Check task comments for details.')
+    expect(completionMessage).toContain(`Escalation resolved: [${escalation.id}]`)
+    expect(completionMessage).toContain('Question: "Review the deployment checklist"')
+    expect(completionMessage).toContain('Response: "Looks good"')
 
     const managerHistory = manager.getConversationHistory('manager')
     const userCompletionEvent = [...managerHistory].reverse().find(
       (event) =>
         event.type === 'conversation_message' &&
         event.source === 'user_input' &&
-        event.text.includes('User completed task: Review the deployment checklist'),
+        event.text.includes(`Escalation resolved: [${escalation.id}]`),
     )
     expect(userCompletionEvent).toBeDefined()
   })
 
-  it('updates assigned task title and description with persistence', async () => {
+  it('resolves escalations with custom responses', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)
     await bootWithDefaultManager(manager, config)
 
-    const assignedTask = await manager.createTaskForManager('manager', {
-      title: 'Review the deployment checklist',
-      description: 'Confirm the release notes and monitoring links are correct.',
+    const escalation = await manager.createEscalationForManager('manager', {
+      title: 'Approve the release candidate?',
+      description: 'The release branch is green and ready for approval.',
+      options: ['Approve', 'Reject'],
     })
 
-    const updatedTask = await manager.updateTask(assignedTask.id, {
-      title: 'Review the launch checklist',
-      description: 'Confirm release notes, dashboards, and rollback links.',
+    const resolvedEscalation = await manager.resolveEscalation(escalation.id, {
+      choice: 'Wait for another QA pass first.',
+      isCustom: true,
+      sourceContext: { channel: 'web' },
     })
 
-    expect(updatedTask).toMatchObject({
-      id: assignedTask.id,
-      title: 'Review the launch checklist',
-      description: 'Confirm release notes, dashboards, and rollback links.',
-      status: 'pending',
+    expect(resolvedEscalation).toMatchObject({
+      id: escalation.id,
+      status: 'resolved',
+      response: {
+        choice: 'Wait for another QA pass first.',
+        isCustom: true,
+      },
     })
-
-    await expect(readFile(getTasksFilePath(config.paths.dataDir), 'utf8')).resolves.toContain(
-      'Review the launch checklist',
-    )
-    await expect(manager.listOutstandingTasksForManager('manager')).resolves.toEqual([updatedTask])
   })
 
-  it('adds task comments and lets the manager close a task on behalf of the user', async () => {
+  it('lets the manager close an escalation with a custom comment', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)
     await bootWithDefaultManager(manager, config)
 
-    const assignedTask = await manager.createTaskForManager('manager', {
+    const escalation = await manager.createEscalationForManager('manager', {
       title: 'Prepare release notes',
       description: 'Document rollout caveats before launch.',
+      options: ['Proceed', 'Hold'],
     })
 
-    const commentedTask = await manager.addTaskComment(assignedTask.id, 'User said the docs are almost done.')
-    expect(commentedTask.comments).toMatchObject([
-      {
-        body: 'User said the docs are almost done.',
-        type: 'comment',
-      },
-    ])
-
-    const closedTask = await manager.closeTaskForManager('manager', assignedTask.id, {
+    const closedEscalation = await manager.closeEscalationForManager('manager', escalation.id, {
       comment: 'Closed after the user confirmed completion in chat.',
     })
 
-    expect(closedTask).toMatchObject({
-      id: assignedTask.id,
-      status: 'completed',
-      completionComment: 'Closed after the user confirmed completion in chat.',
+    expect(closedEscalation).toMatchObject({
+      id: escalation.id,
+      status: 'resolved',
+      response: {
+        choice: 'Closed after the user confirmed completion in chat.',
+        isCustom: true,
+      },
     })
-    expect(closedTask.comments?.at(-1)).toMatchObject({
-      body: 'Closed after the user confirmed completion in chat.',
-      type: 'completion',
+    await expect(manager.listOpenEscalationsForManager('manager')).resolves.toEqual([])
+  })
+
+  it('lets the manager close an escalation without a response payload', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const escalation = await manager.createEscalationForManager('manager', {
+      title: 'Discard the temporary branch?',
+      description: 'This branch is no longer needed after manual cleanup.',
+      options: ['Discard it', 'Keep it'],
     })
-    await expect(manager.listOutstandingTasksForManager('manager')).resolves.toEqual([])
+
+    const closedEscalation = await manager.closeEscalationForManager('manager', escalation.id)
+
+    expect(closedEscalation).toMatchObject({
+      id: escalation.id,
+      status: 'resolved',
+    })
+    expect(closedEscalation.response).toBeUndefined()
   })
 
   it('accepts any existing directory for manager and worker creation', async () => {

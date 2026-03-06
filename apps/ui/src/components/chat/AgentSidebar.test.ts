@@ -83,11 +83,11 @@ function renderSidebar({
   onSelectAgent = vi.fn(),
   onDeleteAgent = vi.fn(),
   onDeleteManager = vi.fn(),
-  onOpenTasks = vi.fn(),
+  onOpenEscalations = vi.fn(),
   onOpenSettings = vi.fn(),
   isSettingsActive = false,
-  isTasksActive = false,
-  tasks = [],
+  isEscalationsActive = false,
+  escalations = [],
   statuses = {},
 }: {
   agents: AgentDescriptor[]
@@ -95,15 +95,17 @@ function renderSidebar({
   onSelectAgent?: (agentId: string) => void
   onDeleteAgent?: (agentId: string) => void
   onDeleteManager?: (managerId: string) => void
-  onOpenTasks?: () => void
+  onOpenEscalations?: () => void
   onOpenSettings?: () => void
   isSettingsActive?: boolean
-  isTasksActive?: boolean
-  tasks?: Array<{
+  isEscalationsActive?: boolean
+  escalations?: Array<{
     id: string
     managerId: string
     title: string
-    status: 'pending' | 'completed'
+    description: string
+    options: string[]
+    status: 'open' | 'resolved'
     createdAt: string
   }>
   statuses?: Record<string, { status: AgentStatus; pendingCount: number }>
@@ -121,11 +123,11 @@ function renderSidebar({
         onSelectAgent,
         onDeleteAgent,
         onDeleteManager,
-        onOpenTasks,
+        onOpenEscalations,
         onOpenSettings,
         isSettingsActive,
-        isTasksActive,
-        tasks,
+        isEscalationsActive,
+        escalations,
       }),
     )
   })
@@ -228,18 +230,20 @@ describe('AgentSidebar', () => {
     expect(onOpenSettings).toHaveBeenCalledTimes(1)
   })
 
-  it('shows pending task count and calls onOpenTasks when the tasks button is clicked', () => {
-    const onOpenTasks = vi.fn()
+  it('shows open escalation count and calls onOpenEscalations when the button is clicked', () => {
+    const onOpenEscalations = vi.fn()
 
     renderSidebar({
       agents: [manager('manager-alpha')],
-      onOpenTasks,
-      tasks: [
+      onOpenEscalations,
+      escalations: [
         {
-          id: 'task-1',
+          id: 'esc-1',
           managerId: 'manager-alpha',
           title: 'Review docs',
-          status: 'pending',
+          description: 'Choose whether to publish the docs.',
+          options: ['Publish', 'Wait'],
+          status: 'open',
           createdAt: '2026-01-01T00:00:00.000Z',
         },
       ],
@@ -247,8 +251,8 @@ describe('AgentSidebar', () => {
     const sidebar = getPrimarySidebar()
 
     expect(within(sidebar).getByText('1')).toBeTruthy()
-    click(within(sidebar).getByRole('button', { name: /^Tasks/ }))
-    expect(onOpenTasks).toHaveBeenCalledTimes(1)
+    click(within(sidebar).getByRole('button', { name: /^Escalations/ }))
+    expect(onOpenEscalations).toHaveBeenCalledTimes(1)
   })
 
 })

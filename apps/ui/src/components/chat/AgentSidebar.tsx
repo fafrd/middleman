@@ -1,12 +1,17 @@
 import { ChevronDown, ChevronRight, CircleDashed, ListTodo, Settings, SquarePen, UserStar, X } from 'lucide-react'
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from '@/components/ui/context-menu'
 import { useState } from 'react'
-import { Badge } from '@/components/ui/badge'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { buildManagerTreeRows } from '@/lib/agent-hierarchy'
 import { inferModelPreset } from '@/lib/model-preset'
 import { cn } from '@/lib/utils'
-import type { AgentContextUsage, AgentDescriptor, AgentStatus, ManagerModelPreset, UserTask } from '@middleman/protocol'
+import type {
+  AgentContextUsage,
+  AgentDescriptor,
+  AgentStatus,
+  ManagerModelPreset,
+  UserEscalation,
+} from '@middleman/protocol'
 
 interface AgentSidebarProps {
   connected: boolean
@@ -14,15 +19,15 @@ interface AgentSidebarProps {
   statuses: Record<string, { status: AgentStatus; pendingCount: number; contextUsage?: AgentContextUsage }>
   selectedAgentId: string | null
   isSettingsActive: boolean
-  isTasksActive: boolean
-  tasks: UserTask[]
+  isEscalationsActive: boolean
+  escalations: UserEscalation[]
   isMobileOpen?: boolean
   onMobileClose?: () => void
   onAddManager: () => void
   onSelectAgent: (agentId: string) => void
   onDeleteAgent: (agentId: string) => void
   onDeleteManager: (managerId: string) => void
-  onOpenTasks: () => void
+  onOpenEscalations: () => void
   onOpenSettings: () => void
 }
 
@@ -267,20 +272,20 @@ export function AgentSidebar({
   statuses,
   selectedAgentId,
   isSettingsActive,
-  isTasksActive,
-  tasks,
+  isEscalationsActive,
+  escalations,
   isMobileOpen = false,
   onMobileClose,
   onAddManager,
   onSelectAgent,
   onDeleteAgent,
   onDeleteManager,
-  onOpenTasks,
+  onOpenEscalations,
   onOpenSettings,
 }: AgentSidebarProps) {
   const { managerRows, orphanWorkers } = buildManagerTreeRows(agents)
   const [expandedManagerIds, setExpandedManagerIds] = useState<Set<string>>(() => new Set())
-  const pendingTaskCount = tasks.filter((task) => task.status === 'pending').length
+  const openEscalationCount = escalations.filter((escalation) => escalation.status === 'open').length
 
   const toggleManagerCollapsed = (managerId: string) => {
     setExpandedManagerIds((previous) => {
@@ -306,8 +311,8 @@ export function AgentSidebar({
     onMobileClose?.()
   }
 
-  const handleOpenTasks = () => {
-    onOpenTasks()
+  const handleOpenEscalations = () => {
+    onOpenEscalations()
     onMobileClose?.()
   }
 
@@ -372,7 +377,8 @@ export function AgentSidebar({
           <ul className="space-y-0.5">
             {managerRows.map(({ manager, workers }) => {
               const managerLiveStatus = getAgentLiveStatus(manager, statuses)
-              const managerIsSelected = !isSettingsActive && !isTasksActive && selectedAgentId === manager.agentId
+              const managerIsSelected =
+                !isSettingsActive && !isEscalationsActive && selectedAgentId === manager.agentId
               const managerIsCollapsed = !expandedManagerIds.has(manager.agentId)
               const streamingWorkerCount = managerIsCollapsed
                 ? workers.filter((w) => getAgentLiveStatus(w, statuses).status === 'streaming').length
@@ -437,7 +443,8 @@ export function AgentSidebar({
                       <ul className="space-y-0.5">
                         {workers.map((worker) => {
                           const workerLiveStatus = getAgentLiveStatus(worker, statuses)
-                          const workerIsSelected = !isSettingsActive && !isTasksActive && selectedAgentId === worker.agentId
+                          const workerIsSelected =
+                            !isSettingsActive && !isEscalationsActive && selectedAgentId === worker.agentId
 
                           return (
                             <li key={worker.agentId}>
@@ -468,7 +475,8 @@ export function AgentSidebar({
                 <ul className="space-y-0.5">
                   {orphanWorkers.map((worker) => {
                     const workerLiveStatus = getAgentLiveStatus(worker, statuses)
-                    const workerIsSelected = !isSettingsActive && !isTasksActive && selectedAgentId === worker.agentId
+                    const workerIsSelected =
+                      !isSettingsActive && !isEscalationsActive && selectedAgentId === worker.agentId
 
                     return (
                       <li key={worker.agentId}>
@@ -495,27 +503,22 @@ export function AgentSidebar({
         <div className="space-y-1">
           <button
             type="button"
-            onClick={handleOpenTasks}
+            onClick={handleOpenEscalations}
             className={cn(
               'flex min-h-[44px] w-full items-center gap-2 rounded-md px-2 py-2 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring/60',
-              isTasksActive
+              isEscalationsActive
                 ? 'bg-sidebar-accent text-sidebar-accent-foreground'
                 : 'text-muted-foreground hover:bg-sidebar-accent/50 hover:text-sidebar-foreground',
             )}
-            aria-pressed={isTasksActive}
+            aria-pressed={isEscalationsActive}
           >
             <ListTodo aria-hidden="true" className="size-4" />
-            <span className="flex-1 text-left">Tasks</span>
-            {pendingTaskCount > 0 ? (
-              <Badge
-                variant="outline"
-                className={cn(
-                  'border-current/20 bg-background/40 text-[10px] text-inherit',
-                  isTasksActive ? 'bg-sidebar-accent-foreground/10' : '',
-                )}
-              >
-                {pendingTaskCount}
-              </Badge>
+            <span className="flex-1 text-left">Escalations</span>
+            {openEscalationCount > 0 ? (
+              <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-500/10 px-2 py-0.5 text-[10px] font-medium tabular-nums text-amber-600 dark:text-amber-400">
+                <span className="size-1.5 rounded-full bg-amber-500 dark:bg-amber-400" />
+                {openEscalationCount}
+              </span>
             ) : null}
           </button>
 
