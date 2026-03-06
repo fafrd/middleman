@@ -14,6 +14,7 @@ const CREATE_MANAGER_MODEL_PRESETS = MANAGER_MODEL_PRESETS.filter(
 )
 
 type ListenerMap = Record<string, Array<(event?: any) => void>>
+const faviconEmojiByCanvas = new WeakMap<HTMLCanvasElement, string>()
 
 class FakeWebSocket {
   static readonly OPEN = 1
@@ -123,16 +124,41 @@ let root: Root | null = null
 
 const originalWebSocket = globalThis.WebSocket
 const originalScrollIntoView = HTMLElement.prototype.scrollIntoView
+const originalCanvasGetContext = HTMLCanvasElement.prototype.getContext
+const originalCanvasToDataURL = HTMLCanvasElement.prototype.toDataURL
 
 beforeEach(() => {
   FakeWebSocket.instances = []
   vi.useFakeTimers()
   ;(globalThis as any).WebSocket = FakeWebSocket
   window.history.replaceState(null, '', '/')
+  document.head.querySelectorAll('link[rel="icon"]').forEach((node) => node.remove())
   Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
     configurable: true,
     writable: true,
     value: vi.fn(),
+  })
+  Object.defineProperty(HTMLCanvasElement.prototype, 'getContext', {
+    configurable: true,
+    writable: true,
+    value(this: HTMLCanvasElement) {
+      return {
+        clearRect: vi.fn(),
+        fillText: (text: string) => {
+          faviconEmojiByCanvas.set(this, text)
+        },
+        textAlign: 'center',
+        textBaseline: 'middle',
+        font: '',
+      } as unknown as CanvasRenderingContext2D
+    },
+  })
+  Object.defineProperty(HTMLCanvasElement.prototype, 'toDataURL', {
+    configurable: true,
+    writable: true,
+    value(this: HTMLCanvasElement) {
+      return `data:image/png;base64,${encodeURIComponent(faviconEmojiByCanvas.get(this) ?? '')}`
+    },
   })
 
   container = document.createElement('div')
@@ -155,6 +181,16 @@ afterEach(() => {
     configurable: true,
     writable: true,
     value: originalScrollIntoView,
+  })
+  Object.defineProperty(HTMLCanvasElement.prototype, 'getContext', {
+    configurable: true,
+    writable: true,
+    value: originalCanvasGetContext,
+  })
+  Object.defineProperty(HTMLCanvasElement.prototype, 'toDataURL', {
+    configurable: true,
+    writable: true,
+    value: originalCanvasToDataURL,
   })
 })
 
@@ -186,6 +222,10 @@ async function renderPage(): Promise<FakeWebSocket> {
   })
 
   return socket
+}
+
+function getFaviconHref(): string | null {
+  return document.head.querySelector('link[rel="icon"]')?.getAttribute('href') ?? null
 }
 
 describe('IndexPage create manager model selection', () => {
@@ -370,6 +410,57 @@ describe('IndexPage create manager model selection', () => {
     expect(queryByText(container, 'foreign worker reply')).toBeNull()
     expect(queryByText(container, 'foreign worker chatter')).toBeNull()
     expect(queryByText(container, /foreign-call/)).toBeNull()
+  })
+
+  it('swaps the favicon when agents in the selected manager scope start or stop streaming', async () => {
+    const socket = await renderPage()
+
+    emitServerEvent(socket, {
+      type: 'agents_snapshot',
+      agents: [
+        buildManager('manager', '/tmp/manager'),
+        buildWorker('worker-owned', 'manager', '/tmp/manager'),
+        buildManager('other-manager', '/tmp/other-manager'),
+        buildWorker('worker-foreign', 'other-manager', '/tmp/other-manager'),
+      ],
+    })
+
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect(getFaviconHref()).toBe(`data:image/png;base64,${encodeURIComponent('👔')}`)
+
+    emitServerEvent(socket, {
+      type: 'agent_status',
+      agentId: 'worker-foreign',
+      status: 'streaming',
+      pendingCount: 1,
+    })
+
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect(getFaviconHref()).toBe(`data:image/png;base64,${encodeURIComponent('👔')}`)
+
+    emitServerEvent(socket, {
+      type: 'agent_status',
+      agentId: 'worker-owned',
+      status: 'streaming',
+      pendingCount: 1,
+    })
+
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect(getFaviconHref()).toBe(`data:image/png;base64,${encodeURIComponent('👨‍💻')}`)
+
+    emitServerEvent(socket, {
+      type: 'agent_status',
+      agentId: 'worker-owned',
+      status: 'idle',
+      pendingCount: 0,
+    })
+
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect(getFaviconHref()).toBe(`data:image/png;base64,${encodeURIComponent('👔')}`)
   })
 
   it('keeps the root URL free of query params when the active agent is implicit', async () => {
