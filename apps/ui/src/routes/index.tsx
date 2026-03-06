@@ -1,10 +1,4 @@
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   createFileRoute,
   useLocation,
@@ -16,7 +10,10 @@ import { ArtifactsSidebar } from '@/components/chat/ArtifactsSidebar'
 import { ChatHeader } from '@/components/chat/ChatHeader'
 import { CreateManagerDialog } from '@/components/chat/CreateManagerDialog'
 import { DeleteManagerDialog } from '@/components/chat/DeleteManagerDialog'
-import { MessageInput, type MessageInputHandle } from '@/components/chat/MessageInput'
+import {
+  MessageInput,
+  type MessageInputHandle,
+} from '@/components/chat/MessageInput'
 import { MessageList } from '@/components/chat/MessageList'
 import { SettingsPanel } from '@/components/chat/SettingsDialog'
 import { chooseFallbackAgentId } from '@/lib/agent-hierarchy'
@@ -67,23 +64,24 @@ export function IndexPage() {
   const location = useOptionalLocation()
 
   const { clientRef, state, setState } = useWsConnection(wsUrl)
-  const {
-    routeState,
-    activeView,
-    hasExplicitAgentSelection,
-    navigateToRoute,
-  } = useRouteState({
-    pathname: location.pathname,
-    search: location.search,
-    navigate,
-  })
+  const { routeState, activeView, hasExplicitAgentSelection, navigateToRoute } =
+    useRouteState({
+      pathname: location.pathname,
+      search: location.search,
+      navigate,
+    })
 
-  const [activeArtifact, setActiveArtifact] = useState<ArtifactReference | null>(null)
+  const [activeArtifact, setActiveArtifact] =
+    useState<ArtifactReference | null>(null)
   const [isArtifactsPanelOpen, setIsArtifactsPanelOpen] = useState(false)
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false)
 
   const activeAgentId = useMemo(() => {
-    return state.targetAgentId ?? state.subscribedAgentId ?? chooseFallbackAgentId(state.agents)
+    return (
+      state.targetAgentId ??
+      state.subscribedAgentId ??
+      chooseFallbackAgentId(state.agents)
+    )
   }, [state.agents, state.subscribedAgentId, state.targetAgentId])
 
   const activeAgent = useMemo(() => {
@@ -94,7 +92,8 @@ export function IndexPage() {
     return state.agents.find((agent) => agent.agentId === activeAgentId) ?? null
   }, [activeAgentId, state.agents])
 
-  const activeAgentLabel = activeAgent?.displayName ?? activeAgentId ?? 'No active agent'
+  const activeAgentLabel =
+    activeAgent?.displayName ?? activeAgentId ?? 'No active agent'
   const isActiveManager = activeAgent?.role === 'manager'
 
   const activeManagerId = useMemo(() => {
@@ -122,8 +121,26 @@ export function IndexPage() {
       return fromStatuses
     }
 
-    return state.agents.find((agent) => agent.agentId === activeAgentId)?.status ?? null
+    return (
+      state.agents.find((agent) => agent.agentId === activeAgentId)?.status ??
+      null
+    )
   }, [activeAgentId, state.agents, state.statuses])
+
+  const activeStreamingWorkerCount = useMemo(() => {
+    if (!activeAgentId || activeAgent?.role !== 'manager') {
+      return 0
+    }
+
+    return state.agents.reduce((count, agent) => {
+      if (agent.role !== 'worker' || agent.managerId !== activeAgentId) {
+        return count
+      }
+
+      const workerStatus = state.statuses[agent.agentId]?.status ?? agent.status
+      return workerStatus === 'streaming' ? count + 1 : count
+    }, 0)
+  }, [activeAgent, activeAgentId, state.agents, state.statuses])
 
   const { contextWindowUsage } = useContextWindow({
     activeAgent,
@@ -225,7 +242,9 @@ export function IndexPage() {
     const currentAgentExists =
       currentAgentId !== null &&
       state.agents.some((agent) => agent.agentId === currentAgentId)
-    const routeAgentExists = state.agents.some((agent) => agent.agentId === routeState.agentId)
+    const routeAgentExists = state.agents.some(
+      (agent) => agent.agentId === routeState.agentId,
+    )
 
     if (hasExplicitAgentSelection) {
       if (!routeAgentExists) {
@@ -233,7 +252,10 @@ export function IndexPage() {
           return
         }
 
-        navigateToRoute({ view: 'chat', agentId: DEFAULT_MANAGER_AGENT_ID }, true)
+        navigateToRoute(
+          { view: 'chat', agentId: DEFAULT_MANAGER_AGENT_ID },
+          true,
+        )
         return
       }
 
@@ -381,7 +403,9 @@ export function IndexPage() {
             {activeView === 'settings' ? (
               <SettingsPanel
                 wsUrl={wsUrl}
-                managers={state.agents.filter((agent) => agent.role === 'manager')}
+                managers={state.agents.filter(
+                  (agent) => agent.role === 'manager',
+                )}
                 slackStatus={state.slackStatus}
                 telegramStatus={state.telegramStatus}
                 onBack={() =>
@@ -395,10 +419,11 @@ export function IndexPage() {
               <>
                 <ChatHeader
                   connected={state.connected}
+                  activeAgent={activeAgent}
                   activeAgentId={activeAgentId}
                   activeAgentLabel={activeAgentLabel}
-                  activeAgentArchetypeId={activeAgent?.archetypeId}
                   activeAgentStatus={activeAgentStatus}
+                  activeStreamingWorkerCount={activeStreamingWorkerCount}
                   contextWindowUsage={contextWindowUsage}
                   showCompact={isActiveManager}
                   compactInProgress={isCompactingManager}
@@ -547,8 +572,7 @@ function useOptionalNavigate(): NavigateFn {
 
   try {
     navigate = useNavigate() as unknown as NavigateFn
-  } catch {
-  }
+  } catch {}
 
   return (options) => {
     if (navigate) {
@@ -563,7 +587,10 @@ function useOptionalNavigate(): NavigateFn {
   }
 }
 
-function parseWindowRouteSearch(search: string): { view?: string; agent?: string } {
+function parseWindowRouteSearch(search: string): {
+  view?: string
+  agent?: string
+} {
   if (!search) {
     return {}
   }

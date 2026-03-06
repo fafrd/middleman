@@ -1,17 +1,39 @@
-import { ChevronDown, ChevronRight, CircleDashed, Settings, SquarePen, UserStar, X } from 'lucide-react'
-import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from '@/components/ui/context-menu'
+import {
+  ChevronDown,
+  ChevronRight,
+  Settings,
+  SquarePen,
+  UserStar,
+  X,
+} from 'lucide-react'
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuTrigger,
+} from '@/components/ui/context-menu'
 import { useState } from 'react'
-import { AgentStatusIndicator } from '@/components/chat/AgentStatusIndicator'
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { AgentActivityIndicator } from '@/components/chat/AgentActivityIndicator'
+import { AgentRuntimeBadge } from '@/components/chat/AgentRuntimeBadge'
 import { buildManagerTreeRows } from '@/lib/agent-hierarchy'
-import { inferModelPreset } from '@/lib/model-preset'
 import { cn } from '@/lib/utils'
-import type { AgentContextUsage, AgentDescriptor, AgentStatus, ManagerModelPreset } from '@middleman/protocol'
+import type {
+  AgentContextUsage,
+  AgentDescriptor,
+  AgentStatus,
+} from '@middleman/protocol'
 
 interface AgentSidebarProps {
   connected: boolean
   agents: AgentDescriptor[]
-  statuses: Record<string, { status: AgentStatus; pendingCount: number; contextUsage?: AgentContextUsage }>
+  statuses: Record<
+    string,
+    {
+      status: AgentStatus
+      pendingCount: number
+      contextUsage?: AgentContextUsage
+    }
+  >
   selectedAgentId: string | null
   isSettingsActive: boolean
   isMobileOpen?: boolean
@@ -28,18 +50,16 @@ type AgentLiveStatus = {
   pendingCount: number
 }
 
-function ClaudeCodeIconPair({ className }: { className?: string }) {
-  return (
-    <span className="inline-flex items-center gap-0.5" aria-hidden="true">
-      <img src="/agents/claude-logo.svg" alt="" className={cn('size-3 shrink-0 object-contain', className)} />
-      <img src="/agents/claude-logo.svg" alt="" className={cn('size-3 shrink-0 object-contain opacity-70', className)} />
-    </span>
-  )
-}
-
 function getAgentLiveStatus(
   agent: AgentDescriptor,
-  statuses: Record<string, { status: AgentStatus; pendingCount: number; contextUsage?: AgentContextUsage }>,
+  statuses: Record<
+    string,
+    {
+      status: AgentStatus
+      pendingCount: number
+      contextUsage?: AgentContextUsage
+    }
+  >,
 ): AgentLiveStatus {
   const live = statuses[agent.agentId]
   return {
@@ -47,83 +67,6 @@ function getAgentLiveStatus(
     pendingCount: live?.pendingCount ?? 0,
   }
 }
-
-function RuntimeIcon({ agent, className }: { agent: AgentDescriptor; className?: string }) {
-  const provider = agent.model.provider.toLowerCase()
-  const preset = inferModelPreset(agent)
-
-  if (preset === 'pi-opus') {
-    return (
-      <span className="inline-flex items-center gap-0.5" aria-hidden="true">
-        <img src="/pi-logo.svg" alt="" className={cn('size-3 shrink-0 object-contain dark:invert', className)} />
-        <img src="/agents/claude-logo.svg" alt="" className={cn('size-3 shrink-0 object-contain', className)} />
-      </span>
-    )
-  }
-
-  if (preset === 'pi-codex') {
-    return (
-      <span className="inline-flex items-center gap-0.5" aria-hidden="true">
-        <img src="/pi-logo.svg" alt="" className={cn('size-3 shrink-0 object-contain dark:invert', className)} />
-        <img
-          src="/agents/codex-logo.svg"
-          alt=""
-          className={cn('size-3 shrink-0 object-contain dark:invert', className)}
-        />
-      </span>
-    )
-  }
-
-  if (preset === 'codex-app') {
-    return (
-      <span className="inline-flex items-center gap-0.5" aria-hidden="true">
-        <img src="/agents/codex-app-logo.svg" alt="" className={cn('size-3 shrink-0 object-contain dark:invert', className)} />
-        <img src="/agents/codex-logo.svg" alt="" className={cn('size-3 shrink-0 object-contain dark:invert', className)} />
-      </span>
-    )
-  }
-
-  if (preset === 'claude-code' || provider === 'anthropic-claude-code') {
-    return <ClaudeCodeIconPair className={className} />
-  }
-
-  if (provider.includes('anthropic') || provider.includes('claude')) {
-    return <img src="/agents/claude-logo.svg" alt="" aria-hidden="true" className={className} />
-  }
-
-  if (provider.includes('openai')) {
-    return <img src="/agents/codex-logo.svg" alt="" aria-hidden="true" className={cn('dark:invert', className)} />
-  }
-
-  return <span className={cn('inline-block size-1.5 rounded-full bg-current', className)} aria-hidden="true" />
-}
-
-function getModelLabel(agent: AgentDescriptor, preset: ManagerModelPreset | undefined): string {
-  if (preset === 'pi-opus') {
-    return 'opus'
-  }
-
-  if (preset === 'pi-codex' || preset === 'codex-app') {
-    return 'codex'
-  }
-
-  if (preset === 'claude-code') {
-    return 'claude-code'
-  }
-
-  const modelId = agent.model.modelId.trim().toLowerCase()
-
-  if (modelId.startsWith('claude-opus')) {
-    return 'opus'
-  }
-
-  if (modelId.includes('codex')) {
-    return 'codex'
-  }
-
-  return agent.model.modelId
-}
-
 
 function AgentActivitySlot({
   status,
@@ -134,40 +77,14 @@ function AgentActivitySlot({
   isSelected: boolean
   streamingWorkerCount?: number
 }) {
-  // When collapsed with active workers, show CircleDashed spinner with count inside
-  if (streamingWorkerCount && streamingWorkerCount > 0) {
-    return (
-      <TooltipProvider delay={200}>
-        <Tooltip>
-          <TooltipTrigger
-            render={<span className="relative inline-flex size-3.5 shrink-0 items-center justify-center" />}
-            aria-label={`${streamingWorkerCount} active worker${streamingWorkerCount !== 1 ? 's' : ''}`}
-          >
-            <CircleDashed
-              className={cn(
-                'absolute inset-0 size-3.5 animate-spin',
-                isSelected ? 'text-sidebar-accent-foreground/80' : 'text-muted-foreground',
-              )}
-              aria-hidden="true"
-            />
-            <span
-              className={cn(
-                'relative text-[7px] font-bold leading-none',
-                isSelected ? 'text-sidebar-accent-foreground' : 'text-muted-foreground',
-              )}
-            >
-              {streamingWorkerCount}
-            </span>
-          </TooltipTrigger>
-          <TooltipContent side="top" sideOffset={6} className="px-2 py-1 text-[10px]">
-            {streamingWorkerCount} worker{streamingWorkerCount !== 1 ? 's' : ''} active
-          </TooltipContent>
-        </Tooltip>
-      </TooltipProvider>
-    )
-  }
-
-  return <AgentStatusIndicator status={status} size="sm" />
+  return (
+    <AgentActivityIndicator
+      status={status}
+      streamingWorkerCount={streamingWorkerCount}
+      size="sm"
+      selected={isSelected}
+    />
+  )
 }
 
 function AgentRow({
@@ -190,9 +107,6 @@ function AgentRow({
   streamingWorkerCount?: number
 }) {
   const title = agent.displayName || agent.agentId
-  const preset = inferModelPreset(agent)
-  const modelLabel = getModelLabel(agent, preset)
-  const modelDescription = `${agent.model.provider}/${agent.model.modelId}`
 
   return (
     <ContextMenu>
@@ -216,28 +130,19 @@ function AgentRow({
             isSelected={isSelected}
             streamingWorkerCount={streamingWorkerCount}
           />
-          <span className={cn('min-w-0 flex-1 truncate text-sm leading-5', nameClassName)}>{title}</span>
-
-          <TooltipProvider delay={200}>
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <span
-                    className={cn(
-                      'ml-1 inline-flex h-5 w-8 shrink-0 items-center justify-center rounded-sm border border-sidebar-border/80 bg-sidebar-accent/40 px-0.5',
-                      isSelected ? 'border-sidebar-ring/60 bg-sidebar-accent-foreground/10' : '',
-                    )}
-                  />
-                }
-              >
-                <RuntimeIcon agent={agent} className="size-3 shrink-0 object-contain opacity-90" />
-              </TooltipTrigger>
-              <TooltipContent side="top" sideOffset={6} className="px-2 py-1 text-[10px]">
-                <p className="font-medium">{modelLabel}</p>
-                <p className="opacity-80">{modelDescription}</p>
-              </TooltipContent>
-            </Tooltip>
-          </TooltipProvider>
+          <span
+            className={cn(
+              'min-w-0 flex-1 truncate text-sm leading-5',
+              nameClassName,
+            )}
+          >
+            {title}
+          </span>
+          <AgentRuntimeBadge
+            agent={agent}
+            selected={isSelected}
+            className="ml-1"
+          />
         </button>
       </ContextMenuTrigger>
       <ContextMenuContent>
@@ -264,7 +169,9 @@ export function AgentSidebar({
   onOpenSettings,
 }: AgentSidebarProps) {
   const { managerRows, orphanWorkers } = buildManagerTreeRows(agents)
-  const [expandedManagerIds, setExpandedManagerIds] = useState<Set<string>>(() => new Set())
+  const [expandedManagerIds, setExpandedManagerIds] = useState<Set<string>>(
+    () => new Set(),
+  )
 
   const toggleManagerCollapsed = (managerId: string) => {
     setExpandedManagerIds((previous) => {
@@ -317,7 +224,9 @@ export function AgentSidebar({
             )}
             title={connected ? 'Connected' : 'Reconnecting'}
           />
-          <span className="hidden xl:inline">{connected ? 'Live' : 'Retrying'}</span>
+          <span className="hidden xl:inline">
+            {connected ? 'Live' : 'Retrying'}
+          </span>
         </div>
         {/* Mobile close button */}
         {onMobileClose ? (
@@ -351,10 +260,16 @@ export function AgentSidebar({
           <ul className="space-y-0.5">
             {managerRows.map(({ manager, workers }) => {
               const managerLiveStatus = getAgentLiveStatus(manager, statuses)
-              const managerIsSelected = !isSettingsActive && selectedAgentId === manager.agentId
-              const managerIsCollapsed = !expandedManagerIds.has(manager.agentId)
+              const managerIsSelected =
+                !isSettingsActive && selectedAgentId === manager.agentId
+              const managerIsCollapsed = !expandedManagerIds.has(
+                manager.agentId,
+              )
               const streamingWorkerCount = managerIsCollapsed
-                ? workers.filter((w) => getAgentLiveStatus(w, statuses).status === 'streaming').length
+                ? workers.filter(
+                    (w) =>
+                      getAgentLiveStatus(w, statuses).status === 'streaming',
+                  ).length
                 : 0
 
               return (
@@ -368,7 +283,9 @@ export function AgentSidebar({
                       onDelete={() => onDeleteManager(manager.agentId)}
                       nameClassName="font-semibold"
                       className="min-w-0 flex-1 py-1.5 pl-7 pr-1.5"
-                      streamingWorkerCount={managerIsCollapsed ? streamingWorkerCount : undefined}
+                      streamingWorkerCount={
+                        managerIsCollapsed ? streamingWorkerCount : undefined
+                      }
                     />
 
                     <button
@@ -415,8 +332,13 @@ export function AgentSidebar({
                       <div className="absolute bottom-1 left-3.5 top-0 w-px bg-sidebar-border/40" />
                       <ul className="space-y-0.5">
                         {workers.map((worker) => {
-                          const workerLiveStatus = getAgentLiveStatus(worker, statuses)
-                          const workerIsSelected = !isSettingsActive && selectedAgentId === worker.agentId
+                          const workerLiveStatus = getAgentLiveStatus(
+                            worker,
+                            statuses,
+                          )
+                          const workerIsSelected =
+                            !isSettingsActive &&
+                            selectedAgentId === worker.agentId
 
                           return (
                             <li key={worker.agentId}>
@@ -424,7 +346,9 @@ export function AgentSidebar({
                                 agent={worker}
                                 liveStatus={workerLiveStatus}
                                 isSelected={workerIsSelected}
-                                onSelect={() => handleSelectAgent(worker.agentId)}
+                                onSelect={() =>
+                                  handleSelectAgent(worker.agentId)
+                                }
                                 onDelete={() => onDeleteAgent(worker.agentId)}
                                 nameClassName="font-normal"
                                 className="py-1.5 pl-7 pr-1.5"
@@ -446,8 +370,12 @@ export function AgentSidebar({
                 </p>
                 <ul className="space-y-0.5">
                   {orphanWorkers.map((worker) => {
-                    const workerLiveStatus = getAgentLiveStatus(worker, statuses)
-                    const workerIsSelected = !isSettingsActive && selectedAgentId === worker.agentId
+                    const workerLiveStatus = getAgentLiveStatus(
+                      worker,
+                      statuses,
+                    )
+                    const workerIsSelected =
+                      !isSettingsActive && selectedAgentId === worker.agentId
 
                     return (
                       <li key={worker.agentId}>
@@ -486,8 +414,6 @@ export function AgentSidebar({
             <Settings aria-hidden="true" className="size-4" />
             <span>Settings</span>
           </button>
-
-
         </div>
       </div>
     </aside>
@@ -496,9 +422,7 @@ export function AgentSidebar({
   return (
     <>
       {/* Desktop: render inline */}
-      <div className="hidden md:flex md:shrink-0">
-        {sidebarContent}
-      </div>
+      <div className="hidden md:flex md:shrink-0">{sidebarContent}</div>
 
       {/* Mobile: render as overlay */}
       <div
