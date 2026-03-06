@@ -416,6 +416,7 @@ export function IndexPage() {
                   messages={visibleMessages}
                   isLoading={isLoading}
                   activeAgentId={activeAgentId}
+                  isWorkerDetailView={activeAgent?.role === 'worker'}
                   onSuggestionClick={handleSuggestionClick}
                   onArtifactClick={handleOpenArtifact}
                   wsUrl={wsUrl}

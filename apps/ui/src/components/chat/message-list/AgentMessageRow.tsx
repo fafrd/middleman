@@ -25,40 +25,32 @@ export function AgentMessageRow({
       : null
 
   return (
-    <div className="rounded-lg border border-slate-300/70 bg-slate-50/75 px-3 py-2 text-sm text-slate-800 dark:border-slate-500/30 dark:bg-slate-500/10 dark:text-slate-200">
-      <div className="flex flex-wrap items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-slate-700/80 dark:text-slate-300/90">
+    <div className="border-l border-[var(--chat-exec-border)] pl-3">
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[10px] uppercase tracking-[0.14em] text-[var(--chat-exec-muted)]">
         <span>{fromLabel}</span>
-        <span>→</span>
+        <span aria-hidden="true">→</span>
         <span>{toLabel}</span>
-        {deliveryLabel ? (
-          <span className="normal-case tracking-normal text-slate-700/70 dark:text-slate-300/75">
-            • {deliveryLabel}
-          </span>
-        ) : null}
+        {deliveryLabel ? <span className="normal-case tracking-normal">{deliveryLabel}</span> : null}
       </div>
 
-      <div className="mt-1 space-y-1.5">
-        {normalizedText ? (
-          <p className="whitespace-pre-wrap break-words leading-relaxed">
-            {normalizedText}
-          </p>
-        ) : null}
+      {normalizedText ? (
+        <p className="mt-1 text-size-chat whitespace-pre-wrap break-words text-[var(--chat-exec-muted-strong)]">
+          {normalizedText}
+        </p>
+      ) : attachmentCount > 0 ? null : (
+        <p className="mt-1 text-size-chat-sm italic text-[var(--chat-exec-muted)]">
+          Empty message
+        </p>
+      )}
 
-        {attachmentCount > 0 ? (
-          <p className="text-[11px] text-slate-700/80 dark:text-slate-300/80">
-            Sent {attachmentCount} attachment{attachmentCount === 1 ? '' : 's'}
-          </p>
-        ) : null}
-
-        {!normalizedText && attachmentCount === 0 ? (
-          <p className="text-[11px] italic text-slate-700/70 dark:text-slate-300/70">
-            (empty message)
-          </p>
-        ) : null}
-      </div>
+      {attachmentCount > 0 ? (
+        <p className="mt-1 text-size-chat-sm text-[var(--chat-exec-muted)]">
+          Sent {attachmentCount} attachment{attachmentCount === 1 ? '' : 's'}
+        </p>
+      ) : null}
 
       {timestampLabel || sourceContext ? (
-        <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] text-slate-700/75 dark:text-slate-300/75">
+        <div className="mt-1 flex flex-wrap items-center gap-1.5 text-size-chat-sm text-[var(--chat-exec-muted)]">
           <SourceBadge sourceContext={sourceContext} />
           {timestampLabel ? <span>{timestampLabel}</span> : null}
         </div>
