@@ -1,7 +1,6 @@
 import { ChevronDown, ChevronRight, CircleDashed, ListTodo, Settings, SquarePen, UserStar, X } from 'lucide-react'
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from '@/components/ui/context-menu'
 import { useState } from 'react'
-import { Badge } from '@/components/ui/badge'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { buildManagerTreeRows } from '@/lib/agent-hierarchy'
 import { inferModelPreset } from '@/lib/model-preset'
@@ -516,15 +515,10 @@ export function AgentSidebar({
             <ListTodo aria-hidden="true" className="size-4" />
             <span className="flex-1 text-left">Escalations</span>
             {openEscalationCount > 0 ? (
-              <Badge
-                variant="outline"
-                className={cn(
-                  'border-current/20 bg-background/40 text-[10px] text-inherit',
-                  isEscalationsActive ? 'bg-sidebar-accent-foreground/10' : '',
-                )}
-              >
+              <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-500/10 px-2 py-0.5 text-[10px] font-medium tabular-nums text-amber-600 dark:text-amber-400">
+                <span className="size-1.5 rounded-full bg-amber-500 dark:bg-amber-400" />
                 {openEscalationCount}
-              </Badge>
+              </span>
             ) : null}
           </button>
 

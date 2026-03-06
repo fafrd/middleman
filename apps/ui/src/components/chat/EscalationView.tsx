@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { AlertCircle, ArrowLeft, CalendarDays, ListTodo, PanelLeft, UserRound, X } from 'lucide-react'
+import { ArrowLeft, CalendarDays, Check, CircleDot, ListTodo, PanelLeft, UserRound, X } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
@@ -95,7 +95,8 @@ export function EscalationView({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col bg-background">
-      <div className="mb-2 flex h-[62px] shrink-0 items-center justify-between border-b border-border/50 px-4 sm:px-5">
+      {/* Header */}
+      <div className="flex h-[52px] shrink-0 items-center justify-between border-b border-border/40 px-4 sm:px-5">
         <div className="flex min-w-0 items-center gap-3">
           <Button
             type="button"
@@ -107,16 +108,18 @@ export function EscalationView({
           >
             <PanelLeft className="size-4" />
           </Button>
-          <div className="min-w-0">
-            <div className="flex items-center gap-2">
-              <h1 className="text-sm font-semibold text-foreground">Needs Your Attention</h1>
-              <span className="text-xs tabular-nums text-muted-foreground">
-                {openEscalationCount > 0 ? `${openEscalationCount} open` : `${sortedEscalations.length} total`}
+          <div className="flex items-center gap-2.5">
+            <h1 className="text-sm font-semibold text-foreground">Escalations</h1>
+            {openEscalationCount > 0 ? (
+              <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/10 px-2 py-0.5 text-[11px] font-medium tabular-nums text-amber-600 dark:text-amber-400">
+                <span className="size-1.5 rounded-full bg-amber-500 dark:bg-amber-400" />
+                {openEscalationCount} open
               </span>
-            </div>
-            <p className="text-[11px] leading-tight text-muted-foreground/70">
-              Agent decisions, blockers, and approvals
-            </p>
+            ) : (
+              <span className="text-xs tabular-nums text-muted-foreground/60">
+                {sortedEscalations.length} total
+              </span>
+            )}
           </div>
         </div>
 
@@ -132,19 +135,23 @@ export function EscalationView({
         </Button>
       </div>
 
+      {/* Content */}
       <div className="relative flex min-h-0 flex-1 overflow-hidden">
+        {/* Escalation list */}
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
           <ScrollArea className="min-h-0 flex-1">
             {sortedEscalations.length === 0 ? (
-              <div className="px-6 py-16 text-center">
-                <ListTodo className="mx-auto mb-3 size-5 text-muted-foreground/40" />
-                <p className="text-sm font-medium text-foreground/70">No escalations</p>
-                <p className="mt-1 text-xs text-muted-foreground/60">
-                  When agents need a decision, approval, or blocker resolution, it will appear here.
+              <div className="px-6 py-20 text-center">
+                <div className="mx-auto mb-4 flex size-10 items-center justify-center rounded-full bg-muted/50">
+                  <ListTodo className="size-5 text-muted-foreground/50" />
+                </div>
+                <p className="text-sm font-medium text-foreground/70">No escalations yet</p>
+                <p className="mx-auto mt-1.5 max-w-[240px] text-xs leading-relaxed text-muted-foreground/50">
+                  When agents need a decision or hit a blocker, it will appear here.
                 </p>
               </div>
             ) : (
-              <div>
+              <div className="py-1">
                 {sortedEscalations.map((escalation) => {
                   const managerName = managerNameById.get(escalation.managerId) ?? escalation.managerId
                   const isSelected = selectedEscalationId === escalation.id
@@ -158,19 +165,26 @@ export function EscalationView({
                         setSubmitError(null)
                       }}
                       className={cn(
-                        'flex w-full items-start gap-3 border-b border-border/30 px-4 py-3 text-left transition-colors duration-100',
-                        isSelected ? 'bg-muted/50' : 'hover:bg-muted/25',
+                        'flex w-full items-center gap-3 px-4 py-2.5 text-left transition-colors duration-75',
+                        isSelected
+                          ? 'bg-muted/60'
+                          : 'hover:bg-muted/30',
                       )}
                     >
-                      <StatusPill status={escalation.status} />
+                      <StatusDot status={escalation.status} />
                       <div className="min-w-0 flex-1">
-                        <div className="truncate text-[13px] font-medium text-foreground">{escalation.title}</div>
-                        <div className="mt-1 flex items-center gap-2 text-[11px] text-muted-foreground/70">
+                        <div className="truncate text-[13px] font-medium text-foreground/90">{escalation.title}</div>
+                        <div className="mt-0.5 flex items-center gap-1.5 text-[11px] text-muted-foreground/60">
                           <span className="truncate">{managerName}</span>
-                          <span className="shrink-0">&middot;</span>
-                          <span className="truncate font-mono text-[10px]">{escalation.id}</span>
+                          <span className="shrink-0 text-muted-foreground/30">&middot;</span>
+                          <span className="shrink-0">{formatRelativeTime(escalation.createdAt)}</span>
                         </div>
                       </div>
+                      {escalation.status === 'open' ? (
+                        <StatusPill status="open" />
+                      ) : (
+                        <StatusPill status="resolved" />
+                      )}
                     </button>
                   )
                 })}
@@ -179,6 +193,7 @@ export function EscalationView({
           </ScrollArea>
         </div>
 
+        {/* Mobile backdrop */}
         {selectedEscalation ? (
           <button
             type="button"
@@ -188,23 +203,26 @@ export function EscalationView({
           />
         ) : null}
 
+        {/* Detail panel */}
         <aside
           className={cn(
-            'fixed inset-y-0 right-0 z-30 w-full max-w-[34rem] border-l border-border/40 bg-background transition-transform duration-150 ease-out md:static md:z-0 md:max-w-none md:overflow-hidden md:transition-[width,transform]',
+            'fixed inset-y-0 right-0 z-30 w-full max-w-[34rem] border-l border-border/30 bg-background transition-transform duration-150 ease-out md:static md:z-0 md:max-w-none md:overflow-hidden md:transition-[width,transform]',
             selectedEscalation ? 'translate-x-0 md:w-[28rem]' : 'translate-x-full md:w-0',
           )}
         >
           {selectedEscalation ? (
             <div className="flex h-full min-h-0 flex-col">
-              <div className="flex items-start justify-between gap-3 px-5 pt-5 pb-4">
+              {/* Detail header */}
+              <div className="flex items-start justify-between gap-3 px-5 pt-5 pb-3">
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
                     <StatusBadge status={selectedEscalation.status} />
-                    <span className="truncate text-[11px] text-muted-foreground/70">
+                    <span className="text-[11px] text-muted-foreground/50">&middot;</span>
+                    <span className="truncate text-[11px] text-muted-foreground/60">
                       {managerNameById.get(selectedEscalation.managerId) ?? selectedEscalation.managerId}
                     </span>
                   </div>
-                  <h2 className="mt-2 text-lg font-semibold tracking-tight text-foreground">
+                  <h2 className="mt-2.5 text-[15px] font-semibold leading-snug text-foreground">
                     {selectedEscalation.title}
                   </h2>
                 </div>
@@ -215,77 +233,98 @@ export function EscalationView({
                   size="icon-sm"
                   onClick={() => setSelectedEscalationId(null)}
                   aria-label="Close escalation details"
-                  className="mt-0.5 shrink-0 text-muted-foreground/60 hover:text-foreground"
+                  className="mt-0.5 shrink-0 text-muted-foreground/50 hover:text-foreground"
                 >
                   <X className="size-4" />
                 </Button>
               </div>
 
-              <div className="flex flex-wrap items-center gap-4 border-t border-border/30 px-5 py-3 text-[12px] text-muted-foreground/70">
+              {/* Detail metadata */}
+              <div className="flex items-center gap-3.5 px-5 pb-3 text-[11px] text-muted-foreground/50">
                 <span className="inline-flex items-center gap-1.5">
-                  <CalendarDays className="size-3" />
+                  <CalendarDays className="size-3 opacity-60" />
                   {formatDateTime(selectedEscalation.createdAt)}
                 </span>
                 <span className="inline-flex items-center gap-1.5">
-                  <UserRound className="size-3" />
+                  <UserRound className="size-3 opacity-60" />
                   {managerNameById.get(selectedEscalation.managerId) ?? selectedEscalation.managerId}
                 </span>
-                <span className="font-mono text-[10px] text-muted-foreground/60">{selectedEscalation.id}</span>
               </div>
 
               <ScrollArea className="min-h-0 flex-1">
-                <section className="border-t border-border/30 px-5 py-4">
-                  <p className="mb-2 text-[11px] font-medium uppercase tracking-widest text-muted-foreground/50">
+                {/* Description */}
+                <section className="border-t border-border/20 px-5 py-4">
+                  <p className="mb-2 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground/40">
                     Description
                   </p>
-                  <p className="whitespace-pre-wrap text-sm leading-relaxed text-foreground/85">
+                  <p className="whitespace-pre-wrap text-[13px] leading-relaxed text-foreground/80">
                     {selectedEscalation.description}
                   </p>
                 </section>
 
-                <section className="border-t border-border/30 px-5 py-4">
-                  <div className="mb-3 flex items-center gap-2">
-                    <AlertCircle className="size-3 text-muted-foreground/50" />
-                    <p className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground/50">
-                      Response
-                    </p>
-                  </div>
+                {/* Response */}
+                <section className="border-t border-border/20 px-5 py-4">
+                  <p className="mb-3 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground/40">
+                    Response
+                  </p>
 
                   {isResolved ? (
                     <ResolvedEscalationResponse escalation={selectedEscalation} />
                   ) : (
                     <div className="space-y-4">
-                      <div className="space-y-2">
-                        {selectedEscalation.options.map((option) => {
-                          const isSelected = selectedOption === option
+                      {/* Option buttons */}
+                      {selectedEscalation.options.length > 0 ? (
+                        <div className="space-y-1.5">
+                          {selectedEscalation.options.map((option) => {
+                            const isOptionSelected = selectedOption === option
 
-                          return (
-                            <Button
-                              key={option}
-                              type="button"
-                              variant={isSelected ? 'default' : 'outline'}
-                              className={cn(
-                                'h-auto w-full justify-start whitespace-normal px-3 py-2 text-left text-sm',
-                                !isSelected && 'bg-background',
-                              )}
-                              onClick={() =>
-                                setSelectedOptionByEscalationId((current) => ({
-                                  ...current,
-                                  [selectedEscalation.id]: option,
-                                }))
-                              }
-                              disabled={isSubmitting}
-                            >
-                              {option}
-                            </Button>
-                          )
-                        })}
-                      </div>
+                            return (
+                              <button
+                                key={option}
+                                type="button"
+                                className={cn(
+                                  'flex w-full items-center gap-2.5 rounded-lg px-3 py-2.5 text-left text-[13px] transition-all duration-100',
+                                  isOptionSelected
+                                    ? 'bg-primary/10 text-foreground ring-1 ring-primary/30'
+                                    : 'text-foreground/80 hover:bg-muted/50 ring-1 ring-border/40 hover:ring-border/60',
+                                  isSubmitting && 'opacity-50 pointer-events-none',
+                                )}
+                                onClick={() =>
+                                  setSelectedOptionByEscalationId((current) => ({
+                                    ...current,
+                                    [selectedEscalation.id]: option,
+                                  }))
+                                }
+                                disabled={isSubmitting}
+                              >
+                                <span
+                                  className={cn(
+                                    'flex size-4 shrink-0 items-center justify-center rounded-full border transition-colors',
+                                    isOptionSelected
+                                      ? 'border-primary bg-primary text-primary-foreground'
+                                      : 'border-muted-foreground/30',
+                                  )}
+                                >
+                                  {isOptionSelected ? <Check className="size-2.5" strokeWidth={3} /> : null}
+                                </span>
+                                <span className="flex-1">{option}</span>
+                              </button>
+                            )
+                          })}
+                        </div>
+                      ) : null}
 
-                      <div className="space-y-2">
-                        <p className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground/50">
-                          Custom response
-                        </p>
+                      {/* Divider */}
+                      {selectedEscalation.options.length > 0 ? (
+                        <div className="flex items-center gap-3 px-1">
+                          <div className="h-px flex-1 bg-border/30" />
+                          <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground/35">or</span>
+                          <div className="h-px flex-1 bg-border/30" />
+                        </div>
+                      ) : null}
+
+                      {/* Custom response */}
+                      <div>
                         <Textarea
                           value={customResponse}
                           onChange={(event) =>
@@ -294,35 +333,38 @@ export function EscalationView({
                               [selectedEscalation.id]: event.target.value,
                             }))
                           }
-                          placeholder="Add a custom response if none of the options fit."
-                          rows={4}
-                          className="resize-none border-none bg-muted/30 text-sm shadow-none placeholder:text-muted-foreground/40 focus-visible:ring-1 focus-visible:ring-border"
+                          placeholder="Write a custom response…"
+                          rows={3}
+                          className="resize-none border-none bg-muted/25 text-[13px] shadow-none placeholder:text-muted-foreground/35 focus-visible:bg-muted/40 focus-visible:ring-1 focus-visible:ring-border/50"
                           disabled={isSubmitting}
                         />
                       </div>
 
-                      <div className="flex items-center justify-between gap-3">
-                        <p className="text-[11px] text-muted-foreground/60">
+                      {/* Submit */}
+                      <div className="flex items-center justify-between gap-3 pt-1">
+                        <p className="text-[11px] text-muted-foreground/50">
                           {trimmedCustomResponse
-                            ? 'Custom response will be submitted.'
+                            ? 'Custom response will be sent.'
                             : selectedOption
-                              ? 'Selected option will be submitted.'
-                              : 'Choose an option or enter a custom response.'}
+                              ? 'Selected option will be sent.'
+                              : 'Choose an option or write a response.'}
                         </p>
                         <Button
                           type="button"
                           size="sm"
-                          className="h-8"
+                          className="h-8 px-3.5"
                           onClick={() => {
                             void handleSubmit()
                           }}
                           disabled={!canSubmit}
                         >
-                          {isSubmitting ? 'Submitting…' : 'Submit response'}
+                          {isSubmitting ? 'Sending…' : 'Send'}
                         </Button>
                       </div>
 
-                      {submitError ? <p className="text-[11px] text-destructive">{submitError}</p> : null}
+                      {submitError ? (
+                        <p className="rounded-md bg-destructive/5 px-3 py-2 text-[11px] text-destructive">{submitError}</p>
+                      ) : null}
                     </div>
                   )}
                 </section>
@@ -340,15 +382,20 @@ function ResolvedEscalationResponse({ escalation }: { escalation: UserEscalation
   const responseBadgeLabel = escalation.response?.isCustom ? 'Custom response' : 'Selected option'
 
   return (
-    <div className="rounded-lg border border-border/50 bg-muted/20 p-4">
-      {escalation.response ? (
-        <Badge variant="outline" className="mb-3 border-current/20 bg-background/60 text-[10px]">
-          {responseBadgeLabel}
-        </Badge>
-      ) : null}
-      <p className="whitespace-pre-wrap text-sm leading-relaxed text-foreground/85">{responseText}</p>
+    <div className="rounded-lg bg-emerald-500/5 p-4">
+      <div className="mb-2.5 flex items-center gap-2">
+        <span className="flex size-5 items-center justify-center rounded-full bg-emerald-500/15">
+          <Check className="size-3 text-emerald-600 dark:text-emerald-400" strokeWidth={2.5} />
+        </span>
+        {escalation.response ? (
+          <span className="text-[10px] font-medium uppercase tracking-wide text-emerald-600/70 dark:text-emerald-400/70">
+            {responseBadgeLabel}
+          </span>
+        ) : null}
+      </div>
+      <p className="whitespace-pre-wrap text-[13px] leading-relaxed text-foreground/80">{responseText}</p>
       {escalation.resolvedAt ? (
-        <p className="mt-3 text-[11px] text-muted-foreground/60">
+        <p className="mt-3 text-[11px] text-muted-foreground/50">
           Resolved {formatDateTime(escalation.resolvedAt)}
         </p>
       ) : null}
@@ -356,14 +403,27 @@ function ResolvedEscalationResponse({ escalation }: { escalation: UserEscalation
   )
 }
 
+function StatusDot({ status }: { status: UserEscalation['status'] }) {
+  return (
+    <span
+      className={cn(
+        'mt-0.5 size-2 shrink-0 rounded-full',
+        status === 'open'
+          ? 'bg-amber-500 dark:bg-amber-400'
+          : 'bg-emerald-500/50 dark:bg-emerald-400/50',
+      )}
+    />
+  )
+}
+
 function StatusPill({ status }: { status: UserEscalation['status'] }) {
   return (
     <span
       className={cn(
-        'mt-0.5 inline-flex h-6 min-w-[4.75rem] items-center justify-center rounded-full px-2 text-[10px] font-medium uppercase tracking-wide',
+        'inline-flex shrink-0 items-center rounded-full px-2 py-0.5 text-[10px] font-medium',
         status === 'open'
-          ? 'bg-amber-500/12 text-amber-700 dark:text-amber-300'
-          : 'bg-emerald-500/12 text-emerald-700 dark:text-emerald-300',
+          ? 'bg-amber-500/10 text-amber-600 dark:text-amber-400'
+          : 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400',
       )}
     >
       {status}
@@ -373,17 +433,17 @@ function StatusPill({ status }: { status: UserEscalation['status'] }) {
 
 function StatusBadge({ status }: { status: UserEscalation['status'] }) {
   return (
-    <Badge
-      variant="outline"
+    <span
       className={cn(
-        'border-current/20 bg-background/60 text-[10px] uppercase tracking-wide',
+        'inline-flex items-center gap-1 text-[11px] font-medium',
         status === 'open'
-          ? 'text-amber-700 dark:text-amber-300'
-          : 'text-emerald-700 dark:text-emerald-300',
+          ? 'text-amber-600 dark:text-amber-400'
+          : 'text-emerald-600 dark:text-emerald-400',
       )}
     >
-      {status}
-    </Badge>
+      <CircleDot className="size-3" />
+      {status === 'open' ? 'Open' : 'Resolved'}
+    </span>
   )
 }
 
@@ -412,4 +472,26 @@ function formatDateTime(value: string): string {
     hour: 'numeric',
     minute: '2-digit',
   }).format(date)
+}
+
+function formatRelativeTime(value: string): string {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) {
+    return value
+  }
+
+  const now = Date.now()
+  const diffMs = now - date.getTime()
+  const diffMinutes = Math.floor(diffMs / 60_000)
+
+  if (diffMinutes < 1) return 'just now'
+  if (diffMinutes < 60) return `${diffMinutes}m ago`
+
+  const diffHours = Math.floor(diffMinutes / 60)
+  if (diffHours < 24) return `${diffHours}h ago`
+
+  const diffDays = Math.floor(diffHours / 24)
+  if (diffDays < 7) return `${diffDays}d ago`
+
+  return formatDateTime(value)
 }
