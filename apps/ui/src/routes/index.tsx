@@ -16,10 +16,10 @@ import { ArtifactsSidebar } from '@/components/chat/ArtifactsSidebar'
 import { ChatHeader } from '@/components/chat/ChatHeader'
 import { CreateManagerDialog } from '@/components/chat/CreateManagerDialog'
 import { DeleteManagerDialog } from '@/components/chat/DeleteManagerDialog'
+import { EscalationView } from '@/components/chat/EscalationView'
 import { MessageInput, type MessageInputHandle } from '@/components/chat/MessageInput'
 import { MessageList } from '@/components/chat/MessageList'
 import { SettingsPanel } from '@/components/chat/SettingsDialog'
-import { TaskView } from '@/components/chat/TaskView'
 import { chooseFallbackAgentId } from '@/lib/agent-hierarchy'
 import type { ArtifactReference } from '@/lib/artifacts'
 import { collectArtifactsFromMessages } from '@/lib/collect-artifacts'
@@ -339,39 +339,21 @@ export function IndexPage() {
     navigateToRoute({ view: 'settings' })
   }
 
-  const handleOpenTasksPanel = () => {
-    navigateToRoute({ view: 'tasks' })
+  const handleOpenEscalationsPanel = () => {
+    navigateToRoute({ view: 'escalations' })
   }
 
-  const handleCompleteTask = async (taskId: string, comment?: string) => {
-    const client = clientRef.current
-    if (!client) {
-      throw new Error('WebSocket client is not available.')
-    }
-
-    await client.completeTask(taskId, comment)
-  }
-
-  const handleAddTaskComment = async (taskId: string, comment: string) => {
-    const client = clientRef.current
-    if (!client) {
-      throw new Error('WebSocket client is not available.')
-    }
-
-    await client.addTaskComment(taskId, comment)
-  }
-
-  const handleUpdateTask = async (input: {
-    taskId: string
-    title?: string
-    description?: string
+  const handleResolveEscalation = async (input: {
+    escalationId: string
+    choice: string
+    isCustom: boolean
   }) => {
     const client = clientRef.current
     if (!client) {
       throw new Error('WebSocket client is not available.')
     }
 
-    await client.updateTask(input)
+    await client.resolveEscalation(input)
   }
 
   const handleSuggestionClick = (prompt: string) => {
@@ -399,15 +381,15 @@ export function IndexPage() {
           statuses={state.statuses}
           selectedAgentId={activeAgentId}
           isSettingsActive={activeView === 'settings'}
-          isTasksActive={activeView === 'tasks'}
-          tasks={state.tasks}
+          isEscalationsActive={activeView === 'escalations'}
+          escalations={state.escalations}
           isMobileOpen={isMobileSidebarOpen}
           onMobileClose={() => setIsMobileSidebarOpen(false)}
           onAddManager={handleOpenCreateManagerDialog}
           onSelectAgent={handleSelectAgent}
           onDeleteAgent={handleDeleteAgent}
           onDeleteManager={handleRequestDeleteManager}
-          onOpenTasks={handleOpenTasksPanel}
+          onOpenEscalations={handleOpenEscalationsPanel}
           onOpenSettings={handleOpenSettingsPanel}
         />
 
@@ -442,9 +424,9 @@ export function IndexPage() {
                   })
                 }
               />
-            ) : activeView === 'tasks' ? (
-              <TaskView
-                tasks={state.tasks}
+            ) : activeView === 'escalations' ? (
+              <EscalationView
+                escalations={state.escalations}
                 managers={state.agents.filter((agent) => agent.role === 'manager')}
                 onBack={() =>
                   navigateToRoute({
@@ -452,9 +434,7 @@ export function IndexPage() {
                     agentId: activeAgentId ?? DEFAULT_MANAGER_AGENT_ID,
                   })
                 }
-                onAddTaskComment={handleAddTaskComment}
-                onCompleteTask={handleCompleteTask}
-                onUpdateTask={handleUpdateTask}
+                onResolveEscalation={handleResolveEscalation}
                 onToggleMobileSidebar={() => setIsMobileSidebarOpen((previous) => !previous)}
               />
             ) : (

@@ -3,7 +3,7 @@ import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import type { ServerEvent } from "@middleman/protocol";
-import { TaskStorage } from "../tasks/task-storage.js";
+import { EscalationStorage } from "../escalations/escalation-storage.js";
 import {
   loadArchetypePromptRegistry,
   normalizeArchetypeId,
@@ -78,7 +78,8 @@ import type {
   SpawnAgentInput,
   SwarmConfig,
   SwarmModelPreset,
-  UserTask
+  UserEscalation,
+  UserEscalationResponse
 } from "./types.js";
 
 const DEFAULT_WORKER_SYSTEM_PROMPT = `You are a worker agent in a swarm.
@@ -219,7 +220,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   private readonly conversationEntriesByAgentId = new Map<string, ConversationEntryEvent[]>();
   private readonly conversationProjector: ConversationProjector;
   private readonly persistenceService: PersistenceService;
-  private readonly taskStorage: TaskStorage;
+  private readonly escalationStorage: EscalationStorage;
   private readonly runtimeFactory: RuntimeFactory;
   private readonly skillMetadataService: SkillMetadataService;
   private readonly secretsEnvService: SecretsEnvService;
@@ -246,7 +247,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       extractDescriptorAgentId,
       logDebug: (message, details) => this.logDebug(message, details)
     });
-    this.taskStorage = new TaskStorage({
+    this.escalationStorage = new EscalationStorage({
       dataDir: this.config.paths.dataDir,
       now: this.now
     });
@@ -304,7 +305,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     });
 
     await this.ensureDirectories();
-    await this.taskStorage.load();
+    await this.escalationStorage.load();
     await this.loadSecretsStore();
     await this.reloadSkillMetadata();
 
@@ -650,213 +651,188 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     this.conversationProjector.deleteConversationHistory(targetManagerId);
 
     await this.deleteManagerSchedulesFile(targetManagerId);
-    const deletedTaskIds = await this.taskStorage.deleteForManager(targetManagerId);
+    const deletedEscalationIds = await this.escalationStorage.deleteForManager(targetManagerId);
     await this.saveStore();
     this.emitAgentsSnapshot();
-    if (deletedTaskIds.length > 0) {
-      this.emitTasksDeleted(deletedTaskIds);
+    if (deletedEscalationIds.length > 0) {
+      this.emitEscalationsDeleted(deletedEscalationIds);
     }
 
     this.logDebug("manager:delete", {
       callerAgentId,
       targetManagerId,
       terminatedWorkerIds,
-      deletedTaskIds
+      deletedEscalationIds
     });
 
     return { managerId: targetManagerId, terminatedWorkerIds };
   }
 
-  async createTaskForManager(
+  async createEscalationForManager(
     managerId: string,
-    input: { title: string; description?: string }
-  ): Promise<UserTask> {
-    const manager = this.assertManager(managerId, "manage tasks");
-    const title = input.title.trim();
-    if (title.length === 0) {
-      throw new Error("task title must be a non-empty string");
-    }
-
-    const task = await this.taskStorage.create({
+    input: { title: string; description: string; options: string[] }
+  ): Promise<UserEscalation> {
+    const manager = this.assertManager(managerId, "manage escalations");
+    const escalation = await this.escalationStorage.create({
       managerId: manager.agentId,
-      title,
-      description: input.description
+      title: input.title,
+      description: input.description,
+      options: input.options
     });
 
-    this.logDebug("task:assign", {
+    this.logDebug("escalation:create", {
       managerId: manager.agentId,
-      taskId: task.id,
-      title: task.title
+      escalationId: escalation.id,
+      title: escalation.title,
+      optionCount: escalation.options.length
     });
-    this.emitTaskCreated(task);
+    this.emitEscalationCreated(escalation);
 
-    return task;
+    return escalation;
   }
 
-  async listOutstandingTasksForManager(managerId: string): Promise<UserTask[]> {
-    const manager = this.assertManager(managerId, "manage tasks");
-    return this.taskStorage.listOutstanding(manager.agentId);
-  }
-
-  listAllTasks(): UserTask[] {
-    return this.taskStorage.listAll();
-  }
-
-  async addTaskComment(taskId: string, comment: string): Promise<UserTask> {
-    const normalizedTaskId = taskId.trim();
-    if (normalizedTaskId.length === 0) {
-      throw new Error("add_task_comment taskId must be a non-empty string");
-    }
-
-    const updatedTask = await this.taskStorage.addComment(normalizedTaskId, comment);
-
-    this.logDebug("task:comment", {
-      taskId: updatedTask.id,
-      managerId: updatedTask.managerId
-    });
-    this.emitTaskUpdated(updatedTask);
-
-    return updatedTask;
-  }
-
-  async updateTask(
-    taskId: string,
-    input: {
-      title?: string;
-      description?: string;
-    }
-  ): Promise<UserTask> {
-    const normalizedTaskId = taskId.trim();
-    if (normalizedTaskId.length === 0) {
-      throw new Error("update_task taskId must be a non-empty string");
-    }
-    if (input.title === undefined && input.description === undefined) {
-      throw new Error("update_task requires title or description");
-    }
-
-    const updatedTask = await this.taskStorage.update(normalizedTaskId, input);
-
-    this.logDebug("task:update", {
-      taskId: updatedTask.id,
-      managerId: updatedTask.managerId,
-      updatedTitle: input.title !== undefined,
-      updatedDescription: input.description !== undefined
-    });
-    this.emitTaskUpdated(updatedTask);
-
-    return updatedTask;
-  }
-
-  async updateTaskForManager(
+  async listEscalationsForManager(
     managerId: string,
-    taskId: string,
-    input: {
-      title?: string;
-      description?: string;
-    }
-  ): Promise<UserTask> {
-    const manager = this.assertManager(managerId, "manage tasks");
-    const existingTask = this.taskStorage.get(taskId.trim());
-    if (!existingTask) {
-      throw new Error(`Unknown task: ${taskId.trim()}`);
-    }
-
-    if (existingTask.managerId !== manager.agentId) {
-      throw new Error(`Task ${existingTask.id} does not belong to manager ${manager.agentId}`);
-    }
-
-    return this.updateTask(existingTask.id, input);
+    status: "open" | "resolved" | "all" = "open"
+  ): Promise<UserEscalation[]> {
+    const manager = this.assertManager(managerId, "manage escalations");
+    return this.escalationStorage.listForManager(manager.agentId, status);
   }
 
-  async completeTask(
-    taskId: string,
-    options?: {
-      comment?: string;
+  async listOpenEscalationsForManager(managerId: string): Promise<UserEscalation[]> {
+    return this.listEscalationsForManager(managerId, "open");
+  }
+
+  getEscalationForManager(managerId: string, escalationId: string): UserEscalation {
+    const manager = this.assertManager(managerId, "manage escalations");
+    const normalizedEscalationId = escalationId.trim();
+    if (normalizedEscalationId.length === 0) {
+      throw new Error("escalation id must be a non-empty string");
+    }
+
+    const escalation = this.escalationStorage.get(normalizedEscalationId);
+    if (!escalation) {
+      throw new Error(`Unknown escalation: ${normalizedEscalationId}`);
+    }
+
+    if (escalation.managerId !== manager.agentId) {
+      throw new Error(`Escalation ${escalation.id} does not belong to manager ${manager.agentId}`);
+    }
+
+    return escalation;
+  }
+
+  listAllEscalations(): UserEscalation[] {
+    return this.escalationStorage.listAll();
+  }
+
+  async resolveEscalation(
+    escalationId: string,
+    options: {
+      choice: string;
+      isCustom: boolean;
       sourceContext?: MessageSourceContext;
     }
-  ): Promise<UserTask> {
-    const normalizedTaskId = taskId.trim();
-    if (normalizedTaskId.length === 0) {
-      throw new Error("complete_task taskId must be a non-empty string");
+  ): Promise<UserEscalation> {
+    const normalizedEscalationId = escalationId.trim();
+    if (normalizedEscalationId.length === 0) {
+      throw new Error("resolve_escalation escalationId must be a non-empty string");
     }
 
-    const existingTask = this.taskStorage.get(normalizedTaskId);
-    if (!existingTask) {
-      throw new Error(`Unknown task: ${normalizedTaskId}`);
+    const existingEscalation = this.escalationStorage.get(normalizedEscalationId);
+    if (!existingEscalation) {
+      throw new Error(`Unknown escalation: ${normalizedEscalationId}`);
     }
 
-    if (existingTask.status === "completed") {
-      return existingTask;
+    if (existingEscalation.status === "resolved") {
+      return existingEscalation;
     }
 
-    const normalizedComment = normalizeOptionalMetadataValue(options?.comment);
-    if (normalizedComment) {
-      await this.taskStorage.addComment(normalizedTaskId, normalizedComment);
-    }
+    const response = this.buildEscalationResponse(existingEscalation, options.choice, options.isCustom);
+    const resolvedEscalation = await this.escalationStorage.resolve(normalizedEscalationId, response);
+    const sourceContext = normalizeMessageSourceContext(options.sourceContext ?? { channel: "web" });
 
-    const sourceContext = normalizeMessageSourceContext(options?.sourceContext ?? { channel: "web" });
     await this.handleUserMessage(
-      formatTaskCompletionMessage(existingTask.title),
+      formatEscalationResolutionMessage(resolvedEscalation, response.choice),
       {
-        targetAgentId: existingTask.managerId,
+        targetAgentId: resolvedEscalation.managerId,
         sourceContext
       }
     );
 
-    const completedTask = await this.taskStorage.complete(normalizedTaskId, {
-      completionEntryBody: "User completed this task."
+    this.logDebug("escalation:resolve", {
+      managerId: resolvedEscalation.managerId,
+      escalationId: resolvedEscalation.id,
+      isCustom: response.isCustom
     });
+    this.emitEscalationUpdated(resolvedEscalation);
 
-    this.logDebug("task:complete", {
-      managerId: completedTask.managerId,
-      taskId: completedTask.id,
-      hasComment: Boolean(normalizedComment)
-    });
-    this.emitTaskUpdated(completedTask);
-
-    return completedTask;
+    return resolvedEscalation;
   }
 
-  async closeTaskForManager(
+  async closeEscalationForManager(
     managerId: string,
-    taskId: string,
+    escalationId: string,
     options?: {
       comment?: string;
     }
-  ): Promise<UserTask> {
-    const manager = this.assertManager(managerId, "manage tasks");
-    const normalizedTaskId = taskId.trim();
-    if (normalizedTaskId.length === 0) {
-      throw new Error("task id must be a non-empty string");
+  ): Promise<UserEscalation> {
+    const manager = this.assertManager(managerId, "manage escalations");
+    const normalizedEscalationId = escalationId.trim();
+    if (normalizedEscalationId.length === 0) {
+      throw new Error("escalation id must be a non-empty string");
     }
 
-    const existingTask = this.taskStorage.get(normalizedTaskId);
-    if (!existingTask) {
-      throw new Error(`Unknown task: ${normalizedTaskId}`);
+    const existingEscalation = this.escalationStorage.get(normalizedEscalationId);
+    if (!existingEscalation) {
+      throw new Error(`Unknown escalation: ${normalizedEscalationId}`);
     }
 
-    if (existingTask.managerId !== manager.agentId) {
-      throw new Error(`Task ${existingTask.id} does not belong to manager ${manager.agentId}`);
+    if (existingEscalation.managerId !== manager.agentId) {
+      throw new Error(`Escalation ${existingEscalation.id} does not belong to manager ${manager.agentId}`);
     }
 
-    if (existingTask.status === "completed") {
-      return existingTask;
+    if (existingEscalation.status === "resolved") {
+      return existingEscalation;
     }
 
     const normalizedComment = normalizeOptionalMetadataValue(options?.comment);
-    const completedTask = await this.taskStorage.complete(normalizedTaskId, {
-      comment: normalizedComment,
-      completionEntryBody: normalizedComment ?? "Task closed by manager."
-    });
+    const response = normalizedComment
+      ? {
+          choice: normalizedComment,
+          isCustom: true
+        }
+      : undefined;
+    const resolvedEscalation = await this.escalationStorage.resolve(normalizedEscalationId, response);
 
-    this.logDebug("task:close", {
-      managerId: completedTask.managerId,
-      taskId: completedTask.id,
+    this.logDebug("escalation:close", {
+      managerId: resolvedEscalation.managerId,
+      escalationId: resolvedEscalation.id,
       hasComment: Boolean(normalizedComment)
     });
-    this.emitTaskUpdated(completedTask);
+    this.emitEscalationUpdated(resolvedEscalation);
 
-    return completedTask;
+    return resolvedEscalation;
+  }
+
+  private buildEscalationResponse(
+    escalation: UserEscalation,
+    choice: string,
+    isCustom: boolean
+  ): UserEscalationResponse {
+    const normalizedChoice = choice.trim();
+    if (normalizedChoice.length === 0) {
+      throw new Error("resolve_escalation choice must be a non-empty string");
+    }
+
+    if (!isCustom && !escalation.options.includes(normalizedChoice)) {
+      throw new Error("resolve_escalation choice must match one of the escalation options");
+    }
+
+    return {
+      choice: normalizedChoice,
+      isCustom
+    };
   }
 
   getAgent(agentId: string): AgentDescriptor | undefined {
@@ -2279,24 +2255,24 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     this.emit("agents_snapshot", payload satisfies ServerEvent);
   }
 
-  private emitTaskCreated(task: UserTask): void {
-    this.emit("task_created", {
-      type: "task_created",
-      task
+  private emitEscalationCreated(escalation: UserEscalation): void {
+    this.emit("escalation_created", {
+      type: "escalation_created",
+      escalation
     } satisfies ServerEvent);
   }
 
-  private emitTaskUpdated(task: UserTask): void {
-    this.emit("task_updated", {
-      type: "task_updated",
-      task
+  private emitEscalationUpdated(escalation: UserEscalation): void {
+    this.emit("escalation_updated", {
+      type: "escalation_updated",
+      escalation
     } satisfies ServerEvent);
   }
 
-  private emitTasksDeleted(taskIds: string[]): void {
-    this.emit("tasks_deleted", {
-      type: "tasks_deleted",
-      taskIds
+  private emitEscalationsDeleted(escalationIds: string[]): void {
+    this.emit("escalations_deleted", {
+      type: "escalations_deleted",
+      escalationIds
     } satisfies ServerEvent);
   }
 
@@ -2746,9 +2722,8 @@ function formatInboundUserMessageForManager(text: string, sourceContext: Message
   return `${sourceMetadataLine}\n\n${trimmed}`;
 }
 
-function formatTaskCompletionMessage(title: string): string {
-  const normalizedTitle = title.trim();
-  return `User completed task: ${normalizedTitle}. Check task comments for details.`;
+function formatEscalationResolutionMessage(escalation: UserEscalation, choice: string): string {
+  return `Escalation resolved: [${escalation.id}] — Question: "${escalation.title}" — Response: "${choice}"`;
 }
 
 function parseCompactSlashCommand(text: string): { customInstructions?: string } | undefined {

@@ -62,108 +62,48 @@ export function parseClientCommand(raw: RawData): ParsedClientCommand {
     };
   }
 
-  if (maybe.type === "get_all_tasks") {
+  if (maybe.type === "get_all_escalations") {
     const requestId = (maybe as { requestId?: unknown }).requestId;
 
     if (requestId !== undefined && typeof requestId !== "string") {
-      return { ok: false, error: "get_all_tasks.requestId must be a string when provided" };
+      return { ok: false, error: "get_all_escalations.requestId must be a string when provided" };
     }
 
     return {
       ok: true,
       command: {
-        type: "get_all_tasks",
+        type: "get_all_escalations",
         requestId
       }
     };
   }
 
-  if (maybe.type === "add_task_comment") {
-    const taskId = (maybe as { taskId?: unknown }).taskId;
-    const comment = (maybe as { comment?: unknown }).comment;
+  if (maybe.type === "resolve_escalation") {
+    const escalationId = (maybe as { escalationId?: unknown }).escalationId;
+    const choice = (maybe as { choice?: unknown }).choice;
+    const isCustom = (maybe as { isCustom?: unknown }).isCustom;
     const requestId = (maybe as { requestId?: unknown }).requestId;
 
-    if (typeof taskId !== "string" || taskId.trim().length === 0) {
-      return { ok: false, error: "add_task_comment.taskId must be a non-empty string" };
+    if (typeof escalationId !== "string" || escalationId.trim().length === 0) {
+      return { ok: false, error: "resolve_escalation.escalationId must be a non-empty string" };
     }
-    if (typeof comment !== "string" || comment.trim().length === 0) {
-      return { ok: false, error: "add_task_comment.comment must be a non-empty string" };
+    if (typeof choice !== "string" || choice.trim().length === 0) {
+      return { ok: false, error: "resolve_escalation.choice must be a non-empty string" };
+    }
+    if (typeof isCustom !== "boolean") {
+      return { ok: false, error: "resolve_escalation.isCustom must be a boolean" };
     }
     if (requestId !== undefined && typeof requestId !== "string") {
-      return { ok: false, error: "add_task_comment.requestId must be a string when provided" };
+      return { ok: false, error: "resolve_escalation.requestId must be a string when provided" };
     }
 
     return {
       ok: true,
       command: {
-        type: "add_task_comment",
-        taskId: taskId.trim(),
-        comment: comment.trim(),
-        requestId
-      }
-    };
-  }
-
-  if (maybe.type === "complete_task") {
-    const taskId = (maybe as { taskId?: unknown }).taskId;
-    const comment = (maybe as { comment?: unknown }).comment;
-    const requestId = (maybe as { requestId?: unknown }).requestId;
-
-    if (typeof taskId !== "string" || taskId.trim().length === 0) {
-      return { ok: false, error: "complete_task.taskId must be a non-empty string" };
-    }
-    if (comment !== undefined && typeof comment !== "string") {
-      return { ok: false, error: "complete_task.comment must be a string when provided" };
-    }
-    if (requestId !== undefined && typeof requestId !== "string") {
-      return { ok: false, error: "complete_task.requestId must be a string when provided" };
-    }
-
-    return {
-      ok: true,
-      command: {
-        type: "complete_task",
-        taskId: taskId.trim(),
-        comment: comment?.trim() ? comment.trim() : undefined,
-        requestId
-      }
-    };
-  }
-
-  if (maybe.type === "update_task") {
-    const taskId = (maybe as { taskId?: unknown }).taskId;
-    const title = (maybe as { title?: unknown }).title;
-    const description = (maybe as { description?: unknown }).description;
-    const requestId = (maybe as { requestId?: unknown }).requestId;
-
-    if (typeof taskId !== "string" || taskId.trim().length === 0) {
-      return { ok: false, error: "update_task.taskId must be a non-empty string" };
-    }
-    if (title !== undefined && typeof title !== "string") {
-      return { ok: false, error: "update_task.title must be a string when provided" };
-    }
-    if (description !== undefined && typeof description !== "string") {
-      return { ok: false, error: "update_task.description must be a string when provided" };
-    }
-    if (requestId !== undefined && typeof requestId !== "string") {
-      return { ok: false, error: "update_task.requestId must be a string when provided" };
-    }
-    if (title === undefined && description === undefined) {
-      return { ok: false, error: "update_task must include title or description" };
-    }
-
-    const trimmedTitle = typeof title === "string" ? title.trim() : undefined;
-    if (title !== undefined && !trimmedTitle) {
-      return { ok: false, error: "update_task.title must be a non-empty string when provided" };
-    }
-
-    return {
-      ok: true,
-      command: {
-        type: "update_task",
-        taskId: taskId.trim(),
-        title: trimmedTitle,
-        description: description !== undefined ? description.trim() : undefined,
+        type: "resolve_escalation",
+        escalationId: escalationId.trim(),
+        choice: choice.trim(),
+        isCustom,
         requestId
       }
     };
@@ -379,10 +319,8 @@ export function extractRequestId(command: ClientCommand): string | undefined {
     case "list_directories":
     case "validate_directory":
     case "pick_directory":
-    case "get_all_tasks":
-    case "add_task_comment":
-    case "complete_task":
-    case "update_task":
+    case "get_all_escalations":
+    case "resolve_escalation":
       return command.requestId;
 
     case "subscribe":

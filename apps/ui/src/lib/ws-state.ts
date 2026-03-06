@@ -5,7 +5,7 @@ import type {
   ConversationEntry,
   SlackStatusEvent,
   TelegramStatusEvent,
-  UserTask,
+  UserEscalation,
 } from '@middleman/protocol'
 
 export type ConversationHistoryEntry = Extract<
@@ -25,7 +25,7 @@ export interface ManagerWsState {
   messages: ConversationHistoryEntry[]
   activityMessages: AgentActivityEntry[]
   agents: AgentDescriptor[]
-  tasks: UserTask[]
+  escalations: UserEscalation[]
   statuses: Record<string, { status: AgentStatus; pendingCount: number; contextUsage?: AgentContextUsage }>
   lastError: string | null
   slackStatus: SlackStatusEvent | null
@@ -41,7 +41,7 @@ export function createInitialManagerWsState(targetAgentId: string | null): Manag
     messages: [],
     activityMessages: [],
     agents: [],
-    tasks: [],
+    escalations: [],
     statuses: {},
     lastError: null,
     slackStatus: null,

@@ -86,8 +86,8 @@ describe('ManagerWsClient', () => {
       subscribedAgentId: 'manager',
     })
 
-    const getAllTasksPayload = JSON.parse(socket.sentPayloads[1])
-    expect(getAllTasksPayload.type).toBe('get_all_tasks')
+    const getAllEscalationsPayload = JSON.parse(socket.sentPayloads[1])
+    expect(getAllEscalationsPayload.type).toBe('get_all_escalations')
 
     client.sendUserMessage('hello manager')
 
@@ -1004,7 +1004,7 @@ describe('ManagerWsClient', () => {
     client.destroy()
   })
 
-  it('requests task snapshots after ready and keeps task state in sync with task events', async () => {
+  it('requests escalation snapshots after ready and keeps escalation state in sync with escalation events', async () => {
     const client = new ManagerWsClient('ws://127.0.0.1:8787', 'manager')
 
     client.start()
@@ -1021,53 +1021,60 @@ describe('ManagerWsClient', () => {
 
     const snapshotRequest = JSON.parse(socket.sentPayloads.at(-1) ?? '{}')
     expect(snapshotRequest).toMatchObject({
-      type: 'get_all_tasks',
+      type: 'get_all_escalations',
     })
 
     emitServerEvent(socket, {
-      type: 'tasks_snapshot',
+      type: 'escalations_snapshot',
       requestId: snapshotRequest.requestId,
-      tasks: [
+      escalations: [
         {
-          id: 'task-1',
+          id: 'esc-1',
           managerId: 'manager',
           title: 'Review deployment',
-          status: 'pending',
+          description: 'Choose whether to proceed with the rollout.',
+          options: ['Proceed', 'Pause'],
+          status: 'open',
           createdAt: '2026-01-02T00:00:00.000Z',
         },
       ],
     })
 
-    expect(client.getState().tasks).toHaveLength(1)
-    expect(client.getState().tasks[0]?.title).toBe('Review deployment')
+    expect(client.getState().escalations).toHaveLength(1)
+    expect(client.getState().escalations[0]?.title).toBe('Review deployment')
 
     emitServerEvent(socket, {
-      type: 'task_updated',
-      task: {
-        id: 'task-1',
+      type: 'escalation_updated',
+      escalation: {
+        id: 'esc-1',
         managerId: 'manager',
         title: 'Review deployment',
-        status: 'completed',
+        description: 'Choose whether to proceed with the rollout.',
+        options: ['Proceed', 'Pause'],
+        status: 'resolved',
         createdAt: '2026-01-02T00:00:00.000Z',
-        completedAt: '2026-01-02T01:00:00.000Z',
-        completionComment: 'Done',
+        resolvedAt: '2026-01-02T01:00:00.000Z',
+        response: {
+          choice: 'Proceed',
+          isCustom: false,
+        },
       },
     })
 
-    expect(client.getState().tasks[0]?.status).toBe('completed')
-    expect(client.getState().tasks[0]?.completionComment).toBe('Done')
+    expect(client.getState().escalations[0]?.status).toBe('resolved')
+    expect(client.getState().escalations[0]?.response?.choice).toBe('Proceed')
 
     emitServerEvent(socket, {
-      type: 'tasks_deleted',
-      taskIds: ['task-1'],
+      type: 'escalations_deleted',
+      escalationIds: ['esc-1'],
     })
 
-    expect(client.getState().tasks).toEqual([])
+    expect(client.getState().escalations).toEqual([])
 
     client.destroy()
   })
 
-  it('sends complete_task commands and resolves from task_completion_result', async () => {
+  it('sends resolve_escalation commands and resolves from escalation_resolution_result', async () => {
     const client = new ManagerWsClient('ws://127.0.0.1:8787', 'manager')
 
     client.start()
@@ -1084,160 +1091,51 @@ describe('ManagerWsClient', () => {
 
     const initialTaskRequest = JSON.parse(socket.sentPayloads.at(-1) ?? '{}')
     emitServerEvent(socket, {
-      type: 'tasks_snapshot',
+      type: 'escalations_snapshot',
       requestId: initialTaskRequest.requestId,
-      tasks: [],
+      escalations: [],
     })
 
-    const completionPromise = client.completeTask('task-9', 'Wrapped up')
-    const completionPayload = JSON.parse(socket.sentPayloads.at(-1) ?? '{}')
+    const resolutionPromise = client.resolveEscalation({
+      escalationId: 'esc-9',
+      choice: 'Wrapped up',
+      isCustom: true,
+    })
+    const resolutionPayload = JSON.parse(socket.sentPayloads.at(-1) ?? '{}')
 
-    expect(completionPayload).toMatchObject({
-      type: 'complete_task',
-      taskId: 'task-9',
-      comment: 'Wrapped up',
+    expect(resolutionPayload).toMatchObject({
+      type: 'resolve_escalation',
+      escalationId: 'esc-9',
+      choice: 'Wrapped up',
+      isCustom: true,
     })
 
     emitServerEvent(socket, {
-      type: 'task_completion_result',
-      requestId: completionPayload.requestId,
-      task: {
-        id: 'task-9',
+      type: 'escalation_resolution_result',
+      requestId: resolutionPayload.requestId,
+      escalation: {
+        id: 'esc-9',
         managerId: 'manager',
         title: 'Finalize docs',
-        status: 'completed',
+        description: 'Choose how to wrap up the docs work.',
+        options: ['Ship docs', 'Defer docs'],
+        status: 'resolved',
         createdAt: '2026-01-03T00:00:00.000Z',
-        completedAt: '2026-01-03T00:15:00.000Z',
-        completionComment: 'Wrapped up',
+        resolvedAt: '2026-01-03T00:15:00.000Z',
+        response: {
+          choice: 'Wrapped up',
+          isCustom: true,
+        },
       },
     })
 
-    await expect(completionPromise).resolves.toMatchObject({
-      id: 'task-9',
-      status: 'completed',
-      completionComment: 'Wrapped up',
-    })
-
-    client.destroy()
-  })
-
-  it('sends add_task_comment commands and resolves from task_comment_result', async () => {
-    const client = new ManagerWsClient('ws://127.0.0.1:8787', 'manager')
-
-    client.start()
-    vi.advanceTimersByTime(60)
-
-    const socket = FakeWebSocket.instances[0]
-    socket.emit('open')
-
-    emitServerEvent(socket, {
-      type: 'ready',
-      serverTime: new Date().toISOString(),
-      subscribedAgentId: 'manager',
-    })
-
-    const initialTaskRequest = JSON.parse(socket.sentPayloads.at(-1) ?? '{}')
-    emitServerEvent(socket, {
-      type: 'tasks_snapshot',
-      requestId: initialTaskRequest.requestId,
-      tasks: [],
-    })
-
-    const commentPromise = client.addTaskComment('task-2', 'Captured the latest rollout notes.')
-    const commentPayload = JSON.parse(socket.sentPayloads.at(-1) ?? '{}')
-
-    expect(commentPayload).toMatchObject({
-      type: 'add_task_comment',
-      taskId: 'task-2',
-      comment: 'Captured the latest rollout notes.',
-    })
-
-    emitServerEvent(socket, {
-      type: 'task_comment_result',
-      requestId: commentPayload.requestId,
-      task: {
-        id: 'task-2',
-        managerId: 'manager',
-        title: 'Track rollout status',
-        status: 'pending',
-        createdAt: '2026-01-03T00:00:00.000Z',
-        comments: [
-          {
-            id: 'comment-1',
-            body: 'Captured the latest rollout notes.',
-            createdAt: '2026-01-03T00:10:00.000Z',
-            type: 'comment',
-          },
-        ],
+    await expect(resolutionPromise).resolves.toMatchObject({
+      id: 'esc-9',
+      status: 'resolved',
+      response: {
+        choice: 'Wrapped up',
+        isCustom: true,
       },
-    })
-
-    await expect(commentPromise).resolves.toMatchObject({
-      id: 'task-2',
-      comments: [
-        expect.objectContaining({
-          body: 'Captured the latest rollout notes.',
-          type: 'comment',
-        }),
-      ],
-    })
-
-    client.destroy()
-  })
-
-  it('sends update_task commands and resolves from task_update_result', async () => {
-    const client = new ManagerWsClient('ws://127.0.0.1:8787', 'manager')
-
-    client.start()
-    vi.advanceTimersByTime(60)
-
-    const socket = FakeWebSocket.instances[0]
-    socket.emit('open')
-
-    emitServerEvent(socket, {
-      type: 'ready',
-      serverTime: new Date().toISOString(),
-      subscribedAgentId: 'manager',
-    })
-
-    const initialTaskRequest = JSON.parse(socket.sentPayloads.at(-1) ?? '{}')
-    emitServerEvent(socket, {
-      type: 'tasks_snapshot',
-      requestId: initialTaskRequest.requestId,
-      tasks: [],
-    })
-
-    const updatePromise = client.updateTask({
-      taskId: 'task-4',
-      title: 'Refine release notes',
-      description: 'Call out the migration prerequisites.',
-    })
-    const updatePayload = JSON.parse(socket.sentPayloads.at(-1) ?? '{}')
-
-    expect(updatePayload).toMatchObject({
-      type: 'update_task',
-      taskId: 'task-4',
-      title: 'Refine release notes',
-      description: 'Call out the migration prerequisites.',
-    })
-
-    emitServerEvent(socket, {
-      type: 'task_update_result',
-      requestId: updatePayload.requestId,
-      task: {
-        id: 'task-4',
-        managerId: 'manager',
-        title: 'Refine release notes',
-        description: 'Call out the migration prerequisites.',
-        status: 'pending',
-        createdAt: '2026-01-03T00:00:00.000Z',
-      },
-    })
-
-    await expect(updatePromise).resolves.toMatchObject({
-      id: 'task-4',
-      title: 'Refine release notes',
-      description: 'Call out the migration prerequisites.',
     })
 
     client.destroy()
