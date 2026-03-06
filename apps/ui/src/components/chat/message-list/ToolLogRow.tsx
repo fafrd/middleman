@@ -537,15 +537,17 @@ function RawPayloadDialog({ entry }: { entry: ToolExecutionDisplayEntry }) {
 
   return (
     <Dialog>
-      <DialogTrigger asChild>
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          className="execution-hover-actions h-6 rounded-sm px-2 text-[10px] text-[var(--chat-exec-muted)] hover:bg-transparent hover:text-[var(--chat-exec-muted-strong)] group-hover/execution-body:opacity-100 group-focus-within/execution-body:opacity-100"
-        >
-          Raw
-        </Button>
+      <DialogTrigger
+        render={
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="execution-hover-actions h-6 rounded-sm px-2 text-[10px] text-[var(--chat-exec-muted)] hover:bg-transparent hover:text-[var(--chat-exec-muted-strong)] group-hover/execution-body:opacity-100 group-focus-within/execution-body:opacity-100"
+          />
+        }
+      >
+        Raw
       </DialogTrigger>
 
       <DialogContent className="max-w-2xl">

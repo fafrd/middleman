@@ -136,28 +136,26 @@ function AgentActivitySlot({
   // When collapsed with active workers, show CircleDashed spinner with count inside
   if (streamingWorkerCount && streamingWorkerCount > 0) {
     return (
-      <TooltipProvider delayDuration={200}>
+      <TooltipProvider delay={200}>
         <Tooltip>
-          <TooltipTrigger asChild>
+          <TooltipTrigger
+            render={<span className="relative inline-flex size-3.5 shrink-0 items-center justify-center" />}
+            aria-label={`${streamingWorkerCount} active worker${streamingWorkerCount !== 1 ? 's' : ''}`}
+          >
+            <CircleDashed
+              className={cn(
+                'absolute inset-0 size-3.5 animate-spin',
+                isSelected ? 'text-sidebar-accent-foreground/80' : 'text-muted-foreground',
+              )}
+              aria-hidden="true"
+            />
             <span
-              className="relative inline-flex size-3.5 shrink-0 items-center justify-center"
-              aria-label={`${streamingWorkerCount} active worker${streamingWorkerCount !== 1 ? 's' : ''}`}
+              className={cn(
+                'relative text-[7px] font-bold leading-none',
+                isSelected ? 'text-sidebar-accent-foreground' : 'text-muted-foreground',
+              )}
             >
-              <CircleDashed
-                className={cn(
-                  'absolute inset-0 size-3.5 animate-spin',
-                  isSelected ? 'text-sidebar-accent-foreground/80' : 'text-muted-foreground',
-                )}
-                aria-hidden="true"
-              />
-              <span
-                className={cn(
-                  'relative text-[7px] font-bold leading-none',
-                  isSelected ? 'text-sidebar-accent-foreground' : 'text-muted-foreground',
-                )}
-              >
-                {streamingWorkerCount}
-              </span>
+              {streamingWorkerCount}
             </span>
           </TooltipTrigger>
           <TooltipContent side="top" sideOffset={6} className="px-2 py-1 text-[10px]">
@@ -210,45 +208,45 @@ function AgentRow({
 
   return (
     <ContextMenu>
-      <ContextMenuTrigger asChild>
-        <div
-          className={cn(
-            'flex w-full items-center gap-1 rounded-md transition-colors',
-            isSelected
-              ? 'bg-sidebar-accent text-sidebar-accent-foreground'
-              : 'text-sidebar-foreground/90 hover:bg-sidebar-accent/50',
-            className,
-          )}
+      <ContextMenuTrigger
+        className={cn(
+          'flex w-full items-center gap-1 rounded-md transition-colors',
+          isSelected
+            ? 'bg-sidebar-accent text-sidebar-accent-foreground'
+            : 'text-sidebar-foreground/90 hover:bg-sidebar-accent/50',
+          className,
+        )}
+      >
+        <button
+          type="button"
+          onClick={onSelect}
+          className="flex min-w-0 flex-1 items-center gap-1.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring/60"
+          title={title}
         >
-          <button
-            type="button"
-            onClick={onSelect}
-            className="flex min-w-0 flex-1 items-center gap-1.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring/60"
-            title={title}
-          >
-            <AgentActivitySlot isActive={isActive} isSelected={isSelected} streamingWorkerCount={streamingWorkerCount} />
-            <span className={cn('min-w-0 flex-1 truncate text-sm leading-5', nameClassName)}>{title}</span>
+          <AgentActivitySlot isActive={isActive} isSelected={isSelected} streamingWorkerCount={streamingWorkerCount} />
+          <span className={cn('min-w-0 flex-1 truncate text-sm leading-5', nameClassName)}>{title}</span>
 
-            <TooltipProvider delayDuration={200}>
-              <Tooltip>
-                <TooltipTrigger asChild>
+          <TooltipProvider delay={200}>
+            <Tooltip>
+              <TooltipTrigger
+                render={
                   <span
                     className={cn(
                       'ml-1 inline-flex h-5 w-8 shrink-0 items-center justify-center rounded-sm border border-sidebar-border/80 bg-sidebar-accent/40 px-0.5',
                       isSelected ? 'border-sidebar-ring/60 bg-sidebar-accent-foreground/10' : '',
                     )}
-                  >
-                    <RuntimeIcon agent={agent} className="size-3 shrink-0 object-contain opacity-90" />
-                  </span>
-                </TooltipTrigger>
-                <TooltipContent side="top" sideOffset={6} className="px-2 py-1 text-[10px]">
-                  <p className="font-medium">{modelLabel}</p>
-                  <p className="opacity-80">{modelDescription}</p>
-                </TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
-          </button>
-        </div>
+                  />
+                }
+              >
+                <RuntimeIcon agent={agent} className="size-3 shrink-0 object-contain opacity-90" />
+              </TooltipTrigger>
+              <TooltipContent side="top" sideOffset={6} className="px-2 py-1 text-[10px]">
+                <p className="font-medium">{modelLabel}</p>
+                <p className="opacity-80">{modelDescription}</p>
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+        </button>
       </ContextMenuTrigger>
       <ContextMenuContent>
         <ContextMenuItem variant="destructive" onClick={onDelete}>

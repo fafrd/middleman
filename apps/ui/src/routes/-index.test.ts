@@ -52,14 +52,23 @@ class FakeWebSocket {
 }
 
 function emitServerEvent(socket: FakeWebSocket, event: unknown): void {
-  socket.emit('message', {
-    data: JSON.stringify(event),
+  flushSync(() => {
+    socket.emit('message', {
+      data: JSON.stringify(event),
+    })
   })
 }
 
 function click(element: HTMLElement): void {
   flushSync(() => {
+    fireEvent.pointerEnter(element, { pointerType: 'mouse' })
+    fireEvent.mouseEnter(element)
+    fireEvent.mouseMove(element)
+    fireEvent.pointerDown(element)
+    fireEvent.mouseDown(element)
     element.click()
+    fireEvent.mouseUp(element)
+    fireEvent.pointerUp(element)
   })
 }
 
@@ -204,7 +213,16 @@ describe('IndexPage create manager model selection', () => {
 
     const modelSelect = getByRole(document.body, 'combobox', { name: 'Model' })
     click(modelSelect as HTMLElement)
-    click(getByRole(document.body, 'option', { name: 'pi-opus' }))
+    await vi.advanceTimersByTimeAsync(250)
+    const piOpusOption = getByRole(document.body, 'option', { name: 'pi-opus' }) as HTMLElement
+    flushSync(() => {
+      fireEvent.pointerEnter(piOpusOption, { pointerType: 'mouse' })
+      fireEvent.mouseEnter(piOpusOption)
+      fireEvent.mouseMove(piOpusOption)
+    })
+    await vi.advanceTimersByTimeAsync(0)
+    click(piOpusOption)
+    await vi.advanceTimersByTimeAsync(0)
 
     click(getByRole(document.body, 'button', { name: 'Create manager' }))
 
@@ -381,6 +399,7 @@ describe('IndexPage create manager model selection', () => {
       ],
     })
 
+    await vi.advanceTimersByTimeAsync(0)
     await vi.advanceTimersByTimeAsync(0)
 
     const payloadsAfterSelection = socket.sentPayloads.map((payload) => JSON.parse(payload))

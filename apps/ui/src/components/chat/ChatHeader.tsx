@@ -152,15 +152,17 @@ export function ChatHeader({
           <>
             <Separator orientation="vertical" className="hidden sm:block mx-0.5 h-4 bg-border/60" />
             <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="size-7 shrink-0 text-muted-foreground hover:bg-accent/70 hover:text-foreground"
-                  aria-label="More actions"
-                >
-                  <MoreHorizontal className="size-4" />
-                </Button>
+              <DropdownMenuTrigger
+                render={
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="size-7 shrink-0 text-muted-foreground hover:bg-accent/70 hover:text-foreground"
+                    aria-label="More actions"
+                  />
+                }
+              >
+                <MoreHorizontal className="size-4" />
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" sideOffset={6} className="min-w-44">
                 {showCompact ? (
@@ -209,22 +211,24 @@ export function ChatHeader({
 
         {/* ── Inline: artifacts toggle ── */}
         <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              variant="ghost"
-              size="icon"
-              className={cn(
-                'size-7 shrink-0 transition-colors',
-                isArtifactsPanelOpen
-                  ? 'bg-accent text-foreground'
-                  : 'text-muted-foreground hover:bg-accent/70 hover:text-foreground',
-              )}
-              onClick={onToggleArtifactsPanel}
-              aria-label={isArtifactsPanelOpen ? 'Close artifacts panel' : 'Open artifacts panel'}
-              aria-pressed={isArtifactsPanelOpen}
-            >
-              <PanelRight className="size-3.5" />
-            </Button>
+          <TooltipTrigger
+            render={
+              <Button
+                variant="ghost"
+                size="icon"
+                className={cn(
+                  'size-7 shrink-0 transition-colors',
+                  isArtifactsPanelOpen
+                    ? 'bg-accent text-foreground'
+                    : 'text-muted-foreground hover:bg-accent/70 hover:text-foreground',
+                )}
+                onClick={onToggleArtifactsPanel}
+                aria-label={isArtifactsPanelOpen ? 'Close artifacts panel' : 'Open artifacts panel'}
+                aria-pressed={isArtifactsPanelOpen}
+              />
+            }
+          >
+            <PanelRight className="size-3.5" />
           </TooltipTrigger>
           <TooltipContent side="bottom" sideOffset={6}>
             {isArtifactsPanelOpen ? 'Close artifacts' : 'Artifacts'}

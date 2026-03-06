@@ -228,20 +228,19 @@ export function IndexPage() {
     const routeAgentExists = state.agents.some((agent) => agent.agentId === routeState.agentId)
 
     if (hasExplicitAgentSelection) {
-      if (currentAgentId === routeState.agentId) {
+      if (!routeAgentExists) {
+        if (!state.hasReceivedAgentsSnapshot) {
+          return
+        }
+
+        navigateToRoute({ view: 'chat', agentId: DEFAULT_MANAGER_AGENT_ID }, true)
         return
       }
 
-      if (routeAgentExists) {
+      if (currentAgentId !== routeState.agentId) {
         clientRef.current?.subscribeToAgent(routeState.agentId)
-        return
       }
 
-      if (!state.hasReceivedAgentsSnapshot) {
-        return
-      }
-
-      navigateToRoute({ view: 'chat', agentId: DEFAULT_MANAGER_AGENT_ID }, true)
       return
     }
 
