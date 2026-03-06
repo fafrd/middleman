@@ -19,6 +19,7 @@ interface MessageListProps {
   messages: ConversationEntry[]
   isLoading: boolean
   activeAgentId?: string | null
+  isWorkerDetailView?: boolean
   onSuggestionClick?: (suggestion: string) => void
   onArtifactClick?: (artifact: ArtifactReference) => void
   wsUrl?: string
@@ -74,37 +75,122 @@ function resolveToolExecutionEventActorAgentId(event: ToolExecutionEvent): strin
   return event.type === 'agent_tool_call' ? event.actorAgentId : event.agentId
 }
 
+function parseSerializedToolPayload(payload: string | undefined): unknown {
+  if (!payload) {
+    return undefined
+  }
+
+  try {
+    return JSON.parse(payload)
+  } catch {
+    return payload
+  }
+}
+
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return undefined
+  }
+
+  return value as Record<string, unknown>
+}
+
+function getDurationMs(startedAt?: string, endedAt?: string): number | undefined {
+  if (!startedAt || !endedAt) {
+    return undefined
+  }
+
+  const startMs = Date.parse(startedAt)
+  const endMs = Date.parse(endedAt)
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs)) {
+    return undefined
+  }
+
+  return Math.max(0, endMs - startMs)
+}
+
 function hydrateToolDisplayEntry(
   displayEntry: ToolExecutionDisplayEntry,
   event: ToolExecutionEvent,
+  seenEventKeys: Set<string>,
 ): void {
+  const eventKey = `${event.kind}:${event.timestamp}:${event.text}`
+  const isDuplicateEvent = seenEventKeys.has(eventKey)
+
+  if (!isDuplicateEvent) {
+    seenEventKeys.add(eventKey)
+    displayEntry.kindSequence.push(event.kind)
+  }
+
   displayEntry.actorAgentId = resolveToolExecutionEventActorAgentId(event)
   displayEntry.toolName = event.toolName ?? displayEntry.toolName
   displayEntry.toolCallId = event.toolCallId ?? displayEntry.toolCallId
   displayEntry.timestamp = event.timestamp
+  displayEntry.latestAt = event.timestamp
   displayEntry.latestKind = event.kind
+  displayEntry.isStreaming = event.kind !== 'tool_execution_end'
 
   if (event.kind === 'tool_execution_start') {
+    const inputValue = parseSerializedToolPayload(event.text)
+
     displayEntry.inputPayload = event.text
     displayEntry.latestPayload = event.text
     displayEntry.outputPayload = undefined
     displayEntry.isError = false
+    displayEntry.startedAt ??= event.timestamp
+    displayEntry.inputValue = inputValue
+    displayEntry.latestValue = inputValue
+    displayEntry.outputValue = undefined
+    displayEntry.inputRecord = asRecord(inputValue)
+    displayEntry.latestUpdatePayload = undefined
+    displayEntry.latestUpdateValue = undefined
+    displayEntry.latestUpdateRecord = undefined
+    displayEntry.outputRecord = undefined
+    displayEntry.durationMs = getDurationMs(
+      displayEntry.startedAt,
+      displayEntry.endedAt ?? displayEntry.latestAt,
+    )
     return
   }
 
   if (event.kind === 'tool_execution_update') {
+    const latestUpdateValue = parseSerializedToolPayload(event.text)
+
     displayEntry.latestPayload = event.text
+    displayEntry.latestUpdatePayload = event.text
+    displayEntry.latestValue = latestUpdateValue
+    displayEntry.latestUpdateValue = latestUpdateValue
+    displayEntry.latestUpdateRecord = asRecord(latestUpdateValue)
+    if (!isDuplicateEvent) {
+      displayEntry.updates.push(event.text)
+      displayEntry.updateValues.push(latestUpdateValue)
+    }
+    displayEntry.durationMs = getDurationMs(
+      displayEntry.startedAt,
+      displayEntry.endedAt ?? displayEntry.latestAt,
+    )
     return
   }
 
+  const outputValue = parseSerializedToolPayload(event.text)
+
   displayEntry.outputPayload = event.text
   displayEntry.latestPayload = event.text
+  displayEntry.latestValue = outputValue
+  displayEntry.outputValue = outputValue
+  displayEntry.outputRecord = asRecord(outputValue)
+  displayEntry.endedAt = event.timestamp
   displayEntry.isError = event.isError
+  displayEntry.durationMs = getDurationMs(
+    displayEntry.startedAt,
+    displayEntry.endedAt ?? displayEntry.latestAt,
+  )
 }
 
 function buildDisplayEntries(messages: ConversationEntry[]): DisplayEntry[] {
   const displayEntries: DisplayEntry[] = []
   const toolEntriesByCallId = new Map<string, ToolExecutionDisplayEntry>()
+  const seenToolEventsByCallId = new Map<string, Set<string>>()
 
   for (const [index, message] of messages.entries()) {
     if (message.type === 'conversation_message') {
@@ -140,7 +226,12 @@ function buildDisplayEntries(messages: ConversationEntry[]): DisplayEntry[] {
             toolName: message.toolName,
             toolCallId: callId,
             timestamp: message.timestamp,
+            latestAt: message.timestamp,
             latestKind: message.kind,
+            updates: [],
+            kindSequence: [],
+            isStreaming: true,
+            updateValues: [],
           }
 
           displayEntries.push({
@@ -150,9 +241,14 @@ function buildDisplayEntries(messages: ConversationEntry[]): DisplayEntry[] {
           })
 
           toolEntriesByCallId.set(toolGroupKey, displayEntry)
+          seenToolEventsByCallId.set(toolGroupKey, new Set<string>())
         }
 
-        hydrateToolDisplayEntry(displayEntry, message)
+        hydrateToolDisplayEntry(
+          displayEntry,
+          message,
+          seenToolEventsByCallId.get(toolGroupKey) ?? new Set<string>(),
+        )
         continue
       }
 
@@ -162,10 +258,15 @@ function buildDisplayEntries(messages: ConversationEntry[]): DisplayEntry[] {
         toolName: message.toolName,
         toolCallId: message.toolCallId,
         timestamp: message.timestamp,
+        latestAt: message.timestamp,
         latestKind: message.kind,
+        updates: [],
+        kindSequence: [],
+        isStreaming: true,
+        updateValues: [],
       }
 
-      hydrateToolDisplayEntry(displayEntry, message)
+      hydrateToolDisplayEntry(displayEntry, message, new Set<string>())
 
       displayEntries.push({
         type: 'tool_execution',
@@ -185,6 +286,50 @@ function buildDisplayEntries(messages: ConversationEntry[]): DisplayEntry[] {
   }
 
   return displayEntries
+}
+
+function isExecutionScaffoldEntry(
+  entry: DisplayEntry,
+): entry is Extract<
+  DisplayEntry,
+  { type: 'agent_message' | 'tool_execution' | 'runtime_error_log' }
+> {
+  return (
+    entry.type === 'agent_message' ||
+    entry.type === 'tool_execution' ||
+    entry.type === 'runtime_error_log'
+  )
+}
+
+function getDisplayEntrySpacingClass(
+  entry: DisplayEntry,
+  previousEntry: DisplayEntry | undefined,
+  isWorkerDetailView: boolean,
+): string {
+  if (!previousEntry) {
+    return ''
+  }
+
+  if (!isWorkerDetailView) {
+    return 'pt-2'
+  }
+
+  const previousIsExecution = isExecutionScaffoldEntry(previousEntry)
+  const currentIsExecution = isExecutionScaffoldEntry(entry)
+
+  if (previousEntry.type === 'tool_execution' && entry.type === 'tool_execution') {
+    return 'pt-1'
+  }
+
+  if (previousIsExecution && currentIsExecution) {
+    return 'pt-1.5'
+  }
+
+  if (previousIsExecution !== currentIsExecution) {
+    return 'pt-[var(--chat-tool-assistant-gap)]'
+  }
+
+  return 'pt-[var(--chat-block-gap)]'
 }
 
 function LoadingIndicator() {
@@ -208,6 +353,7 @@ export function MessageList({
   messages,
   isLoading,
   activeAgentId,
+  isWorkerDetailView = false,
   onSuggestionClick,
   onArtifactClick,
   wsUrl,
@@ -305,29 +451,51 @@ export function MessageList({
           'hover:[&::-webkit-scrollbar-thumb]:bg-border hover:[scrollbar-color:var(--color-border)_transparent]',
         )}
       >
-        <div className="space-y-2 p-2 md:p-3">
-          {displayEntries.map((entry) => {
+        <div className="p-2 md:p-3">
+          {displayEntries.map((entry, index) => {
+            const previousEntry = index > 0 ? displayEntries[index - 1] : undefined
+            const rowSpacingClass = getDisplayEntrySpacingClass(
+              entry,
+              previousEntry,
+              isWorkerDetailView,
+            )
+
             if (entry.type === 'conversation_message') {
               return (
-                <ConversationMessageRow
+                <div
                   key={entry.id}
-                  message={entry.message}
-                  onArtifactClick={onArtifactClick}
-                  wsUrl={wsUrl}
-                />
+                  className={rowSpacingClass}
+                >
+                  <ConversationMessageRow
+                    message={entry.message}
+                    onArtifactClick={onArtifactClick}
+                    wsUrl={wsUrl}
+                  />
+                </div>
               )
             }
 
             if (entry.type === 'agent_message') {
-              return <AgentMessageRow key={entry.id} message={entry.message} />
+              return (
+                <div
+                  key={entry.id}
+                  className={rowSpacingClass}
+                >
+                  <AgentMessageRow message={entry.message} />
+                </div>
+              )
             }
 
             return (
-              <ToolLogRow
+              <div
                 key={entry.id}
-                type={entry.type}
-                entry={entry.entry}
-              />
+                className={rowSpacingClass}
+              >
+                <ToolLogRow
+                  type={entry.type}
+                  entry={entry.entry}
+                />
+              </div>
             )
           })}
           {isLoading ? <LoadingIndicator /> : null}

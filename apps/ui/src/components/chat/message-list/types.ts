@@ -33,8 +33,24 @@ export interface ToolExecutionDisplayEntry {
   toolCallId?: string
   inputPayload?: string
   latestPayload?: string
+  latestUpdatePayload?: string
   outputPayload?: string
+  updates: string[]
   timestamp: string
+  startedAt?: string
+  latestAt: string
+  endedAt?: string
+  durationMs?: number
   latestKind: ToolExecutionEvent['kind']
+  kindSequence: ToolExecutionEvent['kind'][]
+  isStreaming: boolean
   isError?: boolean
+  inputValue?: unknown
+  latestValue?: unknown
+  latestUpdateValue?: unknown
+  outputValue?: unknown
+  updateValues: unknown[]
+  inputRecord?: Record<string, unknown>
+  latestUpdateRecord?: Record<string, unknown>
+  outputRecord?: Record<string, unknown>
 }

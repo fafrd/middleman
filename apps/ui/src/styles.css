@@ -36,6 +36,17 @@
   --sidebar-accent-foreground: #3e2723;
   --sidebar-border: #e8e0d6;
   --sidebar-ring: #2e7d32;
+  --chat-font-size: 13px;
+  --chat-code-font-size: 12px;
+  --chat-block-gap: 12px;
+  --chat-tool-assistant-gap: 16px;
+  --chat-exec-muted: color-mix(in srgb, var(--foreground) 62%, transparent);
+  --chat-exec-muted-strong: color-mix(in srgb, var(--foreground) 82%, transparent);
+  --chat-exec-border: color-mix(in srgb, var(--border) 78%, transparent);
+  --chat-terminal-bg: color-mix(in srgb, var(--muted) 72%, var(--background));
+  --chat-error-fg: var(--destructive);
+  --chat-error-bg: color-mix(in srgb, var(--destructive) 12%, transparent);
+  --chat-error-border: color-mix(in srgb, var(--destructive) 22%, transparent);
   --font-sans: "Geist", sans-serif;
   --font-mono: "Geist Mono", monospace;
   --radius: 0.5rem;
@@ -74,6 +85,12 @@
   --sidebar-accent-foreground: #ffffff;
   --sidebar-border: #4a4a4a;
   --sidebar-ring: #4caf50;
+  --chat-exec-muted: color-mix(in srgb, var(--foreground) 64%, transparent);
+  --chat-exec-muted-strong: color-mix(in srgb, var(--foreground) 84%, transparent);
+  --chat-exec-border: color-mix(in srgb, var(--border) 80%, transparent);
+  --chat-terminal-bg: color-mix(in srgb, var(--muted) 82%, #111111);
+  --chat-error-bg: color-mix(in srgb, var(--destructive) 18%, transparent);
+  --chat-error-border: color-mix(in srgb, var(--destructive) 26%, transparent);
 }
 
 @theme inline {
@@ -128,4 +145,101 @@ body {
 
 body {
   @apply m-0 bg-background text-foreground antialiased;
+}
+
+@layer utilities {
+  .text-size-chat {
+    font-size: var(--chat-font-size);
+  }
+
+  .text-size-chat-sm {
+    font-size: calc(var(--chat-font-size) - 1px);
+  }
+
+  .text-size-code-sm {
+    font-size: var(--chat-code-font-size);
+  }
+
+  .font-editor {
+    font-family: var(--font-mono), monospace;
+  }
+}
+
+.execution-summary-text {
+  color: var(--chat-exec-muted);
+}
+
+.execution-summary-text--active {
+  color: var(--chat-exec-muted-strong);
+}
+
+.execution-hover-actions {
+  opacity: 0;
+  transition: opacity 160ms ease;
+}
+
+.execution-terminal-pane {
+  max-height: 140px;
+  overflow: hidden;
+  border: 1px solid var(--chat-exec-border);
+  background: var(--chat-terminal-bg);
+}
+
+.execution-terminal-pane [data-slot="scroll-area-viewport"] {
+  max-height: 140px;
+}
+
+.execution-scroll-fade-mask [data-slot="scroll-area-viewport"] {
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    transparent 0,
+    black 12px,
+    black calc(100% - 12px),
+    transparent 100%
+  );
+  mask-image: linear-gradient(
+    to bottom,
+    transparent 0,
+    black 12px,
+    black calc(100% - 12px),
+    transparent 100%
+  );
+}
+
+.execution-shimmer-text {
+  background-image: linear-gradient(
+    90deg,
+    currentColor 0%,
+    currentColor 35%,
+    color-mix(in srgb, currentColor 35%, transparent) 50%,
+    currentColor 65%,
+    currentColor 100%
+  );
+  background-size: 220% 100%;
+  animation: execution-text-shimmer 1.8s steps(36, end) infinite;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+@keyframes execution-text-shimmer {
+  from {
+    background-position: 220% 0;
+  }
+
+  to {
+    background-position: -120% 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .execution-hover-actions {
+    transition: none;
+  }
+
+  .execution-shimmer-text {
+    animation: none;
+    background-image: none;
+    color: var(--chat-exec-muted-strong);
+  }
 }
