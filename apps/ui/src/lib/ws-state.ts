@@ -10,7 +10,7 @@ import type {
 
 export type ConversationHistoryEntry = Extract<
   ConversationEntry,
-  { type: 'conversation_message' | 'conversation_log' }
+  { type: 'conversation_message' | 'conversation_escalation' | 'conversation_log' }
 >
 export type AgentActivityEntry = Extract<
   ConversationEntry,

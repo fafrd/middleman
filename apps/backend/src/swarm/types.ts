@@ -198,6 +198,13 @@ export interface ConversationMessageEvent {
   sourceContext?: MessageSourceContext;
 }
 
+export interface ConversationEscalationEvent {
+  type: "conversation_escalation";
+  agentId: string;
+  escalation: UserEscalation;
+  timestamp: string;
+}
+
 export type ConversationLogKind =
   | "message_start"
   | "message_end"
@@ -251,6 +258,7 @@ export interface AgentToolCallEvent {
 
 export type ConversationEntryEvent =
   | ConversationMessageEvent
+  | ConversationEscalationEvent
   | ConversationLogEvent
   | AgentMessageEvent
   | AgentToolCallEvent;

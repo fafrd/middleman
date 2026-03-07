@@ -106,7 +106,11 @@ describe('ManagerWsClient', () => {
       source: 'speak_to_user',
     })
 
-    expect(snapshots.at(-1)?.messages.at(-1)?.text).toBe('hello from manager')
+    const latestMessage = snapshots.at(-1)?.messages.at(-1)
+    expect(latestMessage?.type).toBe('conversation_message')
+    if (latestMessage?.type === 'conversation_message') {
+      expect(latestMessage.text).toBe('hello from manager')
+    }
 
     client.destroy()
   })
@@ -381,7 +385,11 @@ describe('ManagerWsClient', () => {
       source: 'speak_to_user',
     })
 
-    expect(snapshots.at(-1)?.messages.some((message) => message.text === 'manager output')).toBe(false)
+    expect(
+      snapshots
+        .at(-1)
+        ?.messages.some((message) => message.type === 'conversation_message' && message.text === 'manager output'),
+    ).toBe(false)
 
     emitServerEvent(socket, {
       type: 'conversation_message',
@@ -392,7 +400,11 @@ describe('ManagerWsClient', () => {
       source: 'system',
     })
 
-    expect(snapshots.at(-1)?.messages.at(-1)?.text).toBe('worker output')
+    const latestWorkerMessage = snapshots.at(-1)?.messages.at(-1)
+    expect(latestWorkerMessage?.type).toBe('conversation_message')
+    if (latestWorkerMessage?.type === 'conversation_message') {
+      expect(latestWorkerMessage.text).toBe('worker output')
+    }
     expect(snapshots.at(-1)?.targetAgentId).toBe('worker-1')
     expect(snapshots.at(-1)?.subscribedAgentId).toBe('worker-1')
 
@@ -1042,6 +1054,33 @@ describe('ManagerWsClient', () => {
 
     expect(client.getState().escalations).toHaveLength(1)
     expect(client.getState().escalations[0]?.title).toBe('Review deployment')
+
+    emitServerEvent(socket, {
+      type: 'conversation_escalation',
+      agentId: 'manager',
+      timestamp: '2026-01-02T00:00:00.000Z',
+      escalation: {
+        id: 'esc-1',
+        managerId: 'manager',
+        title: 'Review deployment',
+        description: 'Choose whether to proceed with the rollout.',
+        options: ['Proceed', 'Pause'],
+        status: 'open',
+        createdAt: '2026-01-02T00:00:00.000Z',
+      },
+    })
+
+    expect(client.getState().messages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: 'conversation_escalation',
+          escalation: expect.objectContaining({
+            id: 'esc-1',
+            title: 'Review deployment',
+          }),
+        }),
+      ]),
+    )
 
     emitServerEvent(socket, {
       type: 'escalation_updated',

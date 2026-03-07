@@ -12,7 +12,10 @@ import {
   useNavigate,
 } from '@tanstack/react-router'
 import { AgentSidebar } from '@/components/chat/AgentSidebar'
-import { ArtifactPanel } from '@/components/chat/ArtifactPanel'
+import {
+  ArtifactPanel,
+  type ArtifactPanelSelection,
+} from '@/components/chat/ArtifactPanel'
 import { ArtifactsSidebar } from '@/components/chat/ArtifactsSidebar'
 import { ChatHeader } from '@/components/chat/ChatHeader'
 import { CreateManagerDialog } from '@/components/chat/CreateManagerDialog'
@@ -39,6 +42,7 @@ import { useDynamicFavicon } from '@/hooks/index-page/use-dynamic-favicon'
 import type {
   ConversationAttachment,
   ManagerModelPreset,
+  UserEscalation,
 } from '@middleman/protocol'
 
 export const Route = createFileRoute('/')({
@@ -84,7 +88,7 @@ export function IndexPage() {
     navigate,
   })
 
-  const [activeArtifact, setActiveArtifact] = useState<ArtifactReference | null>(null)
+  const [panelSelection, setPanelSelection] = useState<ArtifactPanelSelection | null>(null)
   const [isArtifactsPanelOpen, setIsArtifactsPanelOpen] = useState(false)
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false)
 
@@ -222,7 +226,7 @@ export function IndexPage() {
   })
 
   useEffect(() => {
-    setActiveArtifact(null)
+    setPanelSelection(null)
     setIsArtifactsPanelOpen(false)
     setIsMobileSidebarOpen(false)
   }, [activeAgentId])
@@ -381,12 +385,27 @@ export function IndexPage() {
   }, [])
 
   const handleOpenArtifact = useCallback((artifact: ArtifactReference) => {
-    setActiveArtifact(artifact)
+    setPanelSelection({
+      type: 'artifact',
+      artifact,
+    })
   }, [])
 
   const handleCloseArtifact = useCallback(() => {
-    setActiveArtifact(null)
+    setPanelSelection(null)
   }, [])
+
+  const handleOpenEscalation = useCallback((escalation: UserEscalation) => {
+    setPanelSelection({
+      type: 'escalation',
+      escalationId: escalation.id,
+    })
+  }, [])
+
+  const handleOpenEscalationsView = useCallback(() => {
+    setPanelSelection(null)
+    navigateToRoute({ view: 'escalations' })
+  }, [navigateToRoute])
 
   const statusBanner = state.lastError ? (
     <div className="border-b border-destructive/20 bg-destructive/10 px-3 py-2 text-xs text-destructive">
@@ -489,6 +508,9 @@ export function IndexPage() {
                   isWorkerDetailView={activeAgent?.role === 'worker'}
                   onSuggestionClick={handleSuggestionClick}
                   onArtifactClick={handleOpenArtifact}
+                  escalations={state.escalations}
+                  onResolveEscalation={handleResolveEscalation}
+                  onOpenEscalationsView={handleOpenEscalationsView}
                   wsUrl={wsUrl}
                 />
 
@@ -512,19 +534,24 @@ export function IndexPage() {
               wsUrl={wsUrl}
               managerId={activeManagerId}
               artifacts={collectedArtifacts}
+              escalations={state.escalations}
               isOpen={isArtifactsPanelOpen}
               onClose={() => setIsArtifactsPanelOpen(false)}
               onArtifactClick={handleOpenArtifact}
+              onEscalationClick={handleOpenEscalation}
             />
           ) : null}
         </div>
       </div>
 
       <ArtifactPanel
-        artifact={activeArtifact}
+        selection={panelSelection}
+        escalations={state.escalations}
         wsUrl={wsUrl}
         onClose={handleCloseArtifact}
         onArtifactClick={handleOpenArtifact}
+        onResolveEscalation={handleResolveEscalation}
+        onOpenEscalationsView={handleOpenEscalationsView}
       />
 
       <CreateManagerDialog

@@ -78,6 +78,7 @@ export class WsHandler {
 
       if (
         event.type === "conversation_message" ||
+        event.type === "conversation_escalation" ||
         event.type === "conversation_log" ||
         event.type === "agent_message" ||
         event.type === "agent_tool_call" ||
