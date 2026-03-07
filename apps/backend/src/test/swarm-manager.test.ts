@@ -388,6 +388,8 @@ describe('SwarmManager', () => {
     expect(managerPrompt).toContain('prefixed with "SYSTEM:"')
     expect(managerPrompt).toContain('Your manager memory file is `${SWARM_MEMORY_FILE}`')
     expect(managerPrompt).toContain('middleman escalation add --title')
+    expect(managerPrompt).toContain('Never just ask the user in conversation and wait')
+    expect(managerPrompt).toContain('If you need the user to choose between options, open an escalation with explicit options.')
     expect(managerPrompt).not.toContain('assign_task')
     expect(managerPrompt).not.toContain('get_outstanding_tasks')
 
@@ -1548,7 +1550,11 @@ describe('SwarmManager', () => {
     expect(manager.getLoadedConversationAgentIdsForTest()).toEqual([])
 
     const terminatedHistory = manager.getConversationHistory('worker-terminated')
-    expect(terminatedHistory.some((entry) => entry.text === 'terminated-worker-history')).toBe(true)
+    expect(
+      terminatedHistory.some(
+        (entry) => entry.type === 'conversation_message' && entry.text === 'terminated-worker-history',
+      ),
+    ).toBe(true)
     expect(manager.getLoadedConversationAgentIdsForTest()).toEqual(['worker-terminated'])
   })
 
@@ -1793,7 +1799,11 @@ describe('SwarmManager', () => {
     await bootWithDefaultManager(manager, config)
 
     await manager.handleUserMessage('before reset')
-    expect(manager.getConversationHistory('manager').some((message) => message.text === 'before reset')).toBe(true)
+    expect(
+      manager
+        .getConversationHistory('manager')
+        .some((message) => message.type === 'conversation_message' && message.text === 'before reset'),
+    ).toBe(true)
 
     const firstRuntime = manager.runtimeByAgentId.get('manager')
     expect(firstRuntime).toBeDefined()
@@ -2157,6 +2167,13 @@ describe('SwarmManager', () => {
     await expect(readFile(getEscalationsFilePath(config.paths.dataDir), 'utf8')).resolves.toContain(
       'Review the deployment checklist',
     )
+
+    const escalationEvent = manager.getConversationHistory('manager').find(
+      (event) =>
+        event.type === 'conversation_escalation' &&
+        event.escalation.id === escalation.id,
+    )
+    expect(escalationEvent).toBeDefined()
 
     const managerRuntime = manager.runtimeByAgentId.get('manager')
     expect(managerRuntime).toBeDefined()

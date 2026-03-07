@@ -33,6 +33,11 @@ export class SwarmWebSocketServer {
     this.wsHandler.broadcastToSubscribed(event);
   };
 
+  private readonly onConversationEscalation = (event: ServerEvent): void => {
+    if (event.type !== "conversation_escalation") return;
+    this.wsHandler.broadcastToSubscribed(event);
+  };
+
   private readonly onConversationLog = (event: ServerEvent): void => {
     if (event.type !== "conversation_log") return;
     this.wsHandler.broadcastToSubscribed(event);
@@ -163,6 +168,7 @@ export class SwarmWebSocketServer {
     });
 
     this.swarmManager.on("conversation_message", this.onConversationMessage);
+    this.swarmManager.on("conversation_escalation", this.onConversationEscalation);
     this.swarmManager.on("conversation_log", this.onConversationLog);
     this.swarmManager.on("agent_message", this.onAgentMessage);
     this.swarmManager.on("agent_tool_call", this.onAgentToolCall);
@@ -178,6 +184,7 @@ export class SwarmWebSocketServer {
 
   async stop(): Promise<void> {
     this.swarmManager.off("conversation_message", this.onConversationMessage);
+    this.swarmManager.off("conversation_escalation", this.onConversationEscalation);
     this.swarmManager.off("conversation_log", this.onConversationLog);
     this.swarmManager.off("agent_message", this.onAgentMessage);
     this.swarmManager.off("agent_tool_call", this.onAgentToolCall);

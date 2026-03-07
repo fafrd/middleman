@@ -1067,7 +1067,11 @@ describe('SwarmWebSocketServer', () => {
     const historyEvent = await waitForEvent(eventsB, (event) => event.type === 'conversation_history')
     expect(historyEvent.type).toBe('conversation_history')
     if (historyEvent.type === 'conversation_history') {
-      expect(historyEvent.messages.some((message) => message.text === 'remember this')).toBe(true)
+      expect(
+        historyEvent.messages.some(
+          (message) => message.type === 'conversation_message' && message.text === 'remember this',
+        ),
+      ).toBe(true)
     }
 
     clientB.close()
@@ -2213,6 +2217,12 @@ describe('SwarmWebSocketServer', () => {
       (event) => event.type === 'escalation_created' && event.escalation.id === escalation.id,
     )
     expect(createdEvent.type).toBe('escalation_created')
+
+    const conversationEscalationEvent = await waitForEvent(
+      events,
+      (event) => event.type === 'conversation_escalation' && event.escalation.id === escalation.id,
+    )
+    expect(conversationEscalationEvent.type).toBe('conversation_escalation')
 
     client.send(JSON.stringify({ type: 'get_all_escalations', requestId: 'escalations-1' }))
 

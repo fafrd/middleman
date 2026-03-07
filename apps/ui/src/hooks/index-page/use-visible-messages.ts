@@ -60,6 +60,10 @@ function buildManagerScopedAgentIds(agents: AgentDescriptor[], managerId: string
 }
 
 function isUserTranscriptEntry(entry: ConversationEntry): boolean {
+  if (entry.type === 'conversation_escalation') {
+    return true
+  }
+
   if (entry.type !== 'conversation_message') {
     return false
   }

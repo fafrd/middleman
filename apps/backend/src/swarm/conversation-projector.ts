@@ -16,6 +16,7 @@ import type {
   AgentDescriptor,
   AgentMessageEvent,
   AgentToolCallEvent,
+  ConversationEscalationEvent,
   ConversationEntryEvent,
   ConversationLogEvent,
   ConversationMessageEvent
@@ -30,6 +31,7 @@ const MANAGER_ERROR_GENERIC_HINT = "Please retry. If this persists, check provid
 
 type ConversationEventName =
   | "conversation_message"
+  | "conversation_escalation"
   | "conversation_log"
   | "agent_message"
   | "agent_tool_call"
@@ -55,7 +57,10 @@ export class ConversationProjector {
     return history.slice(startIndex).map((entry) => ({ ...entry }));
   }
 
-  getVisibleTranscript(agentId: string, limit?: number): ConversationMessageEvent[] {
+  getVisibleTranscript(
+    agentId: string,
+    limit?: number
+  ): Array<ConversationMessageEvent | ConversationEscalationEvent> {
     const history = this.getOrLoadConversationHistory(agentId);
     const visibleEntries = history.filter(isVisibleConversationEntry);
     const normalizedLimit =
@@ -75,6 +80,11 @@ export class ConversationProjector {
   emitConversationMessage(event: ConversationMessageEvent): void {
     this.emitConversationEntry(event);
     this.deps.emitServerEvent("conversation_message", event satisfies ServerEvent);
+  }
+
+  emitConversationEscalation(event: ConversationEscalationEvent): void {
+    this.emitConversationEntry(event);
+    this.deps.emitServerEvent("conversation_escalation", event satisfies ServerEvent);
   }
 
   emitConversationLog(event: ConversationLogEvent): void {
@@ -454,7 +464,13 @@ function buildManagerErrorConversationText(options: {
   return `⚠️ Manager reply failed. ${MANAGER_ERROR_GENERIC_HINT}`;
 }
 
-function isVisibleConversationEntry(entry: ConversationEntryEvent): entry is ConversationMessageEvent {
+function isVisibleConversationEntry(
+  entry: ConversationEntryEvent
+): entry is ConversationMessageEvent | ConversationEscalationEvent {
+  if (entry.type === "conversation_escalation") {
+    return true;
+  }
+
   return entry.type === "conversation_message" && (entry.source === "user_input" || entry.source === "speak_to_user");
 }
 
@@ -476,6 +492,10 @@ function findVisibleHistoryStartIndex(entries: ConversationEntryEvent[], visible
 }
 
 function isPreservedWebTranscriptEntry(entry: ConversationEntryEvent): boolean {
+  if (entry.type === "conversation_escalation") {
+    return true;
+  }
+
   if (entry.type !== "conversation_message") {
     return false;
   }

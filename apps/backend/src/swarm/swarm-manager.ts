@@ -66,6 +66,7 @@ import type {
   ConversationAttachment,
   ConversationAttachmentMetadata,
   ConversationBinaryAttachment,
+  ConversationEscalationEvent,
   ConversationEntryEvent,
   ConversationMessageEvent,
   ConversationTextAttachment,
@@ -362,7 +363,10 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     return this.conversationProjector.getConversationHistory(resolvedAgentId, options?.limit);
   }
 
-  getVisibleTranscript(agentId?: string, options?: { limit?: number }): ConversationMessageEvent[] {
+  getVisibleTranscript(
+    agentId?: string,
+    options?: { limit?: number }
+  ): Array<ConversationMessageEvent | ConversationEscalationEvent> {
     const resolvedAgentId = normalizeOptionalAgentId(agentId) ?? this.resolvePreferredManagerId();
     if (!resolvedAgentId) {
       return [];
@@ -687,6 +691,12 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       optionCount: escalation.options.length
     });
     this.emitEscalationCreated(escalation);
+    this.emitConversationEscalation({
+      type: "conversation_escalation",
+      agentId: manager.agentId,
+      escalation,
+      timestamp: escalation.createdAt
+    });
 
     return escalation;
   }
@@ -1533,6 +1543,10 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
   private emitConversationMessage(event: ConversationMessageEvent): void {
     this.conversationProjector.emitConversationMessage(event);
+  }
+
+  private emitConversationEscalation(event: ConversationEscalationEvent): void {
+    this.conversationProjector.emitConversationEscalation(event);
   }
 
   private emitAgentMessage(event: AgentMessageEvent): void {

@@ -522,6 +522,7 @@ export class ManagerWsClient {
         break
 
       case 'conversation_message':
+      case 'conversation_escalation':
       case 'conversation_log': {
         if (event.agentId !== this.state.targetAgentId) {
           break
