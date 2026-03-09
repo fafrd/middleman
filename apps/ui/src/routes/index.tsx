@@ -173,6 +173,14 @@ export function IndexPage() {
     () => collectArtifactsFromMessages(allMessages),
     [allMessages],
   )
+  const pinnedEscalations = useMemo(
+    () =>
+      state.escalations.filter(
+        (escalation) =>
+          escalation.managerId === activeManagerId && escalation.status === 'open',
+      ),
+    [activeManagerId, state.escalations],
+  )
 
   const {
     isCreateManagerDialogOpen,
@@ -518,6 +526,8 @@ export function IndexPage() {
                   ref={messageInputRef}
                   agentId={activeAgentId}
                   onSend={handleSend}
+                  pinnedEscalations={pinnedEscalations}
+                  onEscalationClick={handleOpenEscalation}
                   onSubmitted={handleMessageInputSubmitted}
                   isLoading={isLoading}
                   disabled={!state.connected || !activeAgentId}

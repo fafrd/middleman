@@ -14,6 +14,7 @@ import {
 import { useAtom } from 'jotai'
 import { ArrowUp, Loader2, Mic, Paperclip, Square } from 'lucide-react'
 import { AttachedFiles } from '@/components/chat/AttachedFiles'
+import { PinnedEscalations } from '@/components/chat/PinnedEscalations'
 import { Button } from '@/components/ui/button'
 import { MAX_VOICE_RECORDING_DURATION_MS, useVoiceRecorder } from '@/hooks/use-voice-recorder'
 import {
@@ -24,7 +25,10 @@ import { messageDraftsAtom } from '@/lib/message-drafts'
 import { resolveApiEndpoint } from '@/lib/api-endpoint'
 import { transcribeVoice } from '@/lib/voice-transcription-client'
 import { cn } from '@/lib/utils'
-import type { ConversationAttachment } from '@middleman/protocol'
+import type {
+  ConversationAttachment,
+  UserEscalation,
+} from '@middleman/protocol'
 
 const TEXTAREA_MAX_HEIGHT = 186
 const ACTIVE_WAVEFORM_BAR_COUNT = 16
@@ -33,6 +37,8 @@ const OPENAI_KEY_REQUIRED_MESSAGE = 'OpenAI API key required \u2014 add it in Se
 interface MessageInputProps {
   agentId: string | null
   onSend: (message: string, attachments?: ConversationAttachment[]) => void
+  pinnedEscalations?: UserEscalation[]
+  onEscalationClick?: (escalation: UserEscalation) => void
   onSubmitted?: () => void
   isLoading: boolean
   disabled?: boolean
@@ -108,6 +114,8 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
   {
     agentId,
     onSend,
+    pinnedEscalations = [],
+    onEscalationClick,
     onSubmitted,
     isLoading,
     disabled = false,
@@ -427,6 +435,12 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
     >
       <div className="overflow-hidden rounded-2xl border border-border">
         <AttachedFiles attachments={attachedFiles} onRemove={removeAttachment} />
+        {onEscalationClick ? (
+          <PinnedEscalations
+            escalations={pinnedEscalations}
+            onEscalationClick={onEscalationClick}
+          />
+        ) : null}
 
         <div className="group flex flex-col">
           {isRecording ? (
