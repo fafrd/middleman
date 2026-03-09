@@ -12,6 +12,9 @@ const buildMinifier =
   minifyFlag === 'false' || minifyFlag === '0' ? false : 'esbuild'
 
 const config = defineConfig({
+  server: {
+    allowedHosts: true,
+  },
   build: {
     minify: buildMinifier,
     cssMinify: buildMinifier,
