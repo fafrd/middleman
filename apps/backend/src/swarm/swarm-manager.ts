@@ -94,7 +94,12 @@ const DEFAULT_WORKER_SYSTEM_PROMPT = `You are a worker agent in a swarm.
 - Persistent memory for this runtime is at \${SWARM_MEMORY_FILE} and is auto-loaded into context.
 - Workers read their owning manager's memory file.
 - Only write memory when explicitly asked to remember/update/forget durable information.
-- Follow the memory skill workflow before editing the memory file, and never store secrets in memory.`;
+- Follow the memory skill workflow before editing the memory file, and never store secrets in memory.
+
+Shell command guidance:
+- Avoid compound bash commands that background a long-lived server, poll health, run a build, then kill/wait — all in a single bash invocation. Instead, use separate small bash calls for each step.
+- If you must start a background server (e.g. for a build step), prefer dedicated tooling over raw nohup/& wrappers. If you do use nohup or &, start it in one bash call, then immediately call send_message_to_agent to report the server is up before continuing.
+- Never leave a long-running process running inside a bash call that has not yet returned. The swarm runtime cannot receive new messages while your bash tool call is active.`;
 const MANAGER_ARCHETYPE_ID = "manager";
 const MERGER_ARCHETYPE_ID = "merger";
 const INTERNAL_MODEL_MESSAGE_PREFIX = "SYSTEM: ";
@@ -237,6 +242,13 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
   private archetypePromptRegistry: ArchetypePromptRegistry = createEmptyArchetypePromptRegistry();
 
+  // Stale-streaming watchdog: agents that have already been warned stay in this
+  // set so we don't spam the feed. Cleared when the agent leaves streaming.
+  private readonly staleStreamingWarnedAgentIds = new Set<string>();
+  private staleStreamingWatchdogTimer: ReturnType<typeof setInterval> | undefined;
+  private static readonly STALE_STREAMING_THRESHOLD_MS = 15 * 60 * 1000; // 15 min
+  private static readonly STALE_STREAMING_CHECK_INTERVAL_MS = 60 * 1000; // 1 min
+
   constructor(config: SwarmConfig, options?: { now?: () => string }) {
     super();
 
@@ -359,6 +371,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       loadedArchetypeIds: this.archetypePromptRegistry.listArchetypeIds(),
       restoredAgentIds: Array.from(this.runtimes.keys())
     });
+
+    this.startStaleStreamingWatchdog();
   }
 
   listAgents(): AgentDescriptor[] {
@@ -2319,6 +2333,30 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       timestamp: this.now(),
       source: "system"
     });
+
+    // Also surface dropped-message errors to the owning manager's conversation
+    // feed so the manager's model context can see them. Without this, delivery
+    // failures are invisible to the manager and it assumes the message was
+    // processed (see orchestration-gap investigation, Finding 2).
+    if (
+      droppedPendingCount &&
+      droppedPendingCount > 0 &&
+      descriptor.role === "worker" &&
+      descriptor.managerId?.trim()
+    ) {
+      const managerId = descriptor.managerId.trim();
+      const managerDescriptor = this.descriptors.get(managerId);
+      if (managerDescriptor && !isNonRunningAgentStatus(managerDescriptor.status)) {
+        this.emitConversationMessage({
+          type: "conversation_message",
+          agentId: managerId,
+          role: "system",
+          text: `⚠️ Worker ${agentId}: ${text}`,
+          timestamp: this.now(),
+          source: "system"
+        });
+      }
+    }
   }
 
   private captureConversationEventFromRuntime(agentId: string, event: RuntimeSessionEvent): void {
@@ -2373,9 +2411,108 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     } satisfies ServerEvent);
   }
 
-  private async handleRuntimeAgentEnd(_agentId: string): Promise<void> {
-    // No-op: managers now receive all inbound messages with sourceContext metadata
-    // and decide whether to respond without pending-reply bookkeeping.
+  private async handleRuntimeAgentEnd(agentId: string): Promise<void> {
+    // Notify the owning manager so its model context knows the worker is idle.
+    // Without this the manager has no automatic signal when a worker finishes
+    // and must rely entirely on the worker calling back — which fails silently
+    // when a steer is dropped (see orchestration-gap investigation).
+    const descriptor = this.descriptors.get(agentId);
+    if (!descriptor || descriptor.role !== "worker") {
+      return;
+    }
+
+    const managerId = descriptor.managerId?.trim();
+    if (!managerId) {
+      return;
+    }
+
+    const managerDescriptor = this.descriptors.get(managerId);
+    if (!managerDescriptor || isNonRunningAgentStatus(managerDescriptor.status)) {
+      return;
+    }
+
+    try {
+      await this.sendMessage(
+        agentId,
+        managerId,
+        `SYSTEM: Worker ${agentId} has completed its turn and is now idle.`,
+        "auto"
+      );
+    } catch (error) {
+      this.logDebug("agent:end_notify:error", {
+        agentId,
+        managerId,
+        error: error instanceof Error ? error.message : String(error)
+      });
+    }
+  }
+
+  private startStaleStreamingWatchdog(): void {
+    this.staleStreamingWatchdogTimer = setInterval(() => {
+      this.checkForStaleStreamingAgents();
+    }, SwarmManager.STALE_STREAMING_CHECK_INTERVAL_MS);
+
+    // Allow the process to exit even if this timer is still running.
+    if (this.staleStreamingWatchdogTimer.unref) {
+      this.staleStreamingWatchdogTimer.unref();
+    }
+  }
+
+  private checkForStaleStreamingAgents(): void {
+    const nowMs = Date.now();
+
+    for (const [agentId, descriptor] of this.descriptors) {
+      if (descriptor.status !== "streaming") {
+        // Clear any prior stale warning so we re-warn if the agent gets stuck again.
+        this.staleStreamingWarnedAgentIds.delete(agentId);
+        continue;
+      }
+
+      if (this.staleStreamingWarnedAgentIds.has(agentId)) {
+        continue; // Already warned; don't spam.
+      }
+
+      const streamingSinceMs = nowMs - new Date(descriptor.updatedAt).getTime();
+      if (streamingSinceMs < SwarmManager.STALE_STREAMING_THRESHOLD_MS) {
+        continue;
+      }
+
+      const staleMinutes = Math.round(streamingSinceMs / 60_000);
+      this.staleStreamingWarnedAgentIds.add(agentId);
+
+      const agentText = `⚠️ Agent ${agentId} has been in streaming state for ${staleMinutes} minutes without a status update. It may be stuck on a long-running shell command (e.g. backgrounded server + wait). Consider interrupting it.`;
+
+      this.emitConversationMessage({
+        type: "conversation_message",
+        agentId,
+        role: "system",
+        text: agentText,
+        timestamp: this.now(),
+        source: "system"
+      });
+
+      // Also surface to the owning manager so the manager agent can react.
+      const managerId = descriptor.managerId?.trim();
+      if (managerId && descriptor.role === "worker") {
+        const managerDescriptor = this.descriptors.get(managerId);
+        if (managerDescriptor && !isNonRunningAgentStatus(managerDescriptor.status)) {
+          this.emitConversationMessage({
+            type: "conversation_message",
+            agentId: managerId,
+            role: "system",
+            text: `⚠️ Worker ${agentId} has been streaming for ${staleMinutes} minutes. It may be stuck on a compound shell command. Consider interrupting it and reassigning the task.`,
+            timestamp: this.now(),
+            source: "system"
+          });
+        }
+      }
+
+      this.logDebug("watchdog:stale_streaming", {
+        agentId,
+        staleMinutes,
+        updatedAt: descriptor.updatedAt
+      });
+    }
   }
 
   private async ensureDirectories(): Promise<void> {

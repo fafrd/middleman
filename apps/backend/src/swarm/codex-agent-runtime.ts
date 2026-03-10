@@ -544,9 +544,29 @@ export class CodexAgentRuntime implements SwarmAgentRuntime {
         });
         await this.emitSessionEvent({ type: "agent_end" });
 
-        if (this.status !== "terminated") {
-          await this.updateStatus("idle");
+        if (this.status === "terminated") {
+          return;
         }
+
+        // Re-deliver any steers that were queued while the turn was active but
+        // could not be flushed before it completed (the race condition described
+        // in the orchestration-gap investigation). Starting a new turn here
+        // prevents messages from being silently dropped.
+        if (this.queuedSteers.length > 0) {
+          const next = this.queuedSteers.shift()!;
+          try {
+            await this.startTurn(next.message);
+          } catch (error) {
+            await this.recoverFromTurnFailure("steer_delivery", error, {
+              deliveryId: next.deliveryId
+            });
+          }
+          // Do NOT call onAgentEnd — the worker is immediately starting another
+          // turn, so it is not truly idle yet.
+          return;
+        }
+
+        await this.updateStatus("idle");
 
         if (this.callbacks.onAgentEnd) {
           await this.callbacks.onAgentEnd(this.descriptor.agentId);
