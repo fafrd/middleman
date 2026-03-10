@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Check, CircleDot, ListTodo } from 'lucide-react'
+import { MarkdownMessage } from '@/components/chat/MarkdownMessage'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { cn } from '@/lib/utils'
@@ -31,9 +32,9 @@ export function EscalationCard({
   const isResolved = escalation.status === 'resolved'
   const canSubmit = Boolean(
     onResolveEscalation &&
-      !isResolved &&
-      !isSubmitting &&
-      (trimmedCustomResponse.length > 0 || selectedOption),
+    !isResolved &&
+    !isSubmitting &&
+    (trimmedCustomResponse.length > 0 || selectedOption),
   )
 
   useEffect(() => {
@@ -68,7 +69,11 @@ export function EscalationCard({
         isCustom,
       })
     } catch (error) {
-      setSubmitError(error instanceof Error ? error.message : 'Failed to resolve escalation.')
+      setSubmitError(
+        error instanceof Error
+          ? error.message
+          : 'Failed to send task response.',
+      )
     } finally {
       setIsSubmitting(false)
     }
@@ -83,7 +88,12 @@ export function EscalationCard({
         variant === 'chat' ? 'overflow-hidden' : '',
       )}
     >
-      <div className={cn('space-y-4', variant === 'chat' ? 'px-4 py-3' : 'px-5 py-5')}>
+      <div
+        className={cn(
+          'space-y-4',
+          variant === 'chat' ? 'px-4 py-3' : 'px-5 py-5',
+        )}
+      >
         <div className="flex items-start gap-3">
           <span className="mt-0.5 inline-flex size-9 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
             <ListTodo className="size-4" aria-hidden="true" />
@@ -102,15 +112,18 @@ export function EscalationCard({
                 <CircleDot className="size-3" aria-hidden="true" />
                 {statusLabel}
               </span>
-              <span className="text-[11px] text-muted-foreground">{formatDateTime(escalation.createdAt)}</span>
+              <span className="text-[11px] text-muted-foreground">
+                {formatDateTime(escalation.createdAt)}
+              </span>
             </div>
 
             <h3 className="mt-2 text-sm font-semibold leading-snug text-foreground">
               {escalation.title}
             </h3>
-            <p className="mt-1 whitespace-pre-wrap text-sm leading-relaxed text-muted-foreground">
-              {escalation.description}
-            </p>
+            <MarkdownMessage
+              content={escalation.description}
+              className="mt-1 text-muted-foreground"
+            />
           </div>
         </div>
 
@@ -121,7 +134,7 @@ export function EscalationCard({
               {escalation.response
                 ? escalation.response.isCustom
                   ? 'Custom response'
-                  : 'Selected option'
+                  : 'Response'
                 : 'Resolved'}
             </div>
             <p className="mt-2 whitespace-pre-wrap text-sm leading-relaxed text-foreground">
@@ -138,7 +151,7 @@ export function EscalationCard({
             {escalation.options.length > 0 ? (
               <div className="space-y-2">
                 <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-                  Choose an option
+                  Response
                 </p>
                 <div className="flex flex-col gap-2">
                   {escalation.options.map((option) => {
@@ -166,7 +179,13 @@ export function EscalationCard({
                               : 'border-muted-foreground/30',
                           )}
                         >
-                          {isSelected ? <Check className="size-2.5" aria-hidden="true" strokeWidth={3} /> : null}
+                          {isSelected ? (
+                            <Check
+                              className="size-2.5"
+                              aria-hidden="true"
+                              strokeWidth={3}
+                            />
+                          ) : null}
                         </span>
                         <span>{option}</span>
                       </button>
@@ -178,7 +197,7 @@ export function EscalationCard({
 
             <div className="space-y-2">
               <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-                Custom response
+                Write your own
               </p>
               <Textarea
                 value={customResponse}
@@ -193,10 +212,10 @@ export function EscalationCard({
             <div className="flex flex-wrap items-center justify-between gap-3">
               <p className="text-[11px] text-muted-foreground">
                 {trimmedCustomResponse
-                  ? 'Custom response will be sent to the manager.'
+                  ? 'Your custom response will be sent.'
                   : selectedOption
-                    ? 'Selected option will be sent to the manager.'
-                    : 'Choose an option or enter a custom response.'}
+                    ? 'Your selected response will be sent.'
+                    : 'Pick a response or write your own.'}
               </p>
 
               <div className="flex items-center gap-2">
@@ -207,7 +226,7 @@ export function EscalationCard({
                     size="sm"
                     onClick={onOpenEscalationsView}
                   >
-                    Open queue
+                    Open tasks
                   </Button>
                 ) : null}
                 <Button
