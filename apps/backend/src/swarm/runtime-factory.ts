@@ -361,13 +361,21 @@ export class RuntimeFactory {
     descriptor: AgentDescriptor,
     memoryFilePath: string
   ): Record<string, string | undefined> {
-    const cliBinDir = resolve(this.deps.config.paths.rootDir, "apps", "cli", "bin");
-    const workspaceBinDir = resolve(this.deps.config.paths.rootDir, "node_modules", ".bin");
-    const prefixedPath = [cliBinDir, workspaceBinDir, process.env.PATH ?? ""]
+    const workspaceBinDir = resolve(this.deps.config.paths.installDir, "node_modules", ".bin");
+    const parentWorkspaceBinDir = resolve(this.deps.config.paths.installDir, "..", ".bin");
+    const prefixedPath = [
+      this.deps.config.paths.cliBinDir,
+      workspaceBinDir,
+      parentWorkspaceBinDir,
+      process.env.PATH ?? ""
+    ]
       .filter((entry) => entry.length > 0)
       .join(delimiter);
 
     return {
+      MIDDLEMAN_HOME: this.deps.config.paths.dataDir,
+      MIDDLEMAN_INSTALL_DIR: this.deps.config.paths.installDir,
+      MIDDLEMAN_PROJECT_ROOT: this.deps.config.paths.projectRoot,
       SWARM_DATA_DIR: this.deps.config.paths.dataDir,
       SWARM_MEMORY_FILE: memoryFilePath,
       MIDDLEMAN_AGENT_ID: descriptor.agentId,

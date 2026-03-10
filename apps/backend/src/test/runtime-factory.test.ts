@@ -28,7 +28,9 @@ function makeFactory(): RuntimeFactory {
       host: '127.0.0.1',
       port: 47187,
       paths: {
-        rootDir: '/repo',
+        installDir: '/repo',
+        cliBinDir: '/repo/apps/cli/bin',
+        projectRoot: '/repo/project',
         dataDir: '/repo/data',
       },
     } as any,
@@ -96,6 +98,9 @@ describe('RuntimeFactory routing', () => {
       const env = (factory as any).buildAgentRuntimeEnv(descriptor, '/repo/data/memory/manager.md')
 
       expect(env).toMatchObject({
+        MIDDLEMAN_HOME: '/repo/data',
+        MIDDLEMAN_INSTALL_DIR: '/repo',
+        MIDDLEMAN_PROJECT_ROOT: '/repo/project',
         SWARM_DATA_DIR: '/repo/data',
         SWARM_MEMORY_FILE: '/repo/data/memory/manager.md',
         MIDDLEMAN_AGENT_ID: descriptor.agentId,

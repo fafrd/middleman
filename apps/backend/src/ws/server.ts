@@ -1,9 +1,12 @@
 import { createServer, type IncomingMessage, type Server as HttpServer, type ServerResponse } from "node:http";
+import { existsSync } from "node:fs";
+import { readFile, stat } from "node:fs/promises";
+import { extname, resolve, sep } from "node:path";
 import { WebSocketServer } from "ws";
 import type { IntegrationRegistryService } from "../integrations/registry.js";
 import type { ServerEvent } from "@middleman/protocol";
 import type { SwarmManager } from "../swarm/swarm-manager.js";
-import { applyCorsHeaders, resolveRequestUrl, sendJson } from "./http-utils.js";
+import { applyCorsHeaders, resolveReadFileContentType, resolveRequestUrl, sendJson } from "./http-utils.js";
 import { createAgentHttpRoutes } from "./routes/agent-routes.js";
 import { createFileRoutes } from "./routes/file-routes.js";
 import { createHealthRoutes } from "./routes/health-routes.js";
@@ -20,6 +23,7 @@ export class SwarmWebSocketServer {
   private readonly host: string;
   private readonly port: number;
   private readonly integrationRegistry: IntegrationRegistryService | null;
+  private readonly uiDir: string;
 
   private httpServer: HttpServer | null = null;
   private wss: WebSocketServer | null = null;
@@ -99,11 +103,13 @@ export class SwarmWebSocketServer {
     port: number;
     allowNonManagerSubscriptions: boolean;
     integrationRegistry?: IntegrationRegistryService;
+    uiDir?: string;
   }) {
     this.swarmManager = options.swarmManager;
     this.host = options.host;
     this.port = options.port;
     this.integrationRegistry = options.integrationRegistry ?? null;
+    this.uiDir = options.uiDir ?? this.swarmManager.getConfig().paths.uiDir;
 
     this.wsHandler = new WsHandler({
       swarmManager: this.swarmManager,
@@ -114,7 +120,7 @@ export class SwarmWebSocketServer {
     this.settingsRoutes = createSettingsRoutes({ swarmManager: this.swarmManager });
     this.httpRoutes = [
       ...createHealthRoutes({
-        resolveRepoRoot: () => this.swarmManager.getConfig().paths.rootDir
+        resolveRepoRoot: () => this.swarmManager.getConfig().paths.projectRoot
       }),
       ...createFileRoutes({ swarmManager: this.swarmManager }),
       ...createTranscriptionRoutes({ swarmManager: this.swarmManager }),
@@ -220,6 +226,10 @@ export class SwarmWebSocketServer {
     const route = this.httpRoutes.find((candidate) => candidate.matches(requestUrl.pathname));
 
     if (!route) {
+      if (await this.maybeHandleStaticRequest(request, response, requestUrl)) {
+        return;
+      }
+
       response.statusCode = 404;
       response.end("Not Found");
       return;
@@ -245,6 +255,82 @@ export class SwarmWebSocketServer {
       sendJson(response, statusCode, { error: message });
     }
   }
+
+  private async maybeHandleStaticRequest(
+    request: IncomingMessage,
+    response: ServerResponse,
+    requestUrl: URL
+  ): Promise<boolean> {
+    if ((request.method !== "GET" && request.method !== "HEAD") || !existsSync(this.uiDir)) {
+      return false;
+    }
+
+    if (requestUrl.pathname.startsWith("/api/")) {
+      return false;
+    }
+
+    const assetPath = await this.resolveStaticAssetPath(requestUrl.pathname);
+    if (!assetPath) {
+      return false;
+    }
+
+    const body = request.method === "HEAD" ? undefined : await readFile(assetPath);
+    response.statusCode = 200;
+    response.setHeader("Content-Type", resolveReadFileContentType(assetPath));
+    response.setHeader("Cache-Control", isUiAssetRoute(requestUrl.pathname) ? "public, max-age=31536000, immutable" : "no-store");
+    if (body) {
+      response.setHeader("Content-Length", String(body.byteLength));
+      response.end(body);
+      return true;
+    }
+
+    response.end();
+    return true;
+  }
+
+  private async resolveStaticAssetPath(pathname: string): Promise<string | null> {
+    const normalizedPath = pathname === "/" ? "/_shell.html" : pathname;
+    const candidateFilePath = this.resolveUiPath(normalizedPath);
+    if (candidateFilePath && (await isFile(candidateFilePath))) {
+      return candidateFilePath;
+    }
+
+    if (extname(pathname).length > 0) {
+      return null;
+    }
+
+    const shellPath = this.resolveUiPath("/_shell.html");
+    if (shellPath && (await isFile(shellPath))) {
+      return shellPath;
+    }
+
+    return null;
+  }
+
+  private resolveUiPath(pathname: string): string | null {
+    const relativePath = pathname.replace(/^\/+/, "");
+    const uiRoot = resolve(this.uiDir);
+    const candidatePath = resolve(uiRoot, relativePath);
+
+    if (candidatePath === uiRoot || candidatePath.startsWith(`${uiRoot}${sep}`)) {
+      return candidatePath;
+    }
+
+    return null;
+  }
+}
+
+async function isFile(path: string): Promise<boolean> {
+  try {
+    const fileStats = await stat(path);
+    return fileStats.isFile();
+  } catch {
+    return false;
+  }
+}
+
+function isUiAssetRoute(pathname: string): boolean {
+  return pathname.startsWith("/assets/");
 }
 
 async function closeWebSocketServer(server: WebSocketServer): Promise<void> {

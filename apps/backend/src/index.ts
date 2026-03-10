@@ -1,20 +1,38 @@
-import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { existsSync } from "node:fs";
+import { resolve } from "node:path";
+import { homedir } from "node:os";
 import { config as loadDotenv } from "dotenv";
-import { createConfig } from "./config.js";
+import { createConfig, type CreateConfigOptions } from "./config.js";
 import { IntegrationRegistryService } from "./integrations/registry.js";
 import { CronSchedulerService } from "./scheduler/cron-scheduler-service.js";
 import { getScheduleFilePath } from "./scheduler/schedule-storage.js";
 import { SwarmManager } from "./swarm/swarm-manager.js";
-import type { AgentDescriptor } from "./swarm/types.js";
+import type { AgentDescriptor, SwarmConfig } from "./swarm/types.js";
 import { SwarmWebSocketServer } from "./ws/server.js";
 
-const backendRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const repoRoot = resolve(backendRoot, "..", "..");
-loadDotenv({ path: resolve(repoRoot, ".env") });
+export interface StartServerOptions extends CreateConfigOptions {
+  loadEnvFiles?: boolean;
+  registerSignalHandlers?: boolean;
+}
 
-async function main(): Promise<void> {
-  const config = createConfig();
+export interface StartedMiddlemanServer {
+  config: SwarmConfig;
+  stop: () => Promise<void>;
+}
+
+export async function startServer(options: StartServerOptions = {}): Promise<StartedMiddlemanServer> {
+  const projectRoot = resolveProjectRootOption(options.projectRoot);
+  const dataDir = resolveDataDirOption(options.dataDir);
+
+  if (options.loadEnvFiles !== false) {
+    loadRuntimeEnvFiles(projectRoot, dataDir);
+  }
+
+  const config = createConfig({
+    ...options,
+    projectRoot,
+    dataDir
+  });
 
   const swarmManager = new SwarmManager(config);
   await swarmManager.boot();
@@ -92,30 +110,51 @@ async function main(): Promise<void> {
     host: config.host,
     port: config.port,
     allowNonManagerSubscriptions: config.allowNonManagerSubscriptions,
-    integrationRegistry
+    integrationRegistry,
+    uiDir: config.paths.uiDir
   });
   await wsServer.start();
 
-  console.log(`Middleman backend listening on ws://${config.host}:${config.port}`);
+  let stopped = false;
+  const stop = async (): Promise<void> => {
+    if (stopped) {
+      return;
+    }
 
-  const shutdown = async (signal: string): Promise<void> => {
-    console.log(`Received ${signal}. Shutting down...`);
+    stopped = true;
     swarmManager.off("agents_snapshot", handleAgentsSnapshot);
     await Promise.allSettled([
       queueSchedulerSync(new Set<string>()),
       integrationRegistry.stop(),
       wsServer.stop()
     ]);
-    process.exit(0);
   };
 
-  process.on("SIGINT", () => {
-    void shutdown("SIGINT");
-  });
+  if (options.registerSignalHandlers !== false) {
+    const shutdown = async (signal: string): Promise<void> => {
+      console.log(`Received ${signal}. Shutting down...`);
+      await stop();
+      process.exit(0);
+    };
 
-  process.on("SIGTERM", () => {
-    void shutdown("SIGTERM");
-  });
+    process.on("SIGINT", () => {
+      void shutdown("SIGINT");
+    });
+
+    process.on("SIGTERM", () => {
+      void shutdown("SIGTERM");
+    });
+  }
+
+  return {
+    config,
+    stop
+  };
+}
+
+async function main(): Promise<void> {
+  const { config } = await startServer();
+  console.log(`Middleman listening on http://${config.host}:${config.port}`);
 }
 
 function collectManagerIds(agents: unknown[], fallbackManagerId?: string): Set<string> {
@@ -147,20 +186,53 @@ function collectManagerIds(agents: unknown[], fallbackManagerId?: string): Set<s
   return managerIds;
 }
 
-void main().catch((error) => {
-  if (
-    error &&
-    typeof error === "object" &&
-    "code" in error &&
-    (error as { code?: string }).code === "EADDRINUSE"
-  ) {
-    const config = createConfig();
-    console.error(
-      `Failed to start backend: ws://${config.host}:${config.port} is already in use. ` +
-        `Stop the other process or run with MIDDLEMAN_PORT=<port>.`
-    );
-  } else {
-    console.error(error);
+function loadRuntimeEnvFiles(projectRoot: string, dataDir: string): void {
+  const projectEnvFile = resolve(projectRoot, ".env");
+  const userEnvFile = resolve(dataDir, "config.env");
+
+  for (const envFile of [projectEnvFile, userEnvFile]) {
+    if (!existsSync(envFile)) {
+      continue;
+    }
+
+    loadDotenv({ path: envFile, override: false });
   }
-  process.exit(1);
-});
+}
+
+function resolveProjectRootOption(projectRoot?: string): string {
+  const configuredProjectRoot = projectRoot ?? process.env.MIDDLEMAN_PROJECT_ROOT;
+  if (typeof configuredProjectRoot === "string" && configuredProjectRoot.trim().length > 0) {
+    return resolve(configuredProjectRoot);
+  }
+
+  return resolve(process.cwd());
+}
+
+function resolveDataDirOption(dataDir?: string): string {
+  const configuredDataDir = dataDir ?? process.env.MIDDLEMAN_HOME;
+  if (typeof configuredDataDir === "string" && configuredDataDir.trim().length > 0) {
+    return resolve(configuredDataDir);
+  }
+
+  return resolve(homedir(), ".middleman");
+}
+
+if (import.meta.url === new URL(process.argv[1] ?? "", "file://").href) {
+  void main().catch((error) => {
+    if (
+      error &&
+      typeof error === "object" &&
+      "code" in error &&
+      (error as { code?: string }).code === "EADDRINUSE"
+    ) {
+      const config = createConfig();
+      console.error(
+        `Failed to start backend: http://${config.host}:${config.port} is already in use. ` +
+          `Stop the other process or run with MIDDLEMAN_PORT=<port>.`
+      );
+    } else {
+      console.error(error);
+    }
+    process.exit(1);
+  });
+}

@@ -98,8 +98,24 @@ export interface SpawnAgentInput {
 }
 
 export interface SwarmPaths {
-  rootDir: string;
+  installDir: string;
+  installAssetsDir: string;
+  installArchetypesDir: string;
+  installSkillsDir: string;
+  cliBinDir: string;
+  uiDir: string;
+  projectRoot: string;
+  projectSwarmDir: string;
+  projectArchetypesDir: string;
+  projectSkillsDir: string;
+  projectMemorySkillFile: string;
   dataDir: string;
+  configFile: string;
+  configEnvFile: string;
+  runDir: string;
+  logsDir: string;
+  schedulesDir: string;
+  integrationsDir: string;
   swarmDir: string;
   sessionsDir: string;
   uploadsDir: string;
@@ -107,10 +123,8 @@ export interface SwarmPaths {
   authFile: string;
   agentDir: string;
   managerAgentDir: string;
-  repoArchetypesDir: string;
   memoryDir: string;
   memoryFile?: string;
-  repoMemorySkillFile: string;
   agentsStoreFile: string;
   secretsFile: string;
   schedulesFile?: string;

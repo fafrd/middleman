@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { once } from 'node:events'
 import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import WebSocket from 'ws'
 import { describe, expect, it, vi } from 'vitest'
 import { SessionManager } from '@mariozechner/pi-coding-agent'
@@ -126,17 +126,25 @@ async function getAvailablePort(): Promise<number> {
 
 async function makeTempConfig(port: number, allowNonManagerSubscriptions = false): Promise<SwarmConfig> {
   const root = await mkdtemp(join(tmpdir(), 'swarm-ws-test-'))
+  const installDir = resolve(process.cwd(), '../..')
   const dataDir = join(root, 'data')
+  const runDir = join(dataDir, 'run')
+  const logsDir = join(dataDir, 'logs')
+  const schedulesDir = join(dataDir, 'schedules')
+  const integrationsDir = join(dataDir, 'integrations')
   const swarmDir = join(dataDir, 'swarm')
   const sessionsDir = join(dataDir, 'sessions')
   const uploadsDir = join(dataDir, 'uploads')
   const authDir = join(dataDir, 'auth')
   const agentDir = join(dataDir, 'agent')
   const managerAgentDir = join(agentDir, 'manager')
-  const repoArchetypesDir = join(root, '.swarm', 'archetypes')
+  const projectSwarmDir = join(root, '.swarm')
+  const projectArchetypesDir = join(projectSwarmDir, 'archetypes')
+  const projectSkillsDir = join(projectSwarmDir, 'skills')
   const memoryDir = join(dataDir, 'memory')
   const memoryFile = join(memoryDir, 'manager.md')
-  const repoMemorySkillFile = join(root, '.swarm', 'skills', 'memory', 'SKILL.md')
+  const projectMemorySkillFile = join(projectSkillsDir, 'memory', 'SKILL.md')
+  const uiDir = join(root, 'public')
 
   await mkdir(swarmDir, { recursive: true })
   await mkdir(sessionsDir, { recursive: true })
@@ -145,7 +153,8 @@ async function makeTempConfig(port: number, allowNonManagerSubscriptions = false
   await mkdir(memoryDir, { recursive: true })
   await mkdir(agentDir, { recursive: true })
   await mkdir(managerAgentDir, { recursive: true })
-  await mkdir(repoArchetypesDir, { recursive: true })
+  await mkdir(projectArchetypesDir, { recursive: true })
+  await mkdir(uiDir, { recursive: true })
 
   return {
     host: '127.0.0.1',
@@ -162,8 +171,24 @@ async function makeTempConfig(port: number, allowNonManagerSubscriptions = false
     defaultCwd: root,
     cwdAllowlistRoots: [root, join(root, 'worktrees')],
     paths: {
-      rootDir: root,
+      installDir,
+      installAssetsDir: resolve(process.cwd(), 'src', 'swarm'),
+      installArchetypesDir: resolve(process.cwd(), 'src', 'swarm', 'archetypes', 'builtins'),
+      installSkillsDir: resolve(process.cwd(), 'src', 'swarm', 'skills', 'builtins'),
+      cliBinDir: resolve(process.cwd(), '..', 'cli', 'bin'),
+      uiDir,
+      projectRoot: root,
+      projectSwarmDir,
+      projectArchetypesDir,
+      projectSkillsDir,
+      projectMemorySkillFile,
       dataDir,
+      configFile: join(dataDir, 'config.json'),
+      configEnvFile: join(dataDir, 'config.env'),
+      runDir,
+      logsDir,
+      schedulesDir,
+      integrationsDir,
       swarmDir,
       sessionsDir,
       uploadsDir,
@@ -171,10 +196,8 @@ async function makeTempConfig(port: number, allowNonManagerSubscriptions = false
       authFile: join(authDir, 'auth.json'),
       agentDir,
       managerAgentDir,
-      repoArchetypesDir,
       memoryDir,
       memoryFile,
-      repoMemorySkillFile,
       agentsStoreFile: join(swarmDir, 'agents.json'),
       secretsFile: join(dataDir, 'secrets.json'),
       schedulesFile: getScheduleFilePath(dataDir, 'manager'),
@@ -286,7 +309,7 @@ describe('SwarmWebSocketServer', () => {
     await server.start()
 
     const daemonPid = 54321
-    const repoHash = createHash('sha1').update(config.paths.rootDir).digest('hex').slice(0, 10)
+    const repoHash = createHash('sha1').update(config.paths.projectRoot).digest('hex').slice(0, 10)
     const pidFile = join(tmpdir(), `swarm-prod-daemon-${repoHash}.pid`)
     await writeFile(pidFile, `${daemonPid}\n`, 'utf8')
 
@@ -391,7 +414,7 @@ describe('SwarmWebSocketServer', () => {
 
     await server.start()
 
-    const artifactPath = join(config.paths.rootDir, 'artifact.md')
+    const artifactPath = join(config.paths.projectRoot, 'artifact.md')
     const artifactContent = '# Artifact\n\nHello from Swarm.\n'
     await writeFile(artifactPath, artifactContent, 'utf8')
 
@@ -541,7 +564,7 @@ describe('SwarmWebSocketServer', () => {
     await bootWithDefaultManager(manager, config)
     const secondaryManager = await manager.createManager('manager', {
       name: 'release-manager',
-      cwd: config.paths.rootDir,
+      cwd: config.paths.projectRoot,
     })
 
     const server = new SwarmWebSocketServer({
@@ -2191,8 +2214,8 @@ describe('SwarmWebSocketServer', () => {
     await bootWithDefaultManager(manager, config)
 
     const outsideDir = await mkdtemp(join(tmpdir(), 'ws-outside-allowlist-'))
-    const rootValidation = await manager.validateDirectory(config.paths.rootDir)
-    const expectedRoot = rootValidation.resolvedPath ?? config.paths.rootDir
+    const rootValidation = await manager.validateDirectory(config.paths.projectRoot)
+    const expectedRoot = rootValidation.resolvedPath ?? config.paths.projectRoot
 
     const server = new SwarmWebSocketServer({
       swarmManager: manager,
@@ -2213,7 +2236,7 @@ describe('SwarmWebSocketServer', () => {
     client.send(JSON.stringify({ type: 'subscribe' }))
     await waitForEvent(events, (event) => event.type === 'ready')
 
-    client.send(JSON.stringify({ type: 'list_directories', path: config.paths.rootDir }))
+    client.send(JSON.stringify({ type: 'list_directories', path: config.paths.projectRoot }))
 
     const listed = await waitForEvent(events, (event) => event.type === 'directories_listed')
     expect(listed.type).toBe('directories_listed')

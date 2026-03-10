@@ -330,7 +330,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     }
 
     this.archetypePromptRegistry = await loadArchetypePromptRegistry({
-      repoOverridesDir: this.config.paths.repoArchetypesDir
+      builtInDir: this.config.paths.installArchetypesDir,
+      projectOverridesDir: this.config.paths.projectArchetypesDir
     });
 
     const loaded = await this.loadStore();
@@ -1947,7 +1948,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
   private getCwdPolicy(): { rootDir: string; allowlistRoots: string[] } {
     return {
-      rootDir: this.config.paths.rootDir,
+      rootDir: this.config.paths.projectRoot,
       allowlistRoots: normalizeAllowlistRoots(this.config.cwdAllowlistRoots)
     };
   }

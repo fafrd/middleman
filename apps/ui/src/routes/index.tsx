@@ -58,14 +58,13 @@ function resolveDefaultWsUrl(): string {
   }
 
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-  const hostname = window.location.hostname
-  const uiPort =
-    Number(window.location.port) ||
-    (window.location.protocol === 'https:' ? 443 : 80)
-  // Dev UI runs on 47188 -> backend 47187, prod UI runs on 47289 -> backend 47287.
-  const wsPort = uiPort <= 47188 ? 47187 : 47287
+  const host = window.location.host
 
-  return `${protocol}//${hostname}:${wsPort}`
+  if (import.meta.env.DEV && window.location.port === '47188') {
+    return `${protocol}//${window.location.hostname}:47187`
+  }
+
+  return `${protocol}//${host}`
 }
 
 export function IndexPage() {

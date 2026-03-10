@@ -21,10 +21,10 @@ Schedules are stored at:
 
 ## Commands
 
-Run the scheduler CLI from the repository root:
+Use the packaged CLI:
 
 ```bash
-node apps/backend/src/swarm/skills/builtins/cron-scheduling/schedule.js add \
+middleman schedule add \
   --manager "manager" \
   --name "Daily standup reminder" \
   --cron "0 9 * * 1-5" \
@@ -35,7 +35,7 @@ node apps/backend/src/swarm/skills/builtins/cron-scheduling/schedule.js add \
 One-shot schedule (fires once at the next matching cron time):
 
 ```bash
-node apps/backend/src/swarm/skills/builtins/cron-scheduling/schedule.js add \
+middleman schedule add \
   --manager "manager" \
   --name "One-time deployment check" \
   --cron "30 14 * * *" \
@@ -47,7 +47,7 @@ node apps/backend/src/swarm/skills/builtins/cron-scheduling/schedule.js add \
 Remove a schedule:
 
 ```bash
-node apps/backend/src/swarm/skills/builtins/cron-scheduling/schedule.js remove \
+middleman schedule remove \
   --manager "manager" \
   --id "<schedule-id>"
 ```
@@ -55,7 +55,7 @@ node apps/backend/src/swarm/skills/builtins/cron-scheduling/schedule.js remove \
 List schedules:
 
 ```bash
-node apps/backend/src/swarm/skills/builtins/cron-scheduling/schedule.js list --manager "manager"
+middleman schedule list --manager "manager"
 
 `--manager` is optional. If omitted, the CLI will auto-select a manager when there is only one manager
 or when a known default manager is detected.

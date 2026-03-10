@@ -75,10 +75,10 @@ export function createFileRoutes(options: { swarmManager: SwarmManager }): HttpR
           }
 
           const config = swarmManager.getConfig();
-          const resolvedPath = resolveDirectoryPath(requestedPath, config.paths.rootDir);
+          const resolvedPath = resolveDirectoryPath(requestedPath, config.paths.projectRoot);
           const allowedRoots = normalizeAllowlistRoots([
             ...config.cwdAllowlistRoots,
-            config.paths.rootDir,
+            config.paths.projectRoot,
             homedir(),
             "/tmp"
           ]);

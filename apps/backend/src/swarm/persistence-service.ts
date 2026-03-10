@@ -37,6 +37,10 @@ export class PersistenceService {
   async ensureDirectories(): Promise<void> {
     const dirs = [
       this.deps.config.paths.dataDir,
+      this.deps.config.paths.runDir,
+      this.deps.config.paths.logsDir,
+      this.deps.config.paths.schedulesDir,
+      this.deps.config.paths.integrationsDir,
       this.deps.config.paths.swarmDir,
       this.deps.config.paths.sessionsDir,
       this.deps.config.paths.uploadsDir,
