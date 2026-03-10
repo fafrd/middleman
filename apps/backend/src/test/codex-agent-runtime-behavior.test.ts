@@ -391,6 +391,77 @@ describe('CodexAgentRuntime behavior', () => {
     await runtime.terminate({ abort: false })
   })
 
+  it('starts a new turn when queued steers remain after turn completion', async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), 'swarm-codex-runtime-'))
+    const descriptor = makeDescriptor(tempDir)
+    await mkdir(dirname(descriptor.sessionFile), { recursive: true })
+
+    let turnStartCount = 0
+    let agentEndCalls = 0
+
+    rpcMockState.requestImpl.mockImplementation(async (_client: any, method: string) => {
+      if (method === 'initialize') {
+        return {}
+      }
+
+      if (method === 'account/read') {
+        return { requiresOpenaiAuth: false, account: { id: 'acct-1' } }
+      }
+
+      if (method === 'thread/start') {
+        return { thread: { id: 'thread-1' } }
+      }
+
+      if (method === 'turn/start') {
+        turnStartCount += 1
+        return { turn: { id: `turn-${turnStartCount}` } }
+      }
+
+      if (method === 'turn/interrupt') {
+        return { interrupted: true }
+      }
+
+      throw new Error(`Unexpected method: ${method}`)
+    })
+
+    const runtime = await CodexAgentRuntime.create({
+      descriptor,
+      callbacks: {
+        onStatusChange: async () => {},
+        onAgentEnd: async () => {
+          agentEndCalls += 1
+        },
+      },
+      systemPrompt: 'You are a test codex runtime.',
+      tools: [],
+    })
+
+    await runtime.sendMessage('first prompt')
+    ;(runtime as any).queueSteer('queued-steer-1', { text: 'queued after completion' })
+
+    const instance = rpcMockState.instances[0]
+    await instance.emitNotification({
+      method: 'turn/completed',
+    })
+
+    const turnStarts = instance.requestCalls.filter((entry: { method: string }) => entry.method === 'turn/start')
+    expect(turnStarts).toHaveLength(2)
+    expect(turnStarts[1]?.params).toMatchObject({
+      threadId: 'thread-1',
+      input: [
+        {
+          type: 'text',
+          text: 'queued after completion',
+          text_elements: [],
+        },
+      ],
+    })
+    expect(agentEndCalls).toBe(0)
+    expect(runtime.getStatus()).toBe('streaming')
+
+    await runtime.terminate({ abort: false })
+  })
+
   it('translates turn notifications, handles runtime exit, and reports terminated status', async () => {
     const tempDir = await mkdtemp(join(tmpdir(), 'swarm-codex-runtime-'))
     const descriptor = makeDescriptor(tempDir)
