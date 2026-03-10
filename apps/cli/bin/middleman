@@ -1,12 +1,63 @@
-#!/usr/bin/env bash
-set -euo pipefail
+#!/usr/bin/env node
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CLI_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-DIST_ENTRY="$CLI_DIR/dist/index.js"
+import { existsSync, realpathSync } from 'node:fs'
+import { spawn } from 'node:child_process'
+import { dirname, resolve } from 'node:path'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 
-if [ -f "$DIST_ENTRY" ]; then
-  exec node "$DIST_ENTRY" "$@"
-fi
+const scriptDir = dirname(fileURLToPath(import.meta.url))
 
-exec pnpm --dir "$CLI_DIR" exec tsx src/index.ts "$@"
+if (process.argv[1]) {
+  try {
+    process.env.MIDDLEMAN_CLI_BIN_DIR ??= dirname(realpathSync(process.argv[1]))
+  } catch {
+    process.env.MIDDLEMAN_CLI_BIN_DIR ??= dirname(resolve(process.argv[1]))
+  }
+}
+
+const compiledEntrypoints = [
+  resolve(scriptDir, '../dist/cli/index.js'),
+  resolve(scriptDir, '../dist/index.js'),
+]
+
+let executedCompiledEntrypoint = false
+
+for (const entrypoint of compiledEntrypoints) {
+  if (!existsSync(entrypoint)) {
+    continue
+  }
+
+  try {
+    const module = await import(pathToFileURL(entrypoint).href)
+    await module.runCli(process.argv.slice(2))
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    process.stderr.write(`${message}\n`)
+    process.exit(1)
+  }
+
+  executedCompiledEntrypoint = true
+  break
+}
+
+if (!executedCompiledEntrypoint) {
+  const sourceEntrypoint = resolve(scriptDir, '../src/index.ts')
+  if (!existsSync(sourceEntrypoint)) {
+    process.stderr.write('Unable to locate the Middleman CLI entrypoint.\n')
+    process.exit(1)
+  }
+
+  const cliDir = resolve(scriptDir, '..')
+  const child = spawn('pnpm', ['--dir', cliDir, 'exec', 'tsx', sourceEntrypoint, ...process.argv.slice(2)], {
+    stdio: 'inherit',
+  })
+
+  child.on('exit', (code, signal) => {
+    if (signal) {
+      process.kill(process.pid, signal)
+      return
+    }
+
+    process.exit(code ?? 0)
+  })
+}

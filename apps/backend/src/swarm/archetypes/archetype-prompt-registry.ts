@@ -1,7 +1,6 @@
 import type { Dirent } from "node:fs";
 import { readdir, readFile } from "node:fs/promises";
 import { extname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 import type { AgentArchetypeId } from "../types.js";
 
 export const BUILTIN_ARCHETYPE_IDS = ["manager", "merger"] as const;
@@ -16,9 +15,6 @@ const BUILTIN_ARCHETYPE_DEFINITIONS: readonly BuiltInArchetypeDefinition[] = [
   { id: "manager", fileName: "manager.md" },
   { id: "merger", fileName: "merger.md" }
 ] as const;
-
-const REGISTRY_DIR = fileURLToPath(new URL(".", import.meta.url));
-const PACKAGE_DIR = resolve(REGISTRY_DIR, "..", "..", "..");
 
 export interface ArchetypePromptRegistry {
   resolvePrompt(archetypeId: AgentArchetypeId): string | undefined;
@@ -38,10 +34,11 @@ class MapBackedArchetypePromptRegistry implements ArchetypePromptRegistry {
 }
 
 export async function loadArchetypePromptRegistry(options: {
-  repoOverridesDir: string;
+  builtInDir: string;
+  projectOverridesDir: string;
 }): Promise<ArchetypePromptRegistry> {
-  const promptsById = await loadBuiltInPrompts();
-  const repoOverrides = await loadRepoOverridePrompts(options.repoOverridesDir);
+  const promptsById = await loadBuiltInPrompts(options.builtInDir);
+  const repoOverrides = await loadProjectOverridePrompts(options.projectOverridesDir);
 
   for (const [id, prompt] of repoOverrides.entries()) {
     promptsById.set(id, prompt);
@@ -58,11 +55,11 @@ export function normalizeArchetypeId(input: string): AgentArchetypeId {
     .replace(/^-+|-+$/g, "");
 }
 
-async function loadBuiltInPrompts(): Promise<Map<AgentArchetypeId, string>> {
+async function loadBuiltInPrompts(builtInDir: string): Promise<Map<AgentArchetypeId, string>> {
   const promptsById = new Map<AgentArchetypeId, string>();
 
   for (const definition of BUILTIN_ARCHETYPE_DEFINITIONS) {
-    const filePath = await resolveBuiltInPromptPath(definition.fileName);
+    const filePath = resolveBuiltInPromptPath(builtInDir, definition.fileName);
     const raw = await readFile(filePath, "utf8");
     const prompt = normalizePromptText(raw, definition.id, filePath);
     promptsById.set(definition.id, prompt);
@@ -71,33 +68,18 @@ async function loadBuiltInPrompts(): Promise<Map<AgentArchetypeId, string>> {
   return promptsById;
 }
 
-async function resolveBuiltInPromptPath(fileName: string): Promise<string> {
-  const candidatePaths = [
-    resolve(REGISTRY_DIR, "builtins", fileName),
-    resolve(PACKAGE_DIR, "src", "swarm", "archetypes", "builtins", fileName)
-  ];
-
-  for (const path of candidatePaths) {
-    try {
-      await readFile(path, "utf8");
-      return path;
-    } catch (error) {
-      if (isEnoentError(error)) {
-        continue;
-      }
-      throw error;
-    }
-  }
-
-  throw new Error(`Missing built-in archetype prompt file: ${fileName}`);
+function resolveBuiltInPromptPath(builtInDir: string, fileName: string): string {
+  return resolve(builtInDir, fileName);
 }
 
-async function loadRepoOverridePrompts(repoOverridesDir: string): Promise<Map<AgentArchetypeId, string>> {
+async function loadProjectOverridePrompts(
+  projectOverridesDir: string
+): Promise<Map<AgentArchetypeId, string>> {
   const promptsById = new Map<AgentArchetypeId, string>();
 
   let entries: Dirent[];
   try {
-    entries = await readdir(repoOverridesDir, { withFileTypes: true });
+    entries = await readdir(projectOverridesDir, { withFileTypes: true });
   } catch (error) {
     if (isEnoentError(error)) {
       return promptsById;
@@ -120,7 +102,7 @@ async function loadRepoOverridePrompts(repoOverridesDir: string): Promise<Map<Ag
       continue;
     }
 
-    const filePath = resolve(repoOverridesDir, entry.name);
+    const filePath = resolve(projectOverridesDir, entry.name);
     const raw = await readFile(filePath, "utf8");
     const prompt = normalizePromptText(raw, id, filePath);
     promptsById.set(id, prompt);

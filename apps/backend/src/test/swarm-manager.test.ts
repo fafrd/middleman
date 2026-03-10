@@ -1,6 +1,6 @@
 import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { SessionManager } from '@mariozechner/pi-coding-agent'
 import { getEscalationsFilePath } from '../escalations/escalation-storage.js'
@@ -169,17 +169,25 @@ function seedManagerDescriptorForRuntimeEventTests(manager: TestSwarmManager, co
 
 async function makeTempConfig(port = 8790): Promise<SwarmConfig> {
   const root = await mkdtemp(join(tmpdir(), 'swarm-manager-test-'))
+  const installDir = resolve(process.cwd(), '../..')
   const dataDir = join(root, 'data')
+  const runDir = join(dataDir, 'run')
+  const logsDir = join(dataDir, 'logs')
+  const schedulesDir = join(dataDir, 'schedules')
+  const integrationsDir = join(dataDir, 'integrations')
   const swarmDir = join(dataDir, 'swarm')
   const sessionsDir = join(dataDir, 'sessions')
   const uploadsDir = join(dataDir, 'uploads')
   const authDir = join(dataDir, 'auth')
   const agentDir = join(dataDir, 'agent')
   const managerAgentDir = join(agentDir, 'manager')
-  const repoArchetypesDir = join(root, '.swarm', 'archetypes')
+  const projectSwarmDir = join(root, '.swarm')
+  const projectArchetypesDir = join(projectSwarmDir, 'archetypes')
+  const projectSkillsDir = join(projectSwarmDir, 'skills')
   const memoryDir = join(dataDir, 'memory')
   const memoryFile = join(memoryDir, 'manager.md')
-  const repoMemorySkillFile = join(root, '.swarm', 'skills', 'memory', 'SKILL.md')
+  const projectMemorySkillFile = join(projectSkillsDir, 'memory', 'SKILL.md')
+  const uiDir = join(root, 'public')
 
   await mkdir(swarmDir, { recursive: true })
   await mkdir(sessionsDir, { recursive: true })
@@ -188,7 +196,8 @@ async function makeTempConfig(port = 8790): Promise<SwarmConfig> {
   await mkdir(memoryDir, { recursive: true })
   await mkdir(agentDir, { recursive: true })
   await mkdir(managerAgentDir, { recursive: true })
-  await mkdir(repoArchetypesDir, { recursive: true })
+  await mkdir(projectArchetypesDir, { recursive: true })
+  await mkdir(uiDir, { recursive: true })
 
   return {
     host: '127.0.0.1',
@@ -205,8 +214,24 @@ async function makeTempConfig(port = 8790): Promise<SwarmConfig> {
     defaultCwd: root,
     cwdAllowlistRoots: [root, join(root, 'worktrees')],
     paths: {
-      rootDir: root,
+      installDir,
+      installAssetsDir: resolve(process.cwd(), 'src', 'swarm'),
+      installArchetypesDir: resolve(process.cwd(), 'src', 'swarm', 'archetypes', 'builtins'),
+      installSkillsDir: resolve(process.cwd(), 'src', 'swarm', 'skills', 'builtins'),
+      cliBinDir: resolve(process.cwd(), '..', 'cli', 'bin'),
+      uiDir,
+      projectRoot: root,
+      projectSwarmDir,
+      projectArchetypesDir,
+      projectSkillsDir,
+      projectMemorySkillFile,
       dataDir,
+      configFile: join(dataDir, 'config.json'),
+      configEnvFile: join(dataDir, 'config.env'),
+      runDir,
+      logsDir,
+      schedulesDir,
+      integrationsDir,
       swarmDir,
       sessionsDir,
       uploadsDir,
@@ -214,10 +239,8 @@ async function makeTempConfig(port = 8790): Promise<SwarmConfig> {
       authFile: join(authDir, 'auth.json'),
       agentDir,
       managerAgentDir,
-      repoArchetypesDir,
       memoryDir,
       memoryFile,
-      repoMemorySkillFile,
       agentsStoreFile: join(swarmDir, 'agents.json'),
       secretsFile: join(dataDir, 'secrets.json'),
       schedulesFile: getScheduleFilePath(dataDir, 'manager'),
@@ -350,9 +373,9 @@ describe('SwarmManager', () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)
 
-    const rootSwarmPath = join(config.paths.rootDir, 'SWARM.md')
-    const nestedDir = join(config.paths.rootDir, 'nested', 'deeper')
-    const nestedSwarmPath = join(config.paths.rootDir, 'nested', 'SWARM.md')
+    const rootSwarmPath = join(config.paths.projectRoot, 'SWARM.md')
+    const nestedDir = join(config.paths.projectRoot, 'nested', 'deeper')
+    const nestedSwarmPath = join(config.paths.projectRoot, 'nested', 'SWARM.md')
 
     await mkdir(nestedDir, { recursive: true })
     await writeFile(rootSwarmPath, '# root swarm policy\n', 'utf8')
@@ -376,7 +399,7 @@ describe('SwarmManager', () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)
 
-    const files = await manager.getSwarmContextFilesForTest(config.paths.rootDir)
+    const files = await manager.getSwarmContextFilesForTest(config.paths.projectRoot)
 
     expect(files).toEqual([])
   })
@@ -431,7 +454,7 @@ describe('SwarmManager', () => {
 
     const cronSkill = await readFile(resources.additionalSkillPaths[2], 'utf8')
     expect(cronSkill).toContain('name: cron-scheduling')
-    expect(cronSkill).toContain('schedule.js add')
+    expect(cronSkill).toContain('middleman schedule add')
 
     const agentBrowserSkill = await readFile(resources.additionalSkillPaths[3], 'utf8')
     expect(agentBrowserSkill).toContain('name: agent-browser')
@@ -542,9 +565,9 @@ describe('SwarmManager', () => {
 
   it('prefers repo memory skill override when present', async () => {
     const config = await makeTempConfig()
-    await mkdir(join(config.paths.rootDir, '.swarm', 'skills', 'memory'), { recursive: true })
+    await mkdir(join(config.paths.projectRoot, '.swarm', 'skills', 'memory'), { recursive: true })
     await writeFile(
-      config.paths.repoMemorySkillFile,
+      config.paths.projectMemorySkillFile,
       ['---', 'name: memory', 'description: Repo override memory workflow.', '---', '', '# Repo memory override', ''].join('\n'),
       'utf8',
     )
@@ -554,7 +577,7 @@ describe('SwarmManager', () => {
 
     const resources = await manager.getMemoryRuntimeResourcesForTest()
     expect(resources.additionalSkillPaths).toHaveLength(5)
-    expect(resources.additionalSkillPaths[0]).toBe(config.paths.repoMemorySkillFile)
+    expect(resources.additionalSkillPaths[0]).toBe(config.paths.projectMemorySkillFile)
     expect(resources.additionalSkillPaths[1].endsWith(join('brave-search', 'SKILL.md'))).toBe(true)
     expect(resources.additionalSkillPaths[2].endsWith(join('cron-scheduling', 'SKILL.md'))).toBe(true)
     expect(resources.additionalSkillPaths[3].endsWith(join('agent-browser', 'SKILL.md'))).toBe(true)
@@ -563,9 +586,9 @@ describe('SwarmManager', () => {
 
   it('prefers repo brave-search skill override when present', async () => {
     const config = await makeTempConfig()
-    const repoBraveSkillFile = join(config.paths.rootDir, '.swarm', 'skills', 'brave-search', 'SKILL.md')
+    const repoBraveSkillFile = join(config.paths.projectRoot, '.swarm', 'skills', 'brave-search', 'SKILL.md')
 
-    await mkdir(join(config.paths.rootDir, '.swarm', 'skills', 'brave-search'), { recursive: true })
+    await mkdir(join(config.paths.projectRoot, '.swarm', 'skills', 'brave-search'), { recursive: true })
     await writeFile(
       repoBraveSkillFile,
       [
@@ -595,7 +618,7 @@ describe('SwarmManager', () => {
   it('uses repo manager archetype overrides on boot', async () => {
     const config = await makeTempConfig()
     const managerOverride = 'You are the repo manager override.'
-    await writeFile(join(config.paths.repoArchetypesDir, 'manager.md'), `${managerOverride}\n`, 'utf8')
+    await writeFile(join(config.paths.projectArchetypesDir, 'manager.md'), `${managerOverride}\n`, 'utf8')
 
     const manager = new TestSwarmManager(config)
     await bootWithDefaultManager(manager, config)

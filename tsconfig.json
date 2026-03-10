@@ -1,0 +1,36 @@
+{
+  "include": [
+    "apps/backend/src/**/*.ts",
+    "apps/cli/src/**/*.ts",
+    "apps/ui/node_modules/vite/client.d.ts",
+    "apps/site/src/**/*.ts",
+    "apps/site/src/**/*.tsx",
+    "apps/ui/src/**/*.ts",
+    "apps/ui/src/**/*.tsx",
+    "packages/protocol/src/**/*.ts"
+  ],
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "types": ["node"],
+    "typeRoots": [
+      "./apps/backend/node_modules/@types",
+      "./apps/cli/node_modules/@types",
+      "./apps/ui/node_modules/@types",
+      "./apps/site/node_modules/@types"
+    ],
+    "allowImportingTsExtensions": true,
+    "noEmit": true,
+    "strict": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["apps/ui/src/*"],
+      "@middleman/protocol": ["packages/protocol/src/index.ts"]
+    }
+  }
+}

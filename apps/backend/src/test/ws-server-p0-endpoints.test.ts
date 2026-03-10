@@ -2,7 +2,7 @@ import { EventEmitter } from 'node:events'
 import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { getScheduleFilePath } from '../scheduler/schedule-storage.js'
 import type { AgentDescriptor, SwarmConfig } from '../swarm/types.js'
@@ -94,17 +94,25 @@ async function getAvailablePort(): Promise<number> {
 async function makeTempConfig(options?: { port?: number; managerId?: string }): Promise<SwarmConfig> {
   const port = options?.port ?? (await getAvailablePort())
   const rootDir = await mkdtemp(join(tmpdir(), 'swarm-ws-p0-test-'))
+  const installDir = resolve(process.cwd(), '../..')
   const dataDir = join(rootDir, 'data')
+  const runDir = join(dataDir, 'run')
+  const logsDir = join(dataDir, 'logs')
+  const schedulesDir = join(dataDir, 'schedules')
+  const integrationsDir = join(dataDir, 'integrations')
   const swarmDir = join(dataDir, 'swarm')
   const sessionsDir = join(dataDir, 'sessions')
   const uploadsDir = join(dataDir, 'uploads')
   const authDir = join(dataDir, 'auth')
   const agentDir = join(dataDir, 'agent')
   const managerAgentDir = join(agentDir, 'manager')
-  const repoArchetypesDir = join(rootDir, '.swarm', 'archetypes')
+  const projectSwarmDir = join(rootDir, '.swarm')
+  const projectArchetypesDir = join(projectSwarmDir, 'archetypes')
+  const projectSkillsDir = join(projectSwarmDir, 'skills')
   const memoryDir = join(dataDir, 'memory')
   const memoryFile = join(memoryDir, 'manager.md')
-  const repoMemorySkillFile = join(rootDir, '.swarm', 'skills', 'memory', 'SKILL.md')
+  const projectMemorySkillFile = join(projectSkillsDir, 'memory', 'SKILL.md')
+  const uiDir = join(rootDir, 'public')
 
   await mkdir(swarmDir, { recursive: true })
   await mkdir(sessionsDir, { recursive: true })
@@ -113,7 +121,8 @@ async function makeTempConfig(options?: { port?: number; managerId?: string }): 
   await mkdir(memoryDir, { recursive: true })
   await mkdir(agentDir, { recursive: true })
   await mkdir(managerAgentDir, { recursive: true })
-  await mkdir(repoArchetypesDir, { recursive: true })
+  await mkdir(projectArchetypesDir, { recursive: true })
+  await mkdir(uiDir, { recursive: true })
 
   return {
     host: '127.0.0.1',
@@ -130,8 +139,24 @@ async function makeTempConfig(options?: { port?: number; managerId?: string }): 
     defaultCwd: rootDir,
     cwdAllowlistRoots: [rootDir, join(rootDir, 'worktrees')],
     paths: {
-      rootDir,
+      installDir,
+      installAssetsDir: resolve(process.cwd(), 'src', 'swarm'),
+      installArchetypesDir: resolve(process.cwd(), 'src', 'swarm', 'archetypes', 'builtins'),
+      installSkillsDir: resolve(process.cwd(), 'src', 'swarm', 'skills', 'builtins'),
+      cliBinDir: resolve(process.cwd(), '..', 'cli', 'bin'),
+      uiDir,
+      projectRoot: rootDir,
+      projectSwarmDir,
+      projectArchetypesDir,
+      projectSkillsDir,
+      projectMemorySkillFile,
       dataDir,
+      configFile: join(dataDir, 'config.json'),
+      configEnvFile: join(dataDir, 'config.env'),
+      runDir,
+      logsDir,
+      schedulesDir,
+      integrationsDir,
       swarmDir,
       sessionsDir,
       uploadsDir,
@@ -139,10 +164,8 @@ async function makeTempConfig(options?: { port?: number; managerId?: string }): 
       authFile: join(authDir, 'auth.json'),
       agentDir,
       managerAgentDir,
-      repoArchetypesDir,
       memoryDir,
       memoryFile,
-      repoMemorySkillFile,
       agentsStoreFile: join(swarmDir, 'agents.json'),
       secretsFile: join(dataDir, 'secrets.json'),
       schedulesFile: getScheduleFilePath(dataDir, options?.managerId ?? 'manager'),
@@ -284,7 +307,7 @@ afterEach(() => {
 describe('SwarmWebSocketServer P0 endpoints', () => {
   it('validates /api/transcribe content type, file size, and missing API key', async () => {
     const config = await makeTempConfig({ managerId: 'manager' })
-    const manager = new FakeSwarmManager(config, [createManagerDescriptor(config.paths.rootDir, 'manager')])
+    const manager = new FakeSwarmManager(config, [createManagerDescriptor(config.paths.projectRoot, 'manager')])
     const server = new SwarmWebSocketServer({
       swarmManager: manager as unknown as never,
       host: config.host,
@@ -324,7 +347,7 @@ describe('SwarmWebSocketServer P0 endpoints', () => {
     const config = await makeTempConfig({ managerId: 'manager' })
     await writeAuthKey(config.paths.authFile, 'sk-test-123')
 
-    const manager = new FakeSwarmManager(config, [createManagerDescriptor(config.paths.rootDir, 'manager')])
+    const manager = new FakeSwarmManager(config, [createManagerDescriptor(config.paths.projectRoot, 'manager')])
     const server = new SwarmWebSocketServer({
       swarmManager: manager as unknown as never,
       host: config.host,
@@ -414,7 +437,7 @@ describe('SwarmWebSocketServer P0 endpoints', () => {
     })
 
     const config = await makeTempConfig({ managerId: 'manager' })
-    const manager = new FakeSwarmManager(config, [createManagerDescriptor(config.paths.rootDir, 'manager')])
+    const manager = new FakeSwarmManager(config, [createManagerDescriptor(config.paths.projectRoot, 'manager')])
     const server = new SwarmWebSocketServer({
       swarmManager: manager as unknown as never,
       host: config.host,
@@ -468,7 +491,7 @@ describe('SwarmWebSocketServer P0 endpoints', () => {
 
   it('validates OAuth login provider and path segments', async () => {
     const config = await makeTempConfig({ managerId: 'manager' })
-    const manager = new FakeSwarmManager(config, [createManagerDescriptor(config.paths.rootDir, 'manager')])
+    const manager = new FakeSwarmManager(config, [createManagerDescriptor(config.paths.projectRoot, 'manager')])
     const server = new SwarmWebSocketServer({
       swarmManager: manager as unknown as never,
       host: config.host,
@@ -505,7 +528,7 @@ describe('SwarmWebSocketServer P0 endpoints', () => {
 
   it('handles manager-scoped Slack/Telegram routes and validates methods/payloads', async () => {
     const config = await makeTempConfig({ managerId: 'manager' })
-    const manager = new FakeSwarmManager(config, [createManagerDescriptor(config.paths.rootDir, 'manager')])
+    const manager = new FakeSwarmManager(config, [createManagerDescriptor(config.paths.projectRoot, 'manager')])
     const integrationRegistry = createIntegrationRegistryMock()
 
     const server = new SwarmWebSocketServer({

@@ -1,11 +1,9 @@
 import { existsSync } from "node:fs";
 import { readdir, readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 import { parseSkillFrontmatter, type ParsedSkillEnvDeclaration } from "./skill-frontmatter.js";
 import type { SwarmConfig } from "./types.js";
 
-const REPO_SKILLS_RELATIVE_DIR = ".swarm/skills";
 const REPO_BUILT_IN_SKILLS_RELATIVE_DIR = "apps/backend/src/swarm/skills/builtins";
 const SKILL_FILE_NAME = "SKILL.md";
 const REQUIRED_SKILL_NAMES = [
@@ -15,10 +13,6 @@ const REQUIRED_SKILL_NAMES = [
   "agent-browser",
   "image-generation"
 ] as const;
-
-const SKILL_METADATA_SERVICE_DIR = fileURLToPath(new URL(".", import.meta.url));
-const BACKEND_PACKAGE_DIR = resolve(SKILL_METADATA_SERVICE_DIR, "..", "..");
-const BUILT_IN_SKILLS_FALLBACK_DIR = resolve(BACKEND_PACKAGE_DIR, "src", "swarm", "skills", "builtins");
 
 export interface SkillMetadata {
   skillName: string;
@@ -97,7 +91,11 @@ export class SkillMetadataService {
   }
 
   private resolveMemorySkillPath(skillPathIndex: Map<string, string[]>): string {
-    return this.resolveRequiredSkillPath("memory", skillPathIndex, this.deps.config.paths.repoMemorySkillFile);
+    return this.resolveRequiredSkillPath(
+      "memory",
+      skillPathIndex,
+      this.deps.config.paths.projectMemorySkillFile
+    );
   }
 
   private resolveBraveSearchSkillPath(skillPathIndex: Map<string, string[]>): string {
@@ -136,13 +134,14 @@ export class SkillMetadataService {
 
   private async scanSkillPathCandidates(): Promise<SkillPathCandidate[]> {
     const candidates: SkillPathCandidate[] = [];
+    const repositoryBuiltInSkillsDir = resolve(
+      this.deps.config.paths.projectRoot,
+      REPO_BUILT_IN_SKILLS_RELATIVE_DIR
+    );
 
-    const repositorySkillsDir = resolve(this.deps.config.paths.rootDir, REPO_SKILLS_RELATIVE_DIR);
-    const repositoryBuiltInSkillsDir = resolve(this.deps.config.paths.rootDir, REPO_BUILT_IN_SKILLS_RELATIVE_DIR);
-
-    candidates.push(...(await this.scanSkillFilesInDirectory(repositorySkillsDir)));
+    candidates.push(...(await this.scanSkillFilesInDirectory(this.deps.config.paths.projectSkillsDir)));
+    candidates.push(...(await this.scanSkillFilesInDirectory(this.deps.config.paths.installSkillsDir)));
     candidates.push(...(await this.scanSkillFilesInDirectory(repositoryBuiltInSkillsDir)));
-    candidates.push(...(await this.scanSkillFilesInDirectory(BUILT_IN_SKILLS_FALLBACK_DIR)));
 
     return candidates;
   }

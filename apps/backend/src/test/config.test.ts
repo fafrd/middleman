@@ -12,6 +12,9 @@ const MANAGED_ENV_KEYS = [
   'SWARM_PORT',
   'MIDDLEMAN_HOST',
   'MIDDLEMAN_PORT',
+  'MIDDLEMAN_HOME',
+  'MIDDLEMAN_PROJECT_ROOT',
+  'MIDDLEMAN_INSTALL_DIR',
   'SWARM_DEBUG',
   'SWARM_ALLOW_NON_MANAGER_SUBSCRIPTIONS',
   'SWARM_MANAGER_ID',
@@ -67,23 +70,28 @@ describe('createConfig', () => {
         thinkingLevel: 'xhigh',
       })
 
+      expect(config.paths.installDir).toBe(resolve(process.cwd(), '../..'))
+      expect(config.paths.projectRoot).toBe(resolve(process.cwd()))
       expect(config.paths.dataDir).toBe(resolve(homedir(), '.middleman'))
+      expect(config.paths.projectSwarmDir).toBe(resolve(config.paths.projectRoot, '.swarm'))
       expect(config.paths.swarmDir).toBe(resolve(homedir(), '.middleman', 'swarm'))
       expect(config.paths.sessionsDir).toBe(resolve(homedir(), '.middleman', 'sessions'))
       expect(config.paths.uploadsDir).toBe(resolve(homedir(), '.middleman', 'uploads'))
       expect(config.paths.authDir).toBe(resolve(homedir(), '.middleman', 'auth'))
       expect(config.paths.authFile).toBe(resolve(homedir(), '.middleman', 'auth', 'auth.json'))
       expect(config.paths.managerAgentDir).toBe(resolve(homedir(), '.middleman', 'agent', 'manager'))
-      expect(config.paths.repoArchetypesDir).toBe(resolve(config.paths.rootDir, '.swarm', 'archetypes'))
+      expect(config.paths.projectArchetypesDir).toBe(resolve(config.paths.projectRoot, '.swarm', 'archetypes'))
       expect(config.paths.memoryDir).toBe(resolve(homedir(), '.middleman', 'memory'))
       expect(config.paths.memoryFile).toBeUndefined()
-      expect(config.paths.repoMemorySkillFile).toBe(resolve(config.paths.rootDir, '.swarm', 'skills', 'memory', 'SKILL.md'))
+      expect(config.paths.projectMemorySkillFile).toBe(
+        resolve(config.paths.projectRoot, '.swarm', 'skills', 'memory', 'SKILL.md'),
+      )
       expect(config.paths.agentsStoreFile).toBe(resolve(homedir(), '.middleman', 'swarm', 'agents.json'))
       expect(config.paths.secretsFile).toBe(resolve(homedir(), '.middleman', 'secrets.json'))
       expect(config.paths.schedulesFile).toBeUndefined()
 
-      expect(config.defaultCwd).toBe(config.paths.rootDir)
-      expect(config.cwdAllowlistRoots).toContain(config.paths.rootDir)
+      expect(config.defaultCwd).toBe(config.paths.projectRoot)
+      expect(config.cwdAllowlistRoots).toContain(config.paths.projectRoot)
       expect(config.cwdAllowlistRoots).toContain(resolve(homedir(), 'worktrees'))
     })
   })
@@ -120,7 +128,7 @@ describe('createConfig', () => {
         expect(config.debug).toBe(true)
         expect(config.allowNonManagerSubscriptions).toBe(true)
         expect(config.managerId).toBeUndefined()
-        expect(config.defaultCwd).toBe(config.paths.rootDir)
+        expect(config.defaultCwd).toBe(config.paths.projectRoot)
         expect(config.defaultModel).toEqual({
           provider: 'openai-codex',
           modelId: 'gpt-5.3-codex',

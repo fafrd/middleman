@@ -111,6 +111,17 @@ export function resolveReadFileContentType(path: string): string {
   const extension = extname(path).toLowerCase();
 
   switch (extension) {
+    case ".html":
+      return "text/html; charset=utf-8";
+    case ".css":
+      return "text/css; charset=utf-8";
+    case ".js":
+    case ".mjs":
+      return "text/javascript; charset=utf-8";
+    case ".json":
+      return "application/json; charset=utf-8";
+    case ".txt":
+      return "text/plain; charset=utf-8";
     case ".png":
       return "image/png";
     case ".jpg":
@@ -122,6 +133,16 @@ export function resolveReadFileContentType(path: string): string {
       return "image/webp";
     case ".svg":
       return "image/svg+xml; charset=utf-8";
+    case ".ico":
+      return "image/x-icon";
+    case ".woff":
+      return "font/woff";
+    case ".woff2":
+      return "font/woff2";
+    case ".map":
+      return "application/json; charset=utf-8";
+    case ".wasm":
+      return "application/wasm";
     default:
       return "application/octet-stream";
   }
