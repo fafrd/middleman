@@ -248,11 +248,11 @@ function AgentRow({
         <button
           type="button"
           onClick={onSelect}
-          className="flex min-w-0 flex-1 items-center gap-1.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring/60"
+          className="grid w-full min-w-0 grid-cols-[0.875rem_minmax(0,1fr)_2rem] items-center gap-x-1.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring/60"
           title={title}
         >
           <AgentActivitySlot isActive={isActive} isSelected={isSelected} streamingWorkerCount={streamingWorkerCount} />
-          <span className={cn('min-w-0 flex-1 truncate text-sm leading-5', nameClassName)}>{title}</span>
+          <span className={cn('min-w-0 truncate text-sm leading-5', nameClassName)}>{title}</span>
 
           <TooltipProvider delay={200}>
             <Tooltip>
@@ -260,7 +260,7 @@ function AgentRow({
                 render={
                   <span
                     className={cn(
-                      'ml-1 inline-flex h-5 w-8 shrink-0 items-center justify-center rounded-sm border border-sidebar-border/80 bg-sidebar-accent/40 px-0.5',
+                      'inline-flex h-5 w-8 shrink-0 items-center justify-center justify-self-end rounded-sm border border-sidebar-border/80 bg-sidebar-accent/40 px-0.5',
                       isSelected ? 'border-sidebar-ring/60 bg-sidebar-accent-foreground/10' : '',
                     )}
                   />
