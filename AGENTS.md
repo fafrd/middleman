@@ -10,6 +10,8 @@
 
 ## Scope Expectations
 
+This is a **greenfield project** — do not worry about backwards compatibility. Breaking changes to APIs, storage formats, protocols, and UI are fine. Move fast and keep the codebase clean.
+
 For dashboard/chat/settings work, preserve existing behavior and interaction patterns unless the task explicitly requests a redesign.
 
 ## Architecture (Current)
