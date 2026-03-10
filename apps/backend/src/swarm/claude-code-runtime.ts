@@ -149,7 +149,26 @@ export class ClaudeCodeRuntime implements SwarmAgentRuntime {
         deliveryId,
         messageKey: buildRuntimeMessageKey(message)
       });
-      this.pushInput(sdkMessage);
+
+      const enqueued = this.pushInput(sdkMessage);
+      if (!enqueued) {
+        // inputDone was set between the isProcessing check and pushInput — the
+        // stream has already ended and the message was silently dropped. Report
+        // it so the caller (and the manager) can react.
+        const dropped = this.pendingDeliveries.splice(
+          this.pendingDeliveries.findIndex((d) => d.deliveryId === deliveryId),
+          1
+        );
+        await this.reportRuntimeError({
+          phase: "steer_delivery",
+          message: "Input stream closed before steer could be delivered; message was dropped.",
+          details: {
+            deliveryId,
+            droppedPendingCount: dropped.length
+          }
+        });
+      }
+
       await this.emitStatus();
 
       return {
@@ -713,19 +732,20 @@ export class ClaudeCodeRuntime implements SwarmAgentRuntime {
     };
   }
 
-  private pushInput(message: SDKUserMessage): void {
+  private pushInput(message: SDKUserMessage): boolean {
     if (this.inputDone) {
-      return;
+      return false;
     }
 
     if (this.inputResolve) {
       const resolve = this.inputResolve;
       this.inputResolve = null;
       resolve({ value: message, done: false });
-      return;
+      return true;
     }
 
     this.inputQueue.push(message);
+    return true;
   }
 
   private clearInputQueue(): void {
