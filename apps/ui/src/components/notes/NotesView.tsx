@@ -119,7 +119,7 @@ export function NotesView({
   wsUrlRef.current = wsUrl
 
   const selectedNoteSummary = selectedNotePath ? noteIndex.get(selectedNotePath) ?? null : null
-  const selectedNoteUpdatedAt = selectedNoteSummary?.updatedAt ?? selectedNote?.updatedAt ?? null
+
   const folderOptions = useMemo(
     () => [{ path: null, label: NOTES_HOME_LABEL }, ...folderList.map((folder) => ({ path: folder.path, label: folder.path }))],
     [folderList],
@@ -752,12 +752,7 @@ export function NotesView({
           </Button>
         }
         trailing={
-          <>
-            {selectedNotePath ? <SaveStatusPill status={saveStatus} /> : null}
-            <span className="text-xs tabular-nums text-muted-foreground/60">
-              {noteList.length} note{noteList.length === 1 ? '' : 's'}
-            </span>
-          </>
+          selectedNotePath ? <SaveStatusPill status={saveStatus} /> : null
         }
         onBack={onBack}
         backAriaLabel="Back to chat"
@@ -1271,42 +1266,7 @@ function fromFolderValue(value: string | null): string | null {
   return value === ROOT_FOLDER_VALUE ? null : value
 }
 
-function formatDateTime(value: string): string {
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) {
-    return value
-  }
 
-  return new Intl.DateTimeFormat(undefined, {
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-    hour: 'numeric',
-    minute: '2-digit',
-  }).format(date)
-}
-
-function formatRelativeTime(value: string): string {
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) {
-    return value
-  }
-
-  const now = Date.now()
-  const diffMs = now - date.getTime()
-  const diffMinutes = Math.floor(diffMs / 60_000)
-
-  if (diffMinutes < 1) return 'just now'
-  if (diffMinutes < 60) return `${diffMinutes}m ago`
-
-  const diffHours = Math.floor(diffMinutes / 60)
-  if (diffHours < 24) return `${diffHours}h ago`
-
-  const diffDays = Math.floor(diffHours / 24)
-  if (diffDays < 7) return `${diffDays}d ago`
-
-  return formatDateTime(value)
-}
 
 function toErrorMessage(error: unknown): string {
   if (error instanceof Error) {
