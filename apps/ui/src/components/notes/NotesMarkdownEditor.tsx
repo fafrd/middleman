@@ -8,12 +8,10 @@ import { ListPlugin } from '@lexical/react/LexicalListPlugin'
 import { MarkdownShortcutPlugin } from '@lexical/react/LexicalMarkdownShortcutPlugin'
 import { OnChangePlugin } from '@lexical/react/LexicalOnChangePlugin'
 import { RichTextPlugin } from '@lexical/react/LexicalRichTextPlugin'
-import { CodeNode } from '@lexical/code'
-import { LinkNode } from '@lexical/link'
-import { TRANSFORMERS, $convertFromMarkdownString, $convertToMarkdownString } from '@lexical/markdown'
-import { ListItemNode, ListNode } from '@lexical/list'
-import { HeadingNode, QuoteNode } from '@lexical/rich-text'
+import { $convertFromMarkdownString, $convertToMarkdownString } from '@lexical/markdown'
 import { memo, useMemo } from 'react'
+
+import { NOTES_EDITOR_NODES, NOTES_MARKDOWN_TRANSFORMERS } from './notes-markdown'
 
 const editorTheme = {
   paragraph: 'mb-4 leading-[1.72] text-foreground/95 last:mb-0',
@@ -49,8 +47,6 @@ const editorTheme = {
   },
 }
 
-const editorNodes = [HeadingNode, QuoteNode, ListNode, ListItemNode, LinkNode, CodeNode]
-
 interface NotesMarkdownEditorProps {
   editorId: string
   markdown: string
@@ -68,7 +64,7 @@ export const NotesMarkdownEditor = memo(function NotesMarkdownEditor({
     () => ({
       namespace: `middleman-notes-${editorId}`,
       theme: editorTheme,
-      nodes: editorNodes,
+      nodes: NOTES_EDITOR_NODES,
       onError(error: Error) {
         throw error
       },
@@ -77,7 +73,7 @@ export const NotesMarkdownEditor = memo(function NotesMarkdownEditor({
           return
         }
 
-        $convertFromMarkdownString(markdown, TRANSFORMERS)
+        $convertFromMarkdownString(markdown, NOTES_MARKDOWN_TRANSFORMERS)
       },
     }),
     [editorId, markdown],
@@ -106,12 +102,12 @@ export const NotesMarkdownEditor = memo(function NotesMarkdownEditor({
       <ListPlugin />
       <CheckListPlugin />
       <LinkPlugin />
-      <MarkdownShortcutPlugin transformers={TRANSFORMERS} />
+      <MarkdownShortcutPlugin transformers={NOTES_MARKDOWN_TRANSFORMERS} />
       <OnChangePlugin
         ignoreSelectionChange
         onChange={(editorState) => {
           editorState.read(() => {
-            onChange($convertToMarkdownString(TRANSFORMERS))
+            onChange($convertToMarkdownString(NOTES_MARKDOWN_TRANSFORMERS))
           })
         }}
       />
