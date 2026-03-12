@@ -186,11 +186,11 @@ function FloatingToolbarButton({
       aria-label={label}
       aria-pressed={active}
       className={cn(
-        'size-7 rounded-full border-0 bg-transparent text-muted-foreground/90 shadow-none hover:bg-accent/80 hover:text-accent-foreground focus-visible:ring-2 focus-visible:ring-ring/60',
+        'rounded-full border-0 bg-transparent text-popover-foreground/70 shadow-none hover:bg-accent/80 hover:text-popover-foreground focus-visible:ring-1 focus-visible:ring-ring/60',
         active && 'bg-accent text-accent-foreground',
       )}
       onClick={onClick}
-      size="icon-xs"
+      size="icon-sm"
       title={label}
       type="button"
       variant="ghost"
@@ -427,7 +427,7 @@ export function FloatingToolbar() {
       aria-hidden={!toolbarState.visible}
       aria-label="Text formatting toolbar"
       className={cn(
-        'fixed z-50 flex max-w-[calc(100vw-24px)] items-center gap-1 overflow-x-auto rounded-full border border-border/70 bg-popover/95 p-1.5 text-popover-foreground shadow-[0_18px_48px_rgba(0,0,0,0.38)] backdrop-blur-md [scrollbar-width:none] transition-[opacity,transform] duration-150 ease-out [&::-webkit-scrollbar]:hidden',
+        'fixed z-50 flex max-w-[calc(100vw-24px)] items-center gap-0.5 overflow-x-auto rounded-full border border-border/60 bg-popover/95 px-1.5 py-1 text-popover-foreground shadow-lg shadow-black/15 backdrop-blur-md [scrollbar-width:none] transition-[opacity,transform] duration-150 ease-out will-change-[opacity,transform] [&::-webkit-scrollbar]:hidden',
         toolbarState.visible ? 'pointer-events-auto opacity-100' : 'pointer-events-none opacity-0',
       )}
       onMouseDown={handleToolbarMouseDown}
@@ -438,7 +438,7 @@ export function FloatingToolbar() {
         transform,
       }}
     >
-      <div className="flex items-center gap-1">
+      <div className="flex items-center gap-0.5">
         <FloatingToolbarButton
           active={toolbarState.isBold}
           label="Bold"
@@ -477,9 +477,9 @@ export function FloatingToolbar() {
         </FloatingToolbarButton>
       </div>
 
-      <Separator className="mx-0.5 h-5 bg-border/70" orientation="vertical" />
+      <Separator className="mx-0.5 h-4 bg-border/50" orientation="vertical" />
 
-      <div className="flex items-center gap-1">
+      <div className="flex items-center gap-0.5">
         <FloatingToolbarButton
           active={toolbarState.blockType === 'h1'}
           label="Heading 1"
@@ -509,9 +509,9 @@ export function FloatingToolbar() {
         </FloatingToolbarButton>
       </div>
 
-      <Separator className="mx-0.5 h-5 bg-border/70" orientation="vertical" />
+      <Separator className="mx-0.5 h-4 bg-border/50" orientation="vertical" />
 
-      <div className="flex items-center gap-1">
+      <div className="flex items-center gap-0.5">
         <FloatingToolbarButton
           active={toolbarState.listType === 'check'}
           label="Checklist"
@@ -541,9 +541,9 @@ export function FloatingToolbar() {
         </FloatingToolbarButton>
       </div>
 
-      <Separator className="mx-0.5 h-5 bg-border/70" orientation="vertical" />
+      <Separator className="mx-0.5 h-4 bg-border/50" orientation="vertical" />
 
-      <div className="flex items-center gap-1">
+      <div className="flex items-center gap-0.5">
         <FloatingToolbarButton
           active={toolbarState.blockType === 'code'}
           label="Code block"
