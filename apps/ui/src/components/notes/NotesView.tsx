@@ -9,8 +9,9 @@ import {
   useState,
   type ReactNode,
 } from 'react'
-import { FileText, FolderPlus, Loader2, PanelLeft, PanelRight, Plus, Trash2 } from 'lucide-react'
+import { FileText, FolderPlus, Loader2, PanelLeft, PanelRight, Plus, Search, Trash2 } from 'lucide-react'
 import { ViewHeader } from '@/components/ViewHeader'
+import { NoteSearchPalette } from '@/components/notes/NoteSearchPalette'
 import { NotesTree } from '@/components/notes/NotesTree'
 import {
   createFolder as createFolderRequest,
@@ -50,6 +51,7 @@ const DEFAULT_NEW_NOTE_CONTENT = '# Untitled note\n'
 const NOTES_HOME_LABEL = '~/.middleman/notes'
 const ROOT_FOLDER_VALUE = '__root__'
 const NOTES_EXPLORER_COLLAPSED_STORAGE_KEY = 'middleman:notes:explorer-collapsed'
+const NOTE_SEARCH_SHORTCUT_LABEL = 'Cmd/Ctrl+P'
 const NotesMarkdownEditor = lazy(async () => {
   const module = await import('@/components/notes/NotesMarkdownEditor')
   return { default: module.NotesMarkdownEditor }
@@ -80,6 +82,7 @@ export function NotesView({
   const [expandedFolderPaths, setExpandedFolderPaths] = useState<string[]>([])
   const [activeFolderPath, setActiveFolderPath] = useState<string | null>(null)
   const [isExplorerCollapsed, setIsExplorerCollapsed] = useState(readStoredExplorerCollapsed)
+  const [isSearchPaletteOpen, setIsSearchPaletteOpen] = useState(false)
   const [renamingNotePath, setRenamingNotePath] = useState<string | null>(null)
   const [renameDraft, setRenameDraft] = useState('')
   const [isRenamingNote, setIsRenamingNote] = useState(false)
@@ -423,6 +426,30 @@ export function NotesView({
     writeStoredExplorerCollapsed(isExplorerCollapsed)
   }, [isExplorerCollapsed])
 
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented) {
+        return
+      }
+
+      if (event.key.toLowerCase() !== 'p' || event.altKey || event.shiftKey) {
+        return
+      }
+
+      if (!event.metaKey && !event.ctrlKey) {
+        return
+      }
+
+      event.preventDefault()
+      setIsSearchPaletteOpen(true)
+    }
+
+    window.addEventListener('keydown', handleKeyDown, { capture: true })
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown, { capture: true })
+    }
+  }, [])
+
   const handleEditorChange = useCallback((nextMarkdown: string) => {
     setEditorMarkdown(normalizeNoteMarkdown(nextMarkdown))
   }, [])
@@ -436,10 +463,12 @@ export function NotesView({
       void flushPendingSave().then((canSwitch) => {
         if (canSwitch) {
           setSelectedNotePath(path)
+          setExpandedFolderPaths((current) => mergeExpandedFolderPaths(current, tree, path, [], false))
+          setActiveFolderPath(parentFolderPathOf(path))
         }
       })
     },
-    [flushPendingSave, selectedNotePath],
+    [flushPendingSave, selectedNotePath, tree],
   )
 
   const handleToggleFolder = useCallback((path: string) => {
@@ -460,6 +489,15 @@ export function NotesView({
   const handleSetExplorerCollapsed = useCallback((nextCollapsed: boolean) => {
     setIsExplorerCollapsed(nextCollapsed)
   }, [])
+
+  const handleSetSearchPaletteOpen = useCallback((open: boolean) => {
+    setIsSearchPaletteOpen(open)
+  }, [])
+
+  const openSearchPalette = useCallback(() => {
+    setIsSearchPaletteOpen(true)
+  }, [])
+
   const openCreateFolderDialog = useCallback((folderPath: string | null) => {
     setCreateFolderParentPath(folderPath)
     setCreateFolderNameDraft('new-folder')
@@ -780,14 +818,57 @@ export function NotesView({
           className={cn(
             'shrink-0 overflow-hidden border-border/70 bg-background transition-[width] duration-200 ease-out',
             isExplorerCollapsed
-              ? 'w-0 border-0'
+              ? 'w-12 border-r'
               : 'flex min-h-0 w-full flex-col border-b md:w-80 md:border-b-0 md:border-r',
           )}
         >
-          {isExplorerCollapsed ? null : (
+          {isExplorerCollapsed ? (
+            <div className="flex h-full flex-col items-center gap-1 border-border/70 px-2 py-2">
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                onClick={openSearchPalette}
+                aria-label="Search notes"
+                title={`Search notes (${NOTE_SEARCH_SHORTCUT_LABEL})`}
+              >
+                <Search className="size-4" />
+              </Button>
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon-sm"
+                      className="text-muted-foreground transition-colors hover:bg-accent/70 hover:text-foreground"
+                      onClick={() => handleSetExplorerCollapsed(false)}
+                      aria-label="Expand explorer"
+                      aria-pressed={false}
+                    />
+                  }
+                >
+                  <PanelRight className="size-3.5" />
+                </TooltipTrigger>
+                <TooltipContent side="right" sideOffset={6}>
+                  Show explorer
+                </TooltipContent>
+              </Tooltip>
+            </div>
+          ) : (
             <>
               <div className="flex h-11 items-center justify-end border-b border-border/70 px-2">
                 <div className="flex items-center gap-1">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-sm"
+                    onClick={openSearchPalette}
+                    aria-label="Search notes"
+                    title={`Search notes (${NOTE_SEARCH_SHORTCUT_LABEL})`}
+                  >
+                    <Search className="size-4" />
+                  </Button>
                   <Button
                     type="button"
                     variant="ghost"
@@ -935,6 +1016,15 @@ export function NotesView({
           )}
         </div>
       </div>
+
+      <NoteSearchPalette
+        notes={noteList}
+        open={isSearchPaletteOpen}
+        selectedNotePath={selectedNotePath}
+        onOpenChange={handleSetSearchPaletteOpen}
+        onSelectNote={handleSelectNote}
+        shortcutLabel={NOTE_SEARCH_SHORTCUT_LABEL}
+      />
 
       <Dialog open={createFolderDialogOpen} onOpenChange={setCreateFolderDialogOpen}>
         <DialogContent className="max-w-md">
