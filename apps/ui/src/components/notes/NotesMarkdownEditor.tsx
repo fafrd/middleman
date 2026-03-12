@@ -11,7 +11,7 @@ import { LinkNode } from '@lexical/link'
 import { TRANSFORMERS, $convertFromMarkdownString, $convertToMarkdownString } from '@lexical/markdown'
 import { ListItemNode, ListNode } from '@lexical/list'
 import { HeadingNode, QuoteNode } from '@lexical/rich-text'
-import { useMemo } from 'react'
+import { memo, useMemo } from 'react'
 
 const editorTheme = {
   paragraph: 'mb-3 leading-7 text-foreground last:mb-0',
@@ -50,7 +50,7 @@ interface NotesMarkdownEditorProps {
   placeholder?: string
 }
 
-export function NotesMarkdownEditor({
+export const NotesMarkdownEditor = memo(function NotesMarkdownEditor({
   editorId,
   markdown,
   onChange,
@@ -107,4 +107,4 @@ export function NotesMarkdownEditor({
       />
     </LexicalComposer>
   )
-}
+})

@@ -1,4 +1,5 @@
-import { mkdir, readFile, readdir, stat, unlink, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { lstat, mkdir, readFile, readdir, rename, stat, unlink, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 
 const NOTES_DIRECTORY_NAME = "notes";
@@ -69,6 +70,7 @@ export async function readNote(dataDir: string, rawFilename: string): Promise<St
   const filePath = resolve(notesDir, filename);
 
   try {
+    await assertRegularNoteFile(filePath, filename);
     const [content, fileStats] = await Promise.all([
       readFile(filePath, "utf8"),
       stat(filePath)
@@ -95,10 +97,11 @@ export async function saveNote(
   const filename = normalizeNoteFilename(rawFilename);
   const notesDir = await ensureNotesDir(dataDir);
   const filePath = resolve(notesDir, filename);
+  const tempPath = resolve(notesDir, `.${filename}.${randomUUID()}.tmp`);
   let created = false;
 
   try {
-    await stat(filePath);
+    await assertRegularNoteFile(filePath, filename);
   } catch (error) {
     if (isMissingFileError(error)) {
       created = true;
@@ -107,7 +110,13 @@ export async function saveNote(
     }
   }
 
-  await writeFile(filePath, content, "utf8");
+  try {
+    await writeFile(tempPath, content, { encoding: "utf8", flag: "wx" });
+    await rename(tempPath, filePath);
+  } catch (error) {
+    await removeIfExists(tempPath);
+    throw error;
+  }
 
   return {
     created,
@@ -128,6 +137,18 @@ export async function deleteNote(dataDir: string, rawFilename: string): Promise<
     }
 
     throw error;
+  }
+}
+
+async function assertRegularNoteFile(filePath: string, filename: string): Promise<void> {
+  const fileStats = await lstat(filePath);
+
+  if (fileStats.isSymbolicLink()) {
+    throw new NoteStorageError(400, `Note "${filename}" must not be a symbolic link.`);
+  }
+
+  if (!fileStats.isFile()) {
+    throw new NoteStorageError(400, `Note "${filename}" must be a regular file.`);
   }
 }
 
@@ -196,4 +217,14 @@ function extractNoteTitle(filename: string, content: string): string {
 
 function isMissingFileError(error: unknown): boolean {
   return Boolean(error && typeof error === "object" && "code" in error && (error as { code?: string }).code === "ENOENT");
+}
+
+async function removeIfExists(filePath: string): Promise<void> {
+  try {
+    await unlink(filePath);
+  } catch (error) {
+    if (!isMissingFileError(error)) {
+      throw error;
+    }
+  }
 }

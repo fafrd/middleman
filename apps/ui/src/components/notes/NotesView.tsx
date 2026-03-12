@@ -55,21 +55,32 @@ export function NotesView({
   const editorMarkdownRef = useRef(editorMarkdown)
   const saveSequenceRef = useRef(0)
   const inFlightSaveRef = useRef<Promise<NoteDocument> | null>(null)
+  const selectedFilenameRef = useRef<string | null>(selectedFilename)
+  const wsUrlRef = useRef(wsUrl)
 
   const selectedNoteSummary = useMemo(
     () => notes.find((note) => note.filename === selectedFilename) ?? null,
     [notes, selectedFilename],
   )
 
-  useEffect(() => {
-    editorMarkdownRef.current = editorMarkdown
-  }, [editorMarkdown])
+  editorMarkdownRef.current = editorMarkdown
+  selectedFilenameRef.current = selectedFilename
+  wsUrlRef.current = wsUrl
 
   const clearAutoSave = useCallback(() => {
     if (autoSaveTimeoutRef.current !== null) {
       window.clearTimeout(autoSaveTimeoutRef.current)
       autoSaveTimeoutRef.current = null
     }
+  }, [])
+
+  const persistNoteSnapshot = useCallback((filename: string, content: string) => {
+    const normalizedContent = normalizeNoteMarkdown(content)
+    if (normalizedContent === lastSavedContentRef.current) {
+      return
+    }
+
+    void saveNote(wsUrlRef.current, filename, normalizedContent).catch(() => undefined)
   }, [])
 
   const saveSelectedNote = useCallback(
@@ -173,6 +184,19 @@ export function NotesView({
   }, [clearAutoSave, wsUrl])
 
   useEffect(() => {
+    return () => {
+      clearAutoSave()
+
+      const filename = selectedFilenameRef.current
+      if (!filename) {
+        return
+      }
+
+      persistNoteSnapshot(filename, editorMarkdownRef.current)
+    }
+  }, [clearAutoSave, persistNoteSnapshot])
+
+  useEffect(() => {
     if (!selectedFilename) {
       setSelectedNote(null)
       setEditorMarkdown('')
@@ -186,6 +210,11 @@ export function NotesView({
     const abortController = new AbortController()
 
     setIsLoadingNote(true)
+    setSelectedNote(null)
+    setEditorMarkdown('')
+    editorMarkdownRef.current = ''
+    lastSavedContentRef.current = ''
+    setSaveStatus('saved')
     setSaveError(null)
 
     void fetchNote(wsUrl, selectedFilename, abortController.signal)
@@ -208,6 +237,7 @@ export function NotesView({
           return
         }
 
+        setSelectedNote(null)
         setNotesError(toErrorMessage(error))
       })
       .finally(() => {
@@ -245,6 +275,30 @@ export function NotesView({
 
     return clearAutoSave
   }, [clearAutoSave, editorMarkdown, isLoadingNote, saveSelectedNote, saveStatus, selectedNote])
+
+  useEffect(() => {
+    const handleBeforeUnload = (event: BeforeUnloadEvent) => {
+      if (!selectedFilenameRef.current) {
+        return
+      }
+
+      if (editorMarkdownRef.current === lastSavedContentRef.current) {
+        return
+      }
+
+      event.preventDefault()
+      event.returnValue = ''
+    }
+
+    window.addEventListener('beforeunload', handleBeforeUnload)
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload)
+    }
+  }, [])
+
+  const handleEditorChange = useCallback((nextMarkdown: string) => {
+    setEditorMarkdown(normalizeNoteMarkdown(nextMarkdown))
+  }, [])
 
   const handleCreateNote = useCallback(async () => {
     setIsCreatingNote(true)
@@ -504,7 +558,7 @@ export function NotesView({
                 key={selectedNote.filename}
                 editorId={selectedNote.filename}
                 markdown={selectedNote.content}
-                onChange={(nextMarkdown) => setEditorMarkdown(normalizeNoteMarkdown(nextMarkdown))}
+                onChange={handleEditorChange}
               />
             </Suspense>
           )}
