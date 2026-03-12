@@ -1,7 +1,26 @@
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { FileText, Loader2, PanelLeft, Plus, Trash2 } from 'lucide-react'
+import {
+  lazy,
+  startTransition,
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react'
+import { FileText, FolderPlus, Loader2, PanelLeft, Plus, Trash2 } from 'lucide-react'
 import { ViewHeader } from '@/components/ViewHeader'
-import { deleteNote, fetchNote, fetchNotes, saveNote } from '@/components/notes/notes-api'
+import { NotesTree } from '@/components/notes/NotesTree'
+import {
+  createFolder as createFolderRequest,
+  deleteFolder as deleteFolderRequest,
+  deleteNote as deleteNoteRequest,
+  fetchNote,
+  fetchNoteTree,
+  renameNote as renameNoteRequest,
+  saveNote,
+} from '@/components/notes/notes-api'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -11,14 +30,24 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 import { ScrollArea } from '@/components/ui/scroll-area'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { cn } from '@/lib/utils'
-import type { NoteDocument, NoteSummary } from '@middleman/protocol'
+import type { NoteDocument, NoteFolder, NoteSummary, NoteTreeNode } from '@middleman/protocol'
 
 type SaveStatus = 'saved' | 'saving' | 'unsaved' | 'error'
 
 const DEFAULT_NEW_NOTE_CONTENT = '# Untitled note\n'
 const NOTES_HOME_LABEL = '~/.middleman/notes'
+const ROOT_FOLDER_VALUE = '__root__'
 const NotesMarkdownEditor = lazy(async () => {
   const module = await import('@/components/notes/NotesMarkdownEditor')
   return { default: module.NotesMarkdownEditor }
@@ -37,35 +66,64 @@ export function NotesView({
   statusBanner,
   onToggleMobileSidebar,
 }: NotesViewProps) {
-  const [notes, setNotes] = useState<NoteSummary[]>([])
-  const [selectedFilename, setSelectedFilename] = useState<string | null>(null)
+  const [tree, setTree] = useState<NoteTreeNode[]>([])
+  const [selectedNotePath, setSelectedNotePath] = useState<string | null>(null)
   const [selectedNote, setSelectedNote] = useState<NoteDocument | null>(null)
   const [editorMarkdown, setEditorMarkdown] = useState('')
   const [notesError, setNotesError] = useState<string | null>(null)
   const [saveError, setSaveError] = useState<string | null>(null)
   const [saveStatus, setSaveStatus] = useState<SaveStatus>('saved')
-  const [isLoadingNotes, setIsLoadingNotes] = useState(true)
+  const [isLoadingTree, setIsLoadingTree] = useState(true)
   const [isLoadingNote, setIsLoadingNote] = useState(false)
+  const [expandedFolderPaths, setExpandedFolderPaths] = useState<string[]>([])
+  const [renamingNotePath, setRenamingNotePath] = useState<string | null>(null)
+  const [renameDraft, setRenameDraft] = useState('')
+  const [isRenamingNote, setIsRenamingNote] = useState(false)
+  const [createNoteDialogOpen, setCreateNoteDialogOpen] = useState(false)
+  const [createNoteParentPath, setCreateNoteParentPath] = useState<string | null>(null)
+  const [createNoteNameDraft, setCreateNoteNameDraft] = useState('')
   const [isCreatingNote, setIsCreatingNote] = useState(false)
-  const [isDeletingNote, setIsDeletingNote] = useState(false)
+  const [createFolderDialogOpen, setCreateFolderDialogOpen] = useState(false)
+  const [createFolderParentPath, setCreateFolderParentPath] = useState<string | null>(null)
+  const [createFolderNameDraft, setCreateFolderNameDraft] = useState('new-folder')
+  const [isCreatingFolder, setIsCreatingFolder] = useState(false)
+  const [notePendingMove, setNotePendingMove] = useState<NoteSummary | null>(null)
+  const [moveDestinationFolder, setMoveDestinationFolder] = useState(ROOT_FOLDER_VALUE)
+  const [isMovingNote, setIsMovingNote] = useState(false)
   const [notePendingDelete, setNotePendingDelete] = useState<NoteSummary | null>(null)
+  const [folderPendingDelete, setFolderPendingDelete] = useState<NoteFolder | null>(null)
+  const [isDeletingNote, setIsDeletingNote] = useState(false)
+  const [isDeletingFolder, setIsDeletingFolder] = useState(false)
 
   const lastSavedContentRef = useRef('')
   const autoSaveTimeoutRef = useRef<number | null>(null)
   const editorMarkdownRef = useRef(editorMarkdown)
   const saveSequenceRef = useRef(0)
   const inFlightSaveRef = useRef<Promise<NoteDocument> | null>(null)
-  const selectedFilenameRef = useRef<string | null>(selectedFilename)
+  const selectedNotePathRef = useRef<string | null>(selectedNotePath)
+  const selectedNoteRef = useRef<NoteDocument | null>(selectedNote)
+  const expandedFolderPathsRef = useRef<string[]>(expandedFolderPaths)
   const wsUrlRef = useRef(wsUrl)
+  const loadedNotePathRef = useRef<string | null>(null)
+  const renameSubmittingRef = useRef(false)
+  const hasInitializedExpansionRef = useRef(false)
 
-  const selectedNoteSummary = useMemo(
-    () => notes.find((note) => note.filename === selectedFilename) ?? null,
-    [notes, selectedFilename],
-  )
+  const noteList = useMemo(() => flattenNoteTree(tree), [tree])
+  const folderList = useMemo(() => flattenFolderTree(tree), [tree])
+  const noteIndex = useMemo(() => new Map(noteList.map((note) => [note.path, note])), [noteList])
 
   editorMarkdownRef.current = editorMarkdown
-  selectedFilenameRef.current = selectedFilename
+  selectedNotePathRef.current = selectedNotePath
+  selectedNoteRef.current = selectedNote
+  expandedFolderPathsRef.current = expandedFolderPaths
   wsUrlRef.current = wsUrl
+
+  const selectedNoteSummary = selectedNotePath ? noteIndex.get(selectedNotePath) ?? null : null
+  const selectedNoteUpdatedAt = selectedNoteSummary?.updatedAt ?? selectedNote?.updatedAt ?? null
+  const folderOptions = useMemo(
+    () => [{ path: null, label: NOTES_HOME_LABEL }, ...folderList.map((folder) => ({ path: folder.path, label: folder.path }))],
+    [folderList],
+  )
 
   const clearAutoSave = useCallback(() => {
     if (autoSaveTimeoutRef.current !== null) {
@@ -74,28 +132,94 @@ export function NotesView({
     }
   }, [])
 
-  const persistNoteSnapshot = useCallback((filename: string, content: string) => {
+  const applyLoadedNote = useCallback((note: NoteDocument | null) => {
+    if (!note) {
+      loadedNotePathRef.current = null
+      selectedNoteRef.current = null
+      setSelectedNote(null)
+      setEditorMarkdown('')
+      editorMarkdownRef.current = ''
+      lastSavedContentRef.current = ''
+      setSaveStatus('saved')
+      setSaveError(null)
+      return
+    }
+
+    const normalizedNote = normalizeNoteDocument(note)
+    loadedNotePathRef.current = normalizedNote.path
+    selectedNoteRef.current = normalizedNote
+    setSelectedNote(normalizedNote)
+    setEditorMarkdown(normalizedNote.content)
+    editorMarkdownRef.current = normalizedNote.content
+    lastSavedContentRef.current = normalizedNote.content
+    setSaveStatus('saved')
+    setSaveError(null)
+  }, [])
+
+  const selectLoadedNote = useCallback((note: NoteDocument) => {
+    const normalizedNote = normalizeNoteDocument(note)
+    selectedNotePathRef.current = normalizedNote.path
+    loadedNotePathRef.current = normalizedNote.path
+    selectedNoteRef.current = normalizedNote
+    setSelectedNotePath(normalizedNote.path)
+    setSelectedNote(normalizedNote)
+    setEditorMarkdown(normalizedNote.content)
+    editorMarkdownRef.current = normalizedNote.content
+    lastSavedContentRef.current = normalizedNote.content
+    setSaveStatus('saved')
+    setSaveError(null)
+  }, [])
+
+  const loadTree = useCallback(
+    async (
+      signal?: AbortSignal,
+      options?: {
+        preferredSelectedPath?: string | null
+        revealPaths?: string[]
+      },
+    ) => {
+      const nextTree = await fetchNoteTree(wsUrl, signal)
+      const nextNotes = flattenNoteTree(nextTree)
+      const nextSelectedPath = findNextSelectedNotePath(
+        options?.preferredSelectedPath ?? selectedNotePathRef.current,
+        nextNotes,
+      )
+      const nextExpandedFolders = mergeExpandedFolderPaths(
+        expandedFolderPathsRef.current,
+        nextTree,
+        nextSelectedPath,
+        options?.revealPaths ?? [],
+        !hasInitializedExpansionRef.current,
+      )
+
+      hasInitializedExpansionRef.current = true
+      startTransition(() => {
+        setTree(nextTree)
+        setSelectedNotePath(nextSelectedPath)
+        setExpandedFolderPaths(nextExpandedFolders)
+      })
+    },
+    [wsUrl],
+  )
+
+  const persistNoteSnapshot = useCallback((path: string, content: string) => {
     const normalizedContent = normalizeNoteMarkdown(content)
     if (normalizedContent === lastSavedContentRef.current) {
       return
     }
 
-    void saveNote(wsUrlRef.current, filename, normalizedContent).catch(() => undefined)
+    void saveNote(wsUrlRef.current, path, normalizedContent).catch(() => undefined)
   }, [])
 
   const saveSelectedNote = useCallback(
-    async (filename: string, content: string): Promise<NoteDocument> => {
+    async (path: string, content: string): Promise<NoteDocument> => {
       const normalizedContent = normalizeNoteMarkdown(content)
       const requestSequence = ++saveSequenceRef.current
 
       setSaveStatus('saving')
       setSaveError(null)
 
-      const request = saveNote(wsUrl, filename, normalizedContent).then((note) => ({
-        ...note,
-        content: normalizeNoteMarkdown(note.content),
-      }))
-
+      const request = saveNote(wsUrl, path, normalizedContent).then(normalizeNoteDocument)
       inFlightSaveRef.current = request
 
       try {
@@ -103,13 +227,14 @@ export function NotesView({
 
         if (requestSequence === saveSequenceRef.current) {
           lastSavedContentRef.current = savedNote.content
-          setSelectedNote((current) =>
-            current?.filename === savedNote.filename ? savedNote : current,
-          )
-          setNotes((current) => upsertNote(current, savedNote))
-          setSaveStatus(
-            editorMarkdownRef.current === savedNote.content ? 'saved' : 'unsaved',
-          )
+          if (selectedNoteRef.current?.path === savedNote.path) {
+            selectedNoteRef.current = savedNote
+            loadedNotePathRef.current = savedNote.path
+            setSelectedNote(savedNote)
+          }
+
+          setTree((current) => replaceNoteInTree(current, savedNote))
+          setSaveStatus(editorMarkdownRef.current === savedNote.content ? 'saved' : 'unsaved')
         }
 
         return savedNote
@@ -132,7 +257,7 @@ export function NotesView({
   const flushPendingSave = useCallback(async (): Promise<boolean> => {
     clearAutoSave()
 
-    if (!selectedFilename) {
+    if (!selectedNotePath) {
       return true
     }
 
@@ -145,25 +270,20 @@ export function NotesView({
     }
 
     try {
-      await saveSelectedNote(selectedFilename, editorMarkdownRef.current)
+      await saveSelectedNote(selectedNotePath, editorMarkdownRef.current)
       return true
     } catch {
-      // Preserve the local error state and keep the current note selected.
       return false
     }
-  }, [clearAutoSave, saveSelectedNote, selectedFilename])
+  }, [clearAutoSave, saveSelectedNote, selectedNotePath])
 
   useEffect(() => {
     const abortController = new AbortController()
 
-    setIsLoadingNotes(true)
+    setIsLoadingTree(true)
     setNotesError(null)
 
-    void fetchNotes(wsUrl, abortController.signal)
-      .then((nextNotes) => {
-        setNotes(nextNotes)
-        setSelectedFilename((current) => findNextSelectedFilename(current, nextNotes))
-      })
+    void loadTree(abortController.signal)
       .catch((error) => {
         if (isAbortError(error)) {
           return
@@ -173,7 +293,7 @@ export function NotesView({
       })
       .finally(() => {
         if (!abortController.signal.aborted) {
-          setIsLoadingNotes(false)
+          setIsLoadingTree(false)
         }
       })
 
@@ -181,63 +301,49 @@ export function NotesView({
       abortController.abort()
       clearAutoSave()
     }
-  }, [clearAutoSave, wsUrl])
+  }, [clearAutoSave, loadTree, wsUrl])
 
   useEffect(() => {
     return () => {
       clearAutoSave()
 
-      const filename = selectedFilenameRef.current
-      if (!filename) {
+      const path = selectedNotePathRef.current
+      if (!path) {
         return
       }
 
-      persistNoteSnapshot(filename, editorMarkdownRef.current)
+      persistNoteSnapshot(path, editorMarkdownRef.current)
     }
   }, [clearAutoSave, persistNoteSnapshot])
 
   useEffect(() => {
-    if (!selectedFilename) {
-      setSelectedNote(null)
-      setEditorMarkdown('')
-      editorMarkdownRef.current = ''
-      lastSavedContentRef.current = ''
-      setSaveStatus('saved')
-      setSaveError(null)
+    if (!selectedNotePath) {
+      applyLoadedNote(null)
+      return
+    }
+
+    if (selectedNoteRef.current?.path === selectedNotePath && loadedNotePathRef.current === selectedNotePath) {
+      setIsLoadingNote(false)
       return
     }
 
     const abortController = new AbortController()
 
     setIsLoadingNote(true)
-    setSelectedNote(null)
-    setEditorMarkdown('')
-    editorMarkdownRef.current = ''
-    lastSavedContentRef.current = ''
-    setSaveStatus('saved')
-    setSaveError(null)
+    applyLoadedNote(null)
 
-    void fetchNote(wsUrl, selectedFilename, abortController.signal)
+    void fetchNote(wsUrl, selectedNotePath, abortController.signal)
       .then((note) => {
-        const normalizedNote = {
-          ...note,
-          content: normalizeNoteMarkdown(note.content),
-        }
-
         setNotesError(null)
-        setSelectedNote(normalizedNote)
-        setNotes((current) => upsertNote(current, normalizedNote))
-        setEditorMarkdown(normalizedNote.content)
-        editorMarkdownRef.current = normalizedNote.content
-        lastSavedContentRef.current = normalizedNote.content
-        setSaveStatus('saved')
+        setTree((current) => replaceNoteInTree(current, normalizeNoteDocument(note)))
+        applyLoadedNote(note)
       })
       .catch((error) => {
         if (isAbortError(error)) {
           return
         }
 
-        setSelectedNote(null)
+        applyLoadedNote(null)
         setNotesError(toErrorMessage(error))
       })
       .finally(() => {
@@ -249,7 +355,7 @@ export function NotesView({
     return () => {
       abortController.abort()
     }
-  }, [selectedFilename, wsUrl])
+  }, [applyLoadedNote, selectedNotePath, wsUrl])
 
   useEffect(() => {
     clearAutoSave()
@@ -270,7 +376,7 @@ export function NotesView({
 
     autoSaveTimeoutRef.current = window.setTimeout(() => {
       autoSaveTimeoutRef.current = null
-      void saveSelectedNote(selectedNote.filename, editorMarkdownRef.current)
+      void saveSelectedNote(selectedNote.path, editorMarkdownRef.current)
     }, 1000)
 
     return clearAutoSave
@@ -278,7 +384,7 @@ export function NotesView({
 
   useEffect(() => {
     const handleBeforeUnload = (event: BeforeUnloadEvent) => {
-      if (!selectedFilenameRef.current) {
+      if (!selectedNotePathRef.current) {
         return
       }
 
@@ -300,7 +406,53 @@ export function NotesView({
     setEditorMarkdown(normalizeNoteMarkdown(nextMarkdown))
   }, [])
 
+  const handleSelectNote = useCallback(
+    (path: string) => {
+      if (path === selectedNotePath) {
+        return
+      }
+
+      void flushPendingSave().then((canSwitch) => {
+        if (canSwitch) {
+          setSelectedNotePath(path)
+        }
+      })
+    },
+    [flushPendingSave, selectedNotePath],
+  )
+
+  const handleToggleFolder = useCallback((path: string) => {
+    setExpandedFolderPaths((current) => {
+      const next = new Set(current)
+      if (next.has(path)) {
+        next.delete(path)
+      } else {
+        next.add(path)
+      }
+
+      return [...next]
+    })
+  }, [])
+
+  const openCreateNoteDialog = useCallback(
+    (folderPath: string | null) => {
+      const nextParentPath = folderPath ?? parentFolderPathOf(selectedNotePathRef.current)
+      setCreateNoteParentPath(nextParentPath)
+      setCreateNoteNameDraft(createUntitledNoteName(noteList, nextParentPath))
+      setCreateNoteDialogOpen(true)
+    },
+    [noteList],
+  )
+
+  const openCreateFolderDialog = useCallback((folderPath: string | null) => {
+    setCreateFolderParentPath(folderPath)
+    setCreateFolderNameDraft('new-folder')
+    setCreateFolderDialogOpen(true)
+  }, [])
+
   const handleCreateNote = useCallback(async () => {
+    const notePath = joinNotePath(createNoteParentPath, createNoteNameDraft)
+
     setIsCreatingNote(true)
     setNotesError(null)
 
@@ -310,37 +462,145 @@ export function NotesView({
         return
       }
 
-      const filename = createUntitledFilename(notes)
-      const createdNote = await saveSelectedNote(filename, DEFAULT_NEW_NOTE_CONTENT)
-      setSelectedFilename(createdNote.filename)
-      setSelectedNote(createdNote)
-      setEditorMarkdown(createdNote.content)
-      editorMarkdownRef.current = createdNote.content
-      lastSavedContentRef.current = createdNote.content
-      setSaveStatus('saved')
+      const createdNote = await saveNote(wsUrl, notePath, DEFAULT_NEW_NOTE_CONTENT)
+      selectLoadedNote(createdNote)
+      await loadTree(undefined, {
+        preferredSelectedPath: createdNote.path,
+        revealPaths: [parentFolderPathOf(createdNote.path) ?? ''],
+      })
+      setCreateNoteDialogOpen(false)
     } catch (error) {
       setNotesError(toErrorMessage(error))
     } finally {
       setIsCreatingNote(false)
     }
-  }, [flushPendingSave, notes, saveSelectedNote])
+  }, [createNoteNameDraft, createNoteParentPath, flushPendingSave, loadTree, selectLoadedNote, wsUrl])
 
-  const handleSelectNote = useCallback(
-    (filename: string) => {
-      if (filename === selectedFilename) {
+  const handleCreateFolder = useCallback(async () => {
+    const folderPath = joinFolderPath(createFolderParentPath, createFolderNameDraft)
+
+    setIsCreatingFolder(true)
+    setNotesError(null)
+
+    try {
+      const createdFolder = await createFolderRequest(wsUrl, folderPath)
+      await loadTree(undefined, {
+        revealPaths: [createdFolder.path],
+      })
+      setCreateFolderDialogOpen(false)
+    } catch (error) {
+      setNotesError(toErrorMessage(error))
+    } finally {
+      setIsCreatingFolder(false)
+    }
+  }, [createFolderNameDraft, createFolderParentPath, loadTree, wsUrl])
+
+  const handleStartRenameNote = useCallback((note: NoteSummary) => {
+    setRenamingNotePath(note.path)
+    setRenameDraft(note.name)
+  }, [])
+
+  const handleCancelRenameNote = useCallback(() => {
+    setRenamingNotePath(null)
+    setRenameDraft('')
+  }, [])
+
+  const handleCommitRenameNote = useCallback(async () => {
+    if (!renamingNotePath || renameSubmittingRef.current) {
+      return
+    }
+
+    const note = noteIndex.get(renamingNotePath)
+    if (!note) {
+      handleCancelRenameNote()
+      return
+    }
+
+    const nextPath = joinNotePath(parentFolderPathOf(note.path), renameDraft)
+    if (nextPath === note.path) {
+      handleCancelRenameNote()
+      return
+    }
+
+    renameSubmittingRef.current = true
+    setIsRenamingNote(true)
+    setNotesError(null)
+
+    try {
+      const canRename = renamingNotePath === selectedNotePathRef.current ? await flushPendingSave() : true
+      if (!canRename) {
         return
       }
 
-      void flushPendingSave().then((canSwitch) => {
-        if (canSwitch) {
-          setSelectedFilename(filename)
-        }
-      })
-    },
-    [flushPendingSave, selectedFilename],
-  )
+      const renamedNote = await renameNoteRequest(wsUrl, note.path, nextPath)
+      const preferredSelectedPath =
+        selectedNotePathRef.current === note.path ? renamedNote.path : selectedNotePathRef.current
 
-  const handleConfirmDelete = useCallback(async () => {
+      if (selectedNotePathRef.current === note.path) {
+        selectLoadedNote(renamedNote)
+      }
+
+      await loadTree(undefined, {
+        preferredSelectedPath,
+        revealPaths: [parentFolderPathOf(renamedNote.path) ?? ''],
+      })
+      handleCancelRenameNote()
+    } catch (error) {
+      setNotesError(toErrorMessage(error))
+    } finally {
+      renameSubmittingRef.current = false
+      setIsRenamingNote(false)
+    }
+  }, [flushPendingSave, handleCancelRenameNote, loadTree, noteIndex, renameDraft, renamingNotePath, selectLoadedNote, wsUrl])
+
+  const handleOpenMoveDialog = useCallback((note: NoteSummary) => {
+    setNotePendingMove(note)
+    setMoveDestinationFolder(toFolderValue(parentFolderPathOf(note.path)))
+  }, [])
+
+  const handleConfirmMove = useCallback(async () => {
+    if (!notePendingMove) {
+      return
+    }
+
+    const destinationFolderPath = fromFolderValue(moveDestinationFolder)
+    const destinationPath = joinNotePath(destinationFolderPath, notePendingMove.name)
+
+    if (destinationPath === notePendingMove.path) {
+      setNotePendingMove(null)
+      return
+    }
+
+    setIsMovingNote(true)
+    setNotesError(null)
+
+    try {
+      const canMove = notePendingMove.path === selectedNotePathRef.current ? await flushPendingSave() : true
+      if (!canMove) {
+        return
+      }
+
+      const movedNote = await renameNoteRequest(wsUrl, notePendingMove.path, destinationPath)
+      const preferredSelectedPath =
+        selectedNotePathRef.current === notePendingMove.path ? movedNote.path : selectedNotePathRef.current
+
+      if (selectedNotePathRef.current === notePendingMove.path) {
+        selectLoadedNote(movedNote)
+      }
+
+      await loadTree(undefined, {
+        preferredSelectedPath,
+        revealPaths: [destinationFolderPath ?? ''],
+      })
+      setNotePendingMove(null)
+    } catch (error) {
+      setNotesError(toErrorMessage(error))
+    } finally {
+      setIsMovingNote(false)
+    }
+  }, [flushPendingSave, loadTree, moveDestinationFolder, notePendingMove, selectLoadedNote, wsUrl])
+
+  const handleConfirmDeleteNote = useCallback(async () => {
     if (!notePendingDelete) {
       return
     }
@@ -349,35 +609,68 @@ export function NotesView({
     setNotesError(null)
 
     try {
-      await deleteNote(wsUrl, notePendingDelete.filename)
-      const remainingNotes = notes.filter((note) => note.filename !== notePendingDelete.filename)
+      await deleteNoteRequest(wsUrl, notePendingDelete.path)
 
-      setNotes(remainingNotes)
+      if (selectedNotePathRef.current === notePendingDelete.path) {
+        loadedNotePathRef.current = null
+        selectedNoteRef.current = null
+      }
+
+      await loadTree(undefined, {
+        preferredSelectedPath:
+          selectedNotePathRef.current === notePendingDelete.path ? null : selectedNotePathRef.current,
+      })
       setNotePendingDelete(null)
-
-      if (selectedFilename === notePendingDelete.filename) {
-        clearAutoSave()
-        setSelectedFilename(remainingNotes[0]?.filename ?? null)
-        setSelectedNote(null)
-        setEditorMarkdown('')
-        editorMarkdownRef.current = ''
-        lastSavedContentRef.current = ''
-        setSaveStatus('saved')
-        setSaveError(null)
+      if (selectedNotePathRef.current === notePendingDelete.path) {
+        applyLoadedNote(null)
       }
     } catch (error) {
       setNotesError(toErrorMessage(error))
     } finally {
       setIsDeletingNote(false)
     }
-  }, [clearAutoSave, notePendingDelete, notes, selectedFilename, wsUrl])
+  }, [applyLoadedNote, loadTree, notePendingDelete, wsUrl])
+
+  const handleConfirmDeleteFolder = useCallback(async () => {
+    if (!folderPendingDelete) {
+      return
+    }
+
+    setIsDeletingFolder(true)
+    setNotesError(null)
+
+    try {
+      await deleteFolderRequest(wsUrl, folderPendingDelete.path)
+
+      if (selectedNotePathRef.current && pathIsInsideFolder(selectedNotePathRef.current, folderPendingDelete.path)) {
+        loadedNotePathRef.current = null
+        selectedNoteRef.current = null
+      }
+
+      await loadTree(undefined, {
+        preferredSelectedPath:
+          selectedNotePathRef.current && pathIsInsideFolder(selectedNotePathRef.current, folderPendingDelete.path)
+            ? null
+            : selectedNotePathRef.current,
+      })
+      setFolderPendingDelete(null)
+      if (selectedNotePathRef.current && pathIsInsideFolder(selectedNotePathRef.current, folderPendingDelete.path)) {
+        applyLoadedNote(null)
+      }
+    } catch (error) {
+      setNotesError(toErrorMessage(error))
+    } finally {
+      setIsDeletingFolder(false)
+    }
+  }, [applyLoadedNote, folderPendingDelete, loadTree, wsUrl])
 
   const headerSubtitle = selectedNoteSummary
-    ? `${selectedNoteSummary.filename} · ${NOTES_HOME_LABEL}`
+    ? `${selectedNoteSummary.path} · ${NOTES_HOME_LABEL}`
     : `Markdown files in ${NOTES_HOME_LABEL}`
 
   const localBannerMessage = notesError ?? (saveStatus === 'error' ? saveError : null)
-  const selectedNoteUpdatedAt = selectedNoteSummary?.updatedAt ?? selectedNote?.updatedAt ?? null
+  const isCreateNoteDisabled = createNoteNameDraft.trim().length === 0 || isCreatingNote
+  const isCreateFolderDisabled = createFolderNameDraft.trim().length === 0 || isCreatingFolder
 
   return (
     <div className="flex min-h-0 flex-1 flex-col bg-background">
@@ -402,9 +695,9 @@ export function NotesView({
         }
         trailing={
           <>
-            {selectedFilename ? <SaveStatusPill status={saveStatus} /> : null}
+            {selectedNotePath ? <SaveStatusPill status={saveStatus} /> : null}
             <span className="text-xs tabular-nums text-muted-foreground/60">
-              {notes.length} note{notes.length === 1 ? '' : 's'}
+              {noteList.length} note{noteList.length === 1 ? '' : 's'}
             </span>
           </>
         }
@@ -419,97 +712,91 @@ export function NotesView({
       ) : null}
 
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden md:flex-row">
-        <div className="flex min-h-0 w-full shrink-0 flex-col border-b border-border/70 md:w-72 md:border-b-0 md:border-r">
+        <div className="flex min-h-0 w-full shrink-0 flex-col border-b border-border/70 md:w-80 md:border-b-0 md:border-r">
           <div className="flex h-12 items-center justify-between border-b border-border/70 px-3">
             <div>
               <p className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground/70">
-                Your notes
+                Explorer
               </p>
             </div>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon-sm"
-              onClick={() => void handleCreateNote()}
-              disabled={isCreatingNote}
-              aria-label="Create note"
-            >
-              {isCreatingNote ? <Loader2 className="size-4 animate-spin" /> : <Plus className="size-4" />}
-            </Button>
+            <div className="flex items-center gap-1">
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                onClick={() => openCreateFolderDialog(null)}
+                aria-label="Create folder"
+              >
+                <FolderPlus className="size-4" />
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                onClick={() => openCreateNoteDialog(null)}
+                aria-label="Create note"
+              >
+                <Plus className="size-4" />
+              </Button>
+            </div>
           </div>
 
           <ScrollArea className="h-56 md:h-auto md:flex-1">
-            {isLoadingNotes ? (
+            {isLoadingTree ? (
               <div className="flex h-full items-center justify-center px-4 py-10 text-sm text-muted-foreground">
                 <Loader2 className="mr-2 size-4 animate-spin" />
                 Loading notes
               </div>
-            ) : notes.length === 0 ? (
+            ) : tree.length === 0 ? (
               <div className="px-6 py-14 text-center">
                 <div className="mx-auto mb-4 flex size-10 items-center justify-center rounded-full bg-muted/50">
                   <FileText className="size-5 text-muted-foreground/50" />
                 </div>
                 <p className="text-sm font-medium text-foreground/75">No notes yet</p>
                 <p className="mt-1.5 text-xs leading-relaxed text-muted-foreground/60">
-                  Create a markdown note and it will live in {NOTES_HOME_LABEL}.
+                  Create a markdown note or folder and it will live in {NOTES_HOME_LABEL}.
                 </p>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="mt-4"
-                  onClick={() => void handleCreateNote()}
-                  disabled={isCreatingNote}
-                >
-                  <Plus className="size-3.5" />
-                  New note
-                </Button>
+                <div className="mt-4 flex items-center justify-center gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => openCreateNoteDialog(null)}
+                  >
+                    <Plus className="size-3.5" />
+                    New note
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => openCreateFolderDialog(null)}
+                  >
+                    <FolderPlus className="size-3.5" />
+                    New folder
+                  </Button>
+                </div>
               </div>
             ) : (
-              <div className="py-1">
-                {notes.map((note) => {
-                  const isSelected = note.filename === selectedFilename
-
-                  return (
-                    <div
-                      key={note.filename}
-                      className={cn(
-                        'group flex items-start gap-2 border-b border-border/60 px-2 py-1.5',
-                        isSelected ? 'bg-muted/45' : 'hover:bg-muted/25',
-                      )}
-                    >
-                      <button
-                        type="button"
-                        className="min-w-0 flex-1 rounded-md px-2 py-1 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
-                        onClick={() => handleSelectNote(note.filename)}
-                      >
-                        <div className="truncate text-[13px] font-medium text-foreground/90">
-                          {note.title}
-                        </div>
-                        <div className="mt-1 flex items-center gap-1.5 text-[11px] text-muted-foreground/60">
-                          <span className="truncate">{note.filename}</span>
-                          <span className="text-muted-foreground/30">&middot;</span>
-                          <span className="shrink-0">{formatRelativeTime(note.updatedAt)}</span>
-                        </div>
-                      </button>
-
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon-xs"
-                        className={cn(
-                          'mt-1 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100',
-                          isSelected && 'opacity-100',
-                        )}
-                        onClick={() => setNotePendingDelete(note)}
-                        aria-label={`Delete ${note.title}`}
-                      >
-                        <Trash2 className="size-3.5" />
-                      </Button>
-                    </div>
-                  )
-                })}
-              </div>
+              <NotesTree
+                tree={tree}
+                selectedNotePath={selectedNotePath}
+                expandedFolderPaths={expandedFolderPaths}
+                renamingNotePath={renamingNotePath}
+                renameDraft={renameDraft}
+                isRenamingNote={isRenamingNote}
+                onSelectNote={handleSelectNote}
+                onToggleFolder={handleToggleFolder}
+                onStartRenameNote={handleStartRenameNote}
+                onRenameDraftChange={setRenameDraft}
+                onCommitRenameNote={handleCommitRenameNote}
+                onCancelRenameNote={handleCancelRenameNote}
+                onCreateNoteInFolder={openCreateNoteDialog}
+                onCreateFolderInFolder={openCreateFolderDialog}
+                onMoveNote={handleOpenMoveDialog}
+                onDeleteNote={setNotePendingDelete}
+                onDeleteFolder={setFolderPendingDelete}
+              />
             )}
           </ScrollArea>
         </div>
@@ -519,9 +806,7 @@ export function NotesView({
             <div className="flex h-12 shrink-0 items-center justify-between border-b border-border/70 px-4">
               <div className="min-w-0">
                 <p className="truncate text-sm font-medium text-foreground">{selectedNoteSummary.title}</p>
-                <p className="truncate text-[11px] text-muted-foreground/65">
-                  {selectedNoteSummary.filename}
-                </p>
+                <p className="truncate text-[11px] text-muted-foreground/65">{selectedNoteSummary.path}</p>
               </div>
               {selectedNoteUpdatedAt ? (
                 <span className="shrink-0 text-[11px] text-muted-foreground/60">
@@ -531,12 +816,12 @@ export function NotesView({
             </div>
           ) : null}
 
-          {selectedFilename === null ? (
+          {selectedNotePath === null ? (
             <div className="flex min-h-0 flex-1 items-center justify-center px-6">
               <div className="max-w-sm text-center">
                 <p className="text-sm font-medium text-foreground/75">Choose a note to start writing</p>
                 <p className="mt-1.5 text-sm leading-relaxed text-muted-foreground/65">
-                  Notes autosave as markdown files and keep the editor in live preview mode.
+                  Notes autosave as markdown files and folders stay organized in a nested explorer.
                 </p>
               </div>
             </div>
@@ -555,8 +840,8 @@ export function NotesView({
               }
             >
               <NotesMarkdownEditor
-                key={selectedNote.filename}
-                editorId={selectedNote.filename}
+                key={selectedNote.path}
+                editorId={selectedNote.path}
                 markdown={selectedNote.content}
                 onChange={handleEditorChange}
               />
@@ -565,13 +850,151 @@ export function NotesView({
         </div>
       </div>
 
+      <Dialog open={createNoteDialogOpen} onOpenChange={setCreateNoteDialogOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Create note</DialogTitle>
+            <DialogDescription>
+              Create a markdown note anywhere inside {NOTES_HOME_LABEL}.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="note-folder">Folder</Label>
+              <Select
+                value={toFolderValue(createNoteParentPath)}
+                onValueChange={(value) => setCreateNoteParentPath(fromFolderValue(value))}
+              >
+                <SelectTrigger id="note-folder" className="w-full">
+                  <SelectValue placeholder="Select folder" />
+                </SelectTrigger>
+                <SelectContent>
+                  {folderOptions.map((folder) => (
+                    <SelectItem key={folder.path ?? ROOT_FOLDER_VALUE} value={toFolderValue(folder.path)}>
+                      {folder.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="note-name">Filename</Label>
+              <Input
+                id="note-name"
+                value={createNoteNameDraft}
+                onChange={(event) => setCreateNoteNameDraft(event.target.value)}
+                placeholder="untitled-note.md"
+                spellCheck={false}
+              />
+            </div>
+          </div>
+          <DialogFooter className="items-center sm:justify-between">
+            <Button type="button" variant="outline" onClick={() => setCreateNoteDialogOpen(false)} disabled={isCreatingNote}>
+              Cancel
+            </Button>
+            <Button type="button" onClick={() => void handleCreateNote()} disabled={isCreateNoteDisabled}>
+              {isCreatingNote ? <Loader2 className="size-4 animate-spin" /> : <Plus className="size-4" />}
+              Create note
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={createFolderDialogOpen} onOpenChange={setCreateFolderDialogOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Create folder</DialogTitle>
+            <DialogDescription>
+              Add a folder to organize notes inside {NOTES_HOME_LABEL}.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="folder-parent">Parent folder</Label>
+              <Select
+                value={toFolderValue(createFolderParentPath)}
+                onValueChange={(value) => setCreateFolderParentPath(fromFolderValue(value))}
+              >
+                <SelectTrigger id="folder-parent" className="w-full">
+                  <SelectValue placeholder="Select parent folder" />
+                </SelectTrigger>
+                <SelectContent>
+                  {folderOptions.map((folder) => (
+                    <SelectItem key={folder.path ?? ROOT_FOLDER_VALUE} value={toFolderValue(folder.path)}>
+                      {folder.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="folder-name">Folder name</Label>
+              <Input
+                id="folder-name"
+                value={createFolderNameDraft}
+                onChange={(event) => setCreateFolderNameDraft(event.target.value)}
+                placeholder="new-folder"
+                spellCheck={false}
+              />
+            </div>
+          </div>
+          <DialogFooter className="items-center sm:justify-between">
+            <Button type="button" variant="outline" onClick={() => setCreateFolderDialogOpen(false)} disabled={isCreatingFolder}>
+              Cancel
+            </Button>
+            <Button type="button" onClick={() => void handleCreateFolder()} disabled={isCreateFolderDisabled}>
+              {isCreatingFolder ? <Loader2 className="size-4 animate-spin" /> : <FolderPlus className="size-4" />}
+              Create folder
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={notePendingMove !== null} onOpenChange={(open) => !open && setNotePendingMove(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Move note</DialogTitle>
+            <DialogDescription>
+              {notePendingMove ? `Move ${notePendingMove.name} to another folder.` : 'Move this note to another folder.'}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2">
+            <Label htmlFor="move-folder">Destination</Label>
+            <Select
+              value={moveDestinationFolder}
+              onValueChange={(value) => setMoveDestinationFolder(value ?? ROOT_FOLDER_VALUE)}
+            >
+              <SelectTrigger id="move-folder" className="w-full">
+                <SelectValue placeholder="Select destination folder" />
+              </SelectTrigger>
+              <SelectContent>
+                {folderOptions.map((folder) => (
+                  <SelectItem key={folder.path ?? ROOT_FOLDER_VALUE} value={toFolderValue(folder.path)}>
+                    {folder.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <DialogFooter className="items-center sm:justify-between">
+            <Button type="button" variant="outline" onClick={() => setNotePendingMove(null)} disabled={isMovingNote}>
+              Cancel
+            </Button>
+            <Button type="button" onClick={() => void handleConfirmMove()} disabled={isMovingNote}>
+              {isMovingNote ? <Loader2 className="size-4 animate-spin" /> : null}
+              Move note
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <Dialog open={notePendingDelete !== null} onOpenChange={(open) => !open && setNotePendingDelete(null)}>
         <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle>Delete note?</DialogTitle>
             <DialogDescription>
               {notePendingDelete
-                ? `This removes ${notePendingDelete.filename} from ${NOTES_HOME_LABEL}.`
+                ? `This removes ${notePendingDelete.path} from ${NOTES_HOME_LABEL}.`
                 : 'This note will be removed.'}
             </DialogDescription>
           </DialogHeader>
@@ -587,11 +1010,43 @@ export function NotesView({
             <Button
               type="button"
               variant="destructive"
-              onClick={() => void handleConfirmDelete()}
+              onClick={() => void handleConfirmDeleteNote()}
               disabled={isDeletingNote}
             >
               {isDeletingNote ? <Loader2 className="size-4 animate-spin" /> : <Trash2 className="size-4" />}
               Delete note
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={folderPendingDelete !== null} onOpenChange={(open) => !open && setFolderPendingDelete(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Delete folder?</DialogTitle>
+            <DialogDescription>
+              {folderPendingDelete
+                ? `This removes ${folderPendingDelete.path} and all nested notes from ${NOTES_HOME_LABEL}.`
+                : 'This folder will be removed.'}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="items-center sm:justify-between">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setFolderPendingDelete(null)}
+              disabled={isDeletingFolder}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              onClick={() => void handleConfirmDeleteFolder()}
+              disabled={isDeletingFolder}
+            >
+              {isDeletingFolder ? <Loader2 className="size-4 animate-spin" /> : <Trash2 className="size-4" />}
+              Delete folder
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -617,6 +1072,13 @@ function SaveStatusPill({ status }: { status: SaveStatus }) {
   )
 }
 
+function normalizeNoteDocument(note: NoteDocument): NoteDocument {
+  return {
+    ...note,
+    content: normalizeNoteMarkdown(note.content),
+  }
+}
+
 function normalizeNoteMarkdown(markdown: string): string {
   const normalized = markdown.replace(/\r\n/g, '\n')
   if (normalized.trim().length === 0) {
@@ -626,45 +1088,167 @@ function normalizeNoteMarkdown(markdown: string): string {
   return `${normalized.replace(/\n+$/, '')}\n`
 }
 
-function createUntitledFilename(notes: NoteSummary[]): string {
-  const filenames = new Set(notes.map((note) => note.filename.toLowerCase()))
+function flattenNoteTree(tree: NoteTreeNode[]): NoteSummary[] {
+  const notes: NoteSummary[] = []
+
+  for (const node of tree) {
+    if (node.kind === 'file') {
+      notes.push(node)
+      continue
+    }
+
+    notes.push(...flattenNoteTree(node.children))
+  }
+
+  return notes
+}
+
+function flattenFolderTree(tree: NoteTreeNode[]): NoteFolder[] {
+  const folders: NoteFolder[] = []
+
+  for (const node of tree) {
+    if (node.kind === 'folder') {
+      folders.push(node)
+      folders.push(...flattenFolderTree(node.children))
+    }
+  }
+
+  return folders
+}
+
+function replaceNoteInTree(tree: NoteTreeNode[], nextNote: NoteSummary): NoteTreeNode[] {
+  let changed = false
+  const nextTree = tree.map((node) => {
+    if (node.kind === 'folder') {
+      const nextChildren = replaceNoteInTree(node.children, nextNote)
+      if (nextChildren !== node.children) {
+        changed = true
+        return { ...node, children: nextChildren }
+      }
+
+      return node
+    }
+
+    if (node.path === nextNote.path) {
+      changed = true
+      return { ...nextNote, kind: 'file' as const }
+    }
+
+    return node
+  })
+
+  return changed ? nextTree : tree
+}
+
+function createUntitledNoteName(notes: NoteSummary[], folderPath: string | null): string {
+  const names = new Set(
+    notes
+      .filter((note) => parentFolderPathOf(note.path) === folderPath)
+      .map((note) => note.name.toLowerCase()),
+  )
 
   for (let index = 1; index < Number.MAX_SAFE_INTEGER; index += 1) {
-    const filename = index === 1 ? 'untitled-note.md' : `untitled-note-${index}.md`
-    if (!filenames.has(filename.toLowerCase())) {
-      return filename
+    const name = index === 1 ? 'untitled-note.md' : `untitled-note-${index}.md`
+    if (!names.has(name.toLowerCase())) {
+      return name
     }
   }
 
   return `untitled-note-${Date.now()}.md`
 }
 
-function upsertNote(notes: NoteSummary[], nextNote: NoteSummary): NoteSummary[] {
-  return sortNotes([
-    nextNote,
-    ...notes.filter((note) => note.filename !== nextNote.filename),
-  ])
-}
-
-function sortNotes(notes: NoteSummary[]): NoteSummary[] {
-  return [...notes].sort((left, right) => {
-    if (left.updatedAt !== right.updatedAt) {
-      return right.updatedAt.localeCompare(left.updatedAt)
-    }
-
-    return left.filename.localeCompare(right.filename)
-  })
-}
-
-function findNextSelectedFilename(
-  currentFilename: string | null,
-  notes: NoteSummary[],
-): string | null {
-  if (currentFilename && notes.some((note) => note.filename === currentFilename)) {
-    return currentFilename
+function findNextSelectedNotePath(currentPath: string | null, notes: NoteSummary[]): string | null {
+  if (currentPath && notes.some((note) => note.path === currentPath)) {
+    return currentPath
   }
 
-  return notes[0]?.filename ?? null
+  return notes[0]?.path ?? null
+}
+
+function mergeExpandedFolderPaths(
+  currentPaths: string[],
+  tree: NoteTreeNode[],
+  selectedNotePath: string | null,
+  revealPaths: string[],
+  expandAllOnFirstLoad: boolean,
+): string[] {
+  const folderPaths = new Set(flattenFolderTree(tree).map((folder) => folder.path))
+  const next = expandAllOnFirstLoad ? new Set(folderPaths) : new Set(currentPaths.filter((path) => folderPaths.has(path)))
+
+  for (const path of selectedNotePath ? ancestorFolderPaths(selectedNotePath) : []) {
+    if (folderPaths.has(path)) {
+      next.add(path)
+    }
+  }
+
+  for (const path of revealPaths) {
+    for (const ancestorPath of ancestorFolderPaths(path)) {
+      if (folderPaths.has(ancestorPath)) {
+        next.add(ancestorPath)
+      }
+    }
+
+    if (folderPaths.has(path)) {
+      next.add(path)
+    }
+  }
+
+  return [...next]
+}
+
+function ancestorFolderPaths(path: string): string[] {
+  const trimmedPath = path.trim()
+  if (!trimmedPath) {
+    return []
+  }
+
+  const segments = trimmedPath.split('/')
+  const ancestors: string[] = []
+
+  for (let index = 0; index < segments.length - 1; index += 1) {
+    ancestors.push(segments.slice(0, index + 1).join('/'))
+  }
+
+  return ancestors
+}
+
+function ensureMarkdownExtension(name: string): string {
+  const trimmed = name.trim()
+  if (!trimmed) {
+    return ''
+  }
+
+  return trimmed.toLowerCase().endsWith('.md') ? trimmed : `${trimmed}.md`
+}
+
+function joinNotePath(folderPath: string | null, name: string): string {
+  const normalizedName = ensureMarkdownExtension(name)
+  return folderPath ? `${folderPath}/${normalizedName}` : normalizedName
+}
+
+function joinFolderPath(folderPath: string | null, name: string): string {
+  const normalizedName = name.trim()
+  return folderPath ? `${folderPath}/${normalizedName}` : normalizedName
+}
+
+function parentFolderPathOf(path: string | null): string | null {
+  if (!path || !path.includes('/')) {
+    return null
+  }
+
+  return path.slice(0, path.lastIndexOf('/'))
+}
+
+function pathIsInsideFolder(path: string, folderPath: string): boolean {
+  return path === folderPath || path.startsWith(`${folderPath}/`)
+}
+
+function toFolderValue(path: string | null): string {
+  return path ?? ROOT_FOLDER_VALUE
+}
+
+function fromFolderValue(value: string | null): string | null {
+  return value === ROOT_FOLDER_VALUE ? null : value
 }
 
 function formatDateTime(value: string): string {

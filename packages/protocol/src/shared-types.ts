@@ -50,7 +50,8 @@ export interface UserEscalation {
 }
 
 export interface NoteSummary {
-  filename: string
+  path: string
+  name: string
   title: string
   createdAt: string
   updatedAt: string
@@ -60,6 +61,19 @@ export interface NoteSummary {
 export interface NoteDocument extends NoteSummary {
   content: string
 }
+
+export interface NoteTreeFile extends NoteSummary {
+  kind: 'file'
+}
+
+export interface NoteFolder {
+  kind: 'folder'
+  path: string
+  name: string
+  children: NoteTreeNode[]
+}
+
+export type NoteTreeNode = NoteTreeFile | NoteFolder
 
 export type DeliveryMode = 'auto' | 'followUp' | 'steer'
 export type AcceptedDeliveryMode = 'prompt' | 'followUp' | 'steer'
