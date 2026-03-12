@@ -526,7 +526,7 @@ describe('SwarmWebSocketServer P0 endpoints', () => {
     }
   })
 
-  it('supports note CRUD via /api/notes and stores markdown files under the notes directory', async () => {
+  it('supports nested note CRUD, renames, folders, and tree listing via /api/notes', async () => {
     const config = await makeTempConfig({ managerId: 'manager' })
     const manager = new FakeSwarmManager(config, [createManagerDescriptor(config.paths.projectRoot, 'manager')])
     const server = new SwarmWebSocketServer({
@@ -542,71 +542,160 @@ describe('SwarmWebSocketServer P0 endpoints', () => {
       const emptyListResponse = await fetch(`http://${config.host}:${config.port}/api/notes`)
       const emptyList = await parseJsonResponse(emptyListResponse)
       expect(emptyList.status).toBe(200)
-      expect(emptyList.json.notes).toEqual([])
+      expect(emptyList.json.tree).toEqual([])
 
       const notesDirStats = await stat(join(config.paths.dataDir, 'notes'))
       expect(notesDirStats.isDirectory()).toBe(true)
 
-      const createResponse = await fetch(
-        `http://${config.host}:${config.port}/api/notes/${encodeURIComponent('weekly-plan.md')}`,
+      const createFolderResponse = await fetch(
+        `http://${config.host}:${config.port}/api/notes/folder/${encodeURIComponent('projects')}`,
+        {
+          method: 'PUT',
+        },
+      )
+      const createdFolder = await parseJsonResponse(createFolderResponse)
+      expect(createdFolder.status).toBe(201)
+      expect(createdFolder.json.folder).toEqual({
+        kind: 'folder',
+        path: 'projects',
+        name: 'projects',
+        children: [],
+      })
+
+      const createDailyNoteResponse = await fetch(
+        `http://${config.host}:${config.port}/api/notes/${encodeURIComponent('daily/2026-03-11.md')}`,
         {
           method: 'PUT',
           headers: { 'content-type': 'text/markdown; charset=utf-8' },
-          body: '# Weekly Plan\n\n- Ship notes\n- Verify autosave\n',
+          body: '# Daily Log\n\n- Ship notes\n- Verify autosave\n',
         },
       )
-      const created = await parseJsonResponse(createResponse)
-      expect(created.status).toBe(201)
-      expect(created.json.note).toMatchObject({
-        filename: 'weekly-plan.md',
-        title: 'Weekly Plan',
+      const createdDailyNote = await parseJsonResponse(createDailyNoteResponse)
+      expect(createdDailyNote.status).toBe(201)
+      expect(createdDailyNote.json.note).toMatchObject({
+        path: 'daily/2026-03-11.md',
+        name: '2026-03-11.md',
+        title: 'Daily Log',
       })
 
-      expect(await readFile(join(config.paths.dataDir, 'notes', 'weekly-plan.md'), 'utf8')).toBe(
-        '# Weekly Plan\n\n- Ship notes\n- Verify autosave\n',
+      const createProjectNoteResponse = await fetch(
+        `http://${config.host}:${config.port}/api/notes/${encodeURIComponent('projects/middleman.md')}`,
+        {
+          method: 'PUT',
+          headers: { 'content-type': 'text/markdown; charset=utf-8' },
+          body: '# Middleman\n\n- Build notes tree\n',
+        },
+      )
+      const createdProjectNote = await parseJsonResponse(createProjectNoteResponse)
+      expect(createdProjectNote.status).toBe(201)
+      expect(createdProjectNote.json.note).toMatchObject({
+        path: 'projects/middleman.md',
+        name: 'middleman.md',
+        title: 'Middleman',
+      })
+
+      expect(await readFile(join(config.paths.dataDir, 'notes', 'daily', '2026-03-11.md'), 'utf8')).toBe(
+        '# Daily Log\n\n- Ship notes\n- Verify autosave\n',
+      )
+      expect(await readFile(join(config.paths.dataDir, 'notes', 'projects', 'middleman.md'), 'utf8')).toBe(
+        '# Middleman\n\n- Build notes tree\n',
       )
 
+      const renameResponse = await fetch(
+        `http://${config.host}:${config.port}/api/notes/${encodeURIComponent('daily/2026-03-11.md')}`,
+        {
+          method: 'PATCH',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ newFilename: 'archive/2026-03-11.md' }),
+        },
+      )
+      const renamed = await parseJsonResponse(renameResponse)
+      expect(renamed.status).toBe(200)
+      expect(renamed.json.note).toMatchObject({
+        path: 'archive/2026-03-11.md',
+        name: '2026-03-11.md',
+        title: 'Daily Log',
+        content: '# Daily Log\n\n- Ship notes\n- Verify autosave\n',
+      })
+
       const noteResponse = await fetch(
-        `http://${config.host}:${config.port}/api/notes/${encodeURIComponent('weekly-plan.md')}`,
+        `http://${config.host}:${config.port}/api/notes/${encodeURIComponent('archive/2026-03-11.md')}`,
       )
       const note = await parseJsonResponse(noteResponse)
       expect(note.status).toBe(200)
       expect(note.json.note).toMatchObject({
-        filename: 'weekly-plan.md',
-        title: 'Weekly Plan',
-        content: '# Weekly Plan\n\n- Ship notes\n- Verify autosave\n',
+        path: 'archive/2026-03-11.md',
+        name: '2026-03-11.md',
+        title: 'Daily Log',
+        content: '# Daily Log\n\n- Ship notes\n- Verify autosave\n',
       })
 
       const listResponse = await fetch(`http://${config.host}:${config.port}/api/notes`)
       const list = await parseJsonResponse(listResponse)
       expect(list.status).toBe(200)
-      expect(list.json.notes).toEqual([
+      expect(list.json.tree).toEqual([
         expect.objectContaining({
-          filename: 'weekly-plan.md',
-          title: 'Weekly Plan',
+          kind: 'folder',
+          path: 'archive',
+          name: 'archive',
+          children: [
+            expect.objectContaining({
+              kind: 'file',
+              path: 'archive/2026-03-11.md',
+              name: '2026-03-11.md',
+              title: 'Daily Log',
+            }),
+          ],
+        }),
+        expect.objectContaining({
+          kind: 'folder',
+          path: 'daily',
+          name: 'daily',
+          children: [],
+        }),
+        expect.objectContaining({
+          kind: 'folder',
+          path: 'projects',
+          name: 'projects',
+          children: [
+            expect.objectContaining({
+              kind: 'file',
+              path: 'projects/middleman.md',
+              name: 'middleman.md',
+              title: 'Middleman',
+            }),
+          ],
         }),
       ])
 
-      const deleteResponse = await fetch(
-        `http://${config.host}:${config.port}/api/notes/${encodeURIComponent('weekly-plan.md')}`,
+      const deleteFolderResponse = await fetch(
+        `http://${config.host}:${config.port}/api/notes/folder/${encodeURIComponent('projects')}`,
         {
           method: 'DELETE',
         },
       )
-      expect(deleteResponse.status).toBe(204)
+      expect(deleteFolderResponse.status).toBe(204)
 
-      const missingResponse = await fetch(
-        `http://${config.host}:${config.port}/api/notes/${encodeURIComponent('weekly-plan.md')}`,
+      const missingProjectResponse = await fetch(
+        `http://${config.host}:${config.port}/api/notes/${encodeURIComponent('projects/middleman.md')}`,
       )
-      const missing = await parseJsonResponse(missingResponse)
-      expect(missing.status).toBe(404)
-      expect(missing.json.error).toBe('Note "weekly-plan.md" was not found.')
+      const missingProject = await parseJsonResponse(missingProjectResponse)
+      expect(missingProject.status).toBe(404)
+      expect(missingProject.json.error).toBe('Note "projects/middleman.md" was not found.')
+
+      const deleteArchiveResponse = await fetch(
+        `http://${config.host}:${config.port}/api/notes/${encodeURIComponent('archive/2026-03-11.md')}`,
+        {
+          method: 'DELETE',
+        },
+      )
+      expect(deleteArchiveResponse.status).toBe(204)
     } finally {
       await server.stop()
     }
   })
 
-  it('rejects path traversal filenames and symbolic links for note reads and writes', async () => {
+  it('rejects path traversal and symbolic links for nested note reads and writes', async () => {
     const config = await makeTempConfig({ managerId: 'manager' })
     const manager = new FakeSwarmManager(config, [createManagerDescriptor(config.paths.projectRoot, 'manager')])
     const server = new SwarmWebSocketServer({
@@ -629,13 +718,17 @@ describe('SwarmWebSocketServer P0 endpoints', () => {
       )
       const traversal = await parseJsonResponse(traversalResponse)
       expect(traversal.status).toBe(400)
-      expect(traversal.json.error).toBe('filename must not include path separators.')
+      expect(traversal.json.error).toBe('path must not include "." or ".." segments.')
 
       const notesDir = join(config.paths.dataDir, 'notes')
       const externalPath = join(config.paths.dataDir, 'outside.md')
+      const externalDirectory = join(config.paths.dataDir, 'outside-dir')
       await mkdir(notesDir, { recursive: true })
+      await mkdir(externalDirectory, { recursive: true })
       await writeFile(externalPath, '# outside\n', 'utf8')
+      await writeFile(join(externalDirectory, 'note.md'), '# nested outside\n', 'utf8')
       await symlink(externalPath, join(notesDir, 'linked.md'))
+      await symlink(externalDirectory, join(notesDir, 'daily'))
 
       const readLinkedResponse = await fetch(
         `http://${config.host}:${config.port}/api/notes/${encodeURIComponent('linked.md')}`,
@@ -656,6 +749,25 @@ describe('SwarmWebSocketServer P0 endpoints', () => {
       expect(writeLinked.status).toBe(400)
       expect(writeLinked.json.error).toBe('Note "linked.md" must not be a symbolic link.')
       expect(await readFile(externalPath, 'utf8')).toBe('# outside\n')
+
+      const readNestedLinkedResponse = await fetch(
+        `http://${config.host}:${config.port}/api/notes/${encodeURIComponent('daily/note.md')}`,
+      )
+      const readNestedLinked = await parseJsonResponse(readNestedLinkedResponse)
+      expect(readNestedLinked.status).toBe(400)
+      expect(readNestedLinked.json.error).toBe('Folder "daily" must not be a symbolic link.')
+
+      const writeNestedLinkedResponse = await fetch(
+        `http://${config.host}:${config.port}/api/notes/${encodeURIComponent('daily/note.md')}`,
+        {
+          method: 'PUT',
+          headers: { 'content-type': 'text/markdown; charset=utf-8' },
+          body: '# replaced nested\n',
+        },
+      )
+      const writeNestedLinked = await parseJsonResponse(writeNestedLinkedResponse)
+      expect(writeNestedLinked.status).toBe(400)
+      expect(writeNestedLinked.json.error).toBe('Folder "daily" must not be a symbolic link.')
     } finally {
       await server.stop()
     }
