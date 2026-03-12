@@ -763,34 +763,7 @@ export function NotesView({
           </Button>
         }
         trailing={
-          <>
-            {selectedNotePath ? <SaveStatusPill status={saveStatus} /> : null}
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    className={cn(
-                      'size-7 shrink-0 transition-colors',
-                      isExplorerCollapsed
-                        ? 'text-muted-foreground hover:bg-accent/70 hover:text-foreground'
-                        : 'bg-accent text-foreground',
-                    )}
-                    onClick={() => handleSetExplorerCollapsed(!isExplorerCollapsed)}
-                    aria-label={isExplorerCollapsed ? 'Expand explorer' : 'Collapse explorer'}
-                    aria-pressed={!isExplorerCollapsed}
-                  />
-                }
-              >
-                <PanelRight className="size-3.5" />
-              </TooltipTrigger>
-              <TooltipContent side="bottom" sideOffset={6}>
-                {isExplorerCollapsed ? 'Show explorer' : 'Hide explorer'}
-              </TooltipContent>
-            </Tooltip>
-          </>
+          selectedNotePath ? <SaveStatusPill status={saveStatus} /> : null
         }
         onBack={onBack}
         backAriaLabel="Back to chat"
@@ -836,6 +809,31 @@ export function NotesView({
                   >
                     {isCreatingNote ? <Loader2 className="size-4 animate-spin" /> : <Plus className="size-4" />}
                   </Button>
+                  <Tooltip>
+                    <TooltipTrigger
+                      render={
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon-sm"
+                          className={cn(
+                            'transition-colors',
+                            isExplorerCollapsed
+                              ? 'text-muted-foreground hover:bg-accent/70 hover:text-foreground'
+                              : 'bg-accent text-foreground',
+                          )}
+                          onClick={() => handleSetExplorerCollapsed(!isExplorerCollapsed)}
+                          aria-label={isExplorerCollapsed ? 'Expand explorer' : 'Collapse explorer'}
+                          aria-pressed={!isExplorerCollapsed}
+                        />
+                      }
+                    >
+                      <PanelRight className="size-3.5" />
+                    </TooltipTrigger>
+                    <TooltipContent side="bottom" sideOffset={6}>
+                      {isExplorerCollapsed ? 'Show explorer' : 'Hide explorer'}
+                    </TooltipContent>
+                  </Tooltip>
                 </div>
               </div>
 
