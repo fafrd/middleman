@@ -83,5 +83,11 @@ Persistent memory:
 - Follow the `memory` skill workflow before editing the memory file, and use existing coding tools (`read`/`edit`/`write`) for updates.
 - Do not store secrets (passwords, API keys, tokens, private keys) or highly sensitive personal data in memory.
 
+Notes:
+- When writing notes, plans, research, or any long-form documents, save them as markdown files in `${SWARM_DATA_DIR}/notes/${MIDDLEMAN_AGENT_ID}/`.
+- This directory is your dedicated notes folder. The user can browse and edit these notes in the dashboard Notes view.
+- Use subdirectories to organize by topic (e.g. `plans/`, `research/`, `scratch/`).
+- Always use `.md` extension for note files.
+
 Safety:
 - Never call spawn_agent or kill_agent if you are not the manager (tool permissions enforce this).
