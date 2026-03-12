@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { useMemo, useRef } from 'react'
 import { ChevronDown, ChevronRight } from 'lucide-react'
 import {
   ContextMenu,
@@ -119,6 +119,7 @@ function TreeNodeRow({
   renamingNotePath: string | null
   selectedNotePath: string | null
 }) {
+  const ignoreNextRenameBlurRef = useRef(false)
   const paddingLeft = depth * 14 + 10
 
   if (node.kind === 'folder') {
@@ -204,9 +205,17 @@ function TreeNodeRow({
               autoFocus
               className="h-7 border-border/70 bg-background/80 text-[13px]"
               disabled={isRenamingNote}
-              onBlur={() => void onCommitRenameNote()}
+              onBlur={() => {
+                if (ignoreNextRenameBlurRef.current) {
+                  ignoreNextRenameBlurRef.current = false
+                  return
+                }
+
+                void onCommitRenameNote()
+              }}
               onChange={(event) => onRenameDraftChange(event.target.value)}
               onClick={(event) => event.stopPropagation()}
+              onFocus={(event) => event.currentTarget.select()}
               onKeyDown={(event) => {
                 if (event.key === 'Enter') {
                   event.preventDefault()
@@ -215,6 +224,7 @@ function TreeNodeRow({
 
                 if (event.key === 'Escape') {
                   event.preventDefault()
+                  ignoreNextRenameBlurRef.current = true
                   onCancelRenameNote()
                 }
               }}
