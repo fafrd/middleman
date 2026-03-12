@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
 
-import { getByText, queryByText, waitFor } from '@testing-library/dom'
+import { fireEvent, getByText, queryByText, waitFor } from '@testing-library/dom'
 import { createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { flushSync } from 'react-dom'
@@ -39,6 +39,27 @@ class ResizeObserverMock {
   observe() {}
 
   unobserve() {}
+}
+
+function createNoteSummary(path: string) {
+  const name = path.split('/').at(-1) ?? path
+  const title = name.replace(/\.md$/i, '').replace(/[-_]/g, ' ')
+
+  return {
+    path,
+    name,
+    title,
+    createdAt: '2026-03-12T00:00:00.000Z',
+    updatedAt: '2026-03-12T00:00:00.000Z',
+    sizeBytes: 18,
+  }
+}
+
+function createNoteDocument(path: string, content?: string) {
+  return {
+    ...createNoteSummary(path),
+    content: content ?? `# ${path}\n`,
+  }
 }
 
 function createLocalStorageMock(): Storage {
@@ -100,23 +121,12 @@ beforeEach(() => {
   notesApiMocks.fetchNoteTree.mockResolvedValue([
     {
       kind: 'file',
-      path: 'first.md',
-      name: 'first.md',
-      title: 'First note',
-      createdAt: '2026-03-12T00:00:00.000Z',
-      updatedAt: '2026-03-12T00:00:00.000Z',
-      sizeBytes: 18,
+      ...createNoteSummary('first.md'),
     },
   ])
-  notesApiMocks.fetchNote.mockResolvedValue({
-    path: 'first.md',
-    name: 'first.md',
-    title: 'First note',
-    createdAt: '2026-03-12T00:00:00.000Z',
-    updatedAt: '2026-03-12T00:00:00.000Z',
-    sizeBytes: 18,
-    content: '# First note\n',
-  })
+  notesApiMocks.fetchNote.mockImplementation(async (_wsUrl: string, path: string) =>
+    createNoteDocument(path, path === 'first.md' ? '# First note\n' : `# ${path}\n`),
+  )
   notesApiMocks.saveNote.mockImplementation(async (_wsUrl: string, path: string, content: string) => ({
     path,
     name: path.split('/').at(-1) ?? path,
@@ -199,6 +209,16 @@ function renderNotesView() {
   })
 }
 
+function dispatchShortcut(options: { metaKey?: boolean; ctrlKey?: boolean }) {
+  fireEvent.keyDown(document, {
+    key: 'p',
+    bubbles: true,
+    cancelable: true,
+    metaKey: options.metaKey,
+    ctrlKey: options.ctrlKey,
+  })
+}
+
 describe('NotesView', () => {
   it('toggles the explorer from the header and persists collapse state', async () => {
     renderNotesView()
@@ -217,9 +237,12 @@ describe('NotesView', () => {
       expect(window.localStorage.getItem(NOTES_EXPLORER_COLLAPSED_STORAGE_KEY)).toBe('true')
     })
 
-    expect(queryByText(container, 'first.md')).toBeNull()
+    await waitFor(() => {
+      expect(queryByText(container, 'first.md')).toBeNull()
+      expect(container.querySelector('button[aria-label="Expand explorer"]')).toBeTruthy()
+    })
+
     const expandButton = container.querySelector('button[aria-label="Expand explorer"]')
-    expect(expandButton).toBeTruthy()
     expect(expandButton?.getAttribute('aria-pressed')).toBe('false')
   })
 
@@ -237,5 +260,92 @@ describe('NotesView', () => {
     expect(expandButton?.getAttribute('aria-pressed')).toBe('false')
     expect(container.querySelector('button[aria-label="Collapse explorer"]')).toBeNull()
     expect(queryByText(container, 'first.md')).toBeNull()
+  })
+
+  it('opens the search palette from the keyboard shortcut and selects a matching note', async () => {
+    notesApiMocks.fetchNoteTree.mockResolvedValue([
+      {
+        kind: 'folder',
+        path: 'projects',
+        name: 'projects',
+        children: [
+          {
+            kind: 'file',
+            ...createNoteSummary('projects/roadmap.md'),
+          },
+        ],
+      },
+      {
+        kind: 'file',
+        ...createNoteSummary('first.md'),
+      },
+    ])
+    notesApiMocks.fetchNote.mockImplementation(async (_wsUrl: string, path: string) =>
+      createNoteDocument(path, path === 'projects/roadmap.md' ? '# Roadmap\n' : '# First note\n'),
+    )
+
+    renderNotesView()
+
+    await waitFor(() => {
+      expect(getByText(container, 'first.md')).toBeTruthy()
+    })
+
+    dispatchShortcut({ ctrlKey: true })
+
+    await waitFor(() => {
+      expect(document.body.querySelector('input[aria-label="Search notes"]')).toBeTruthy()
+    })
+
+    const input = document.body.querySelector('input[aria-label="Search notes"]')
+    if (!(input instanceof HTMLInputElement)) {
+      throw new Error('Expected the note search input to be rendered.')
+    }
+    fireEvent.input(input, { target: { value: 'road' } })
+
+    await waitFor(() => {
+      expect(getByText(document.body, 'projects/roadmap.md')).toBeTruthy()
+    })
+
+    fireEvent.keyDown(input, { key: 'Enter', bubbles: true })
+
+    await waitFor(() => {
+      expect(notesApiMocks.fetchNote).toHaveBeenCalledWith(
+        'ws://127.0.0.1:47187',
+        'projects/roadmap.md',
+        expect.any(AbortSignal),
+      )
+    })
+
+    await waitFor(() => {
+      expect(container.querySelector('[data-testid="notes-editor"]')?.textContent).toBe('# Roadmap\n')
+    })
+
+    expect(getByText(container, 'projects')).toBeTruthy()
+    expect(document.body.querySelector('input[aria-label="Search notes"]')).toBeNull()
+  })
+
+  it('opens the search palette from the explorer button and dismisses it with escape', async () => {
+    renderNotesView()
+
+    await waitFor(() => {
+      expect(getByText(container, 'first.md')).toBeTruthy()
+    })
+
+    const searchButton = container.querySelector('button[aria-label="Search notes"]')
+    expect(searchButton).toBeTruthy()
+
+    click(searchButton as HTMLButtonElement)
+
+    const input = document.body.querySelector('input[aria-label="Search notes"]')
+    expect(input).toBeTruthy()
+    if (!(input instanceof HTMLInputElement)) {
+      throw new Error('Expected the note search input to be rendered.')
+    }
+
+    fireEvent.keyDown(input, { key: 'Escape', bubbles: true })
+
+    await waitFor(() => {
+      expect(document.body.querySelector('input[aria-label="Search notes"]')).toBeNull()
+    })
   })
 })
