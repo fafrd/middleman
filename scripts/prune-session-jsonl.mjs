@@ -36,6 +36,12 @@ if (!options.apply) {
   process.exit(0);
 }
 
+if (!options.unsafeTreeRewrite) {
+  throw new Error(
+    "Refusing to rewrite session files without --unsafe-tree-rewrite. Pi session JSONL files are tree-structured via parentId, and deleting intermediate entries can orphan later messages.",
+  );
+}
+
 await fsp.mkdir(options.backupDir, { recursive: true });
 
 const appliedSummaries = [];
@@ -312,6 +318,7 @@ function parseArgs(argv) {
   const options = {
     apply: false,
     help: false,
+    unsafeTreeRewrite: false,
     dir: defaultSessionsDir,
     backupDir: defaultBackupDir,
     files: [],
@@ -327,6 +334,11 @@ function parseArgs(argv) {
 
     if (arg === "--help" || arg === "-h") {
       options.help = true;
+      continue;
+    }
+
+    if (arg === "--unsafe-tree-rewrite") {
+      options.unsafeTreeRewrite = true;
       continue;
     }
 
@@ -367,6 +379,8 @@ function printHelp() {
 
 Options:
   --apply                 Rewrite files in place after creating backups.
+  --unsafe-tree-rewrite   Required with --apply. Acknowledges that tree-based Pi session files
+                          can be corrupted by deleting intermediate entries.
   --dir <path>            Session directory to scan. Defaults to ${defaultSessionsDir}
   --file <path>           Specific session file to scan. Can be passed multiple times.
   --backup-dir <path>     Backup directory used with --apply.
@@ -378,5 +392,10 @@ Behavior:
   non-user-visible conversation messages. It preserves session headers, real message entries,
   runtime state custom entries, user_input transcript entries, speak_to_user transcript entries,
   and conversation escalations.
+
+Warning:
+  Pi session files are append-only trees. Deleting intermediate nodes can break parentId chains
+  and orphan later entries. Use dry-run output for analysis unless you are intentionally doing an
+  unsafe tree rewrite and have a tested restore path.
 `);
 }
