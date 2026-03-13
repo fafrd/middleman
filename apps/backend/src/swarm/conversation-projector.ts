@@ -266,6 +266,10 @@ export class ConversationProjector {
     this.deps.conversationEntriesByAgentId.set(event.agentId, history);
     this.queueConversationHistoryCacheWrite(event.agentId, history);
 
+    if (!shouldPersistConversationEntryToSession(event)) {
+      return;
+    }
+
     const runtime = this.deps.runtimes.get(event.agentId);
     try {
       if (runtime) {
@@ -595,6 +599,10 @@ function isVisibleConversationEntry(
   }
 
   return entry.type === "conversation_message" && (entry.source === "user_input" || entry.source === "speak_to_user");
+}
+
+function shouldPersistConversationEntryToSession(entry: ConversationEntryEvent): boolean {
+  return isVisibleConversationEntry(entry);
 }
 
 function findVisibleHistoryStartIndex(entries: ConversationEntryEvent[], visibleLimit: number): number {

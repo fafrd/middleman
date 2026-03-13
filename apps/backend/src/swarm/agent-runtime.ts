@@ -51,6 +51,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
   private promptDispatchPending = false;
   private ignoreNextAgentStart = false;
   private lastStreamingStatusEmitAtMs = 0;
+  private lastContextUsage: AgentContextUsage | undefined;
 
   constructor(options: {
     descriptor: AgentDescriptor;
@@ -78,7 +79,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
   }
 
   getContextUsage(): AgentContextUsage | undefined {
-    return normalizeAgentContextUsage(this.session.getContextUsage?.());
+    return this.refreshContextUsage();
   }
 
   isStreaming(): boolean {
@@ -388,16 +389,23 @@ export class AgentRuntime implements SwarmAgentRuntime {
     }
 
     this.lastStreamingStatusEmitAtMs = nowMs;
-    await this.emitStatus();
+    await this.emitStatus({ refreshContextUsage: false });
   }
 
-  private async emitStatus(): Promise<void> {
+  private async emitStatus(options?: { refreshContextUsage?: boolean }): Promise<void> {
+    const contextUsage =
+      options?.refreshContextUsage === false ? this.lastContextUsage : this.refreshContextUsage();
     await this.callbacks.onStatusChange(
       this.descriptor.agentId,
       this.status,
       this.pendingDeliveries.length,
-      this.getContextUsage()
+      contextUsage
     );
+  }
+
+  private refreshContextUsage(): AgentContextUsage | undefined {
+    this.lastContextUsage = normalizeAgentContextUsage(this.session.getContextUsage?.());
+    return this.lastContextUsage;
   }
 
   private async reportRuntimeError(error: RuntimeErrorEvent): Promise<void> {

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { AgentRuntime } from '../swarm/agent-runtime.js'
 import type { AgentDescriptor } from '../swarm/types.js'
 
@@ -13,6 +13,14 @@ class FakeSession {
   abortCalls = 0
   disposeCalls = 0
   listener: ((event: any) => void) | undefined
+  contextUsageCalls = 0
+  nextContextUsage:
+    | {
+        tokens: number | null
+        contextWindow: number
+        percent: number | null
+      }
+    | undefined
 
   async prompt(message: string, options?: { images?: Array<{ type: string }> }): Promise<void> {
     this.promptCalls.push(message)
@@ -45,6 +53,17 @@ class FakeSession {
     return () => {
       this.listener = undefined
     }
+  }
+
+  getContextUsage():
+    | {
+        tokens: number | null
+        contextWindow: number
+        percent: number | null
+      }
+    | undefined {
+    this.contextUsageCalls += 1
+    return this.nextContextUsage
   }
 
   emit(event: any): void {
@@ -165,6 +184,70 @@ describe('AgentRuntime', () => {
 
     expect(runtime.getPendingCount()).toBe(0)
     expect(statuses.at(-1)).toBe(0)
+  })
+
+  it('reuses cached context usage during throttled streaming status updates', async () => {
+    const session = new FakeSession()
+    const statuses: Array<{ status: string; contextUsage: unknown }> = []
+    const nowSpy = vi.spyOn(Date, 'now')
+
+    session.nextContextUsage = {
+      tokens: 128,
+      contextWindow: 1000,
+      percent: 12.8,
+    }
+
+    const runtime = new AgentRuntime({
+      descriptor: makeDescriptor(),
+      session: session as any,
+      callbacks: {
+        onStatusChange: (_agentId, status, _pendingCount, contextUsage) => {
+          statuses.push({ status, contextUsage })
+        },
+      },
+    })
+
+    nowSpy.mockReturnValue(1_000)
+    session.emit({ type: 'agent_start' })
+    await Promise.resolve()
+
+    expect(session.contextUsageCalls).toBe(1)
+    expect(statuses.at(-1)).toEqual({
+      status: 'streaming',
+      contextUsage: {
+        tokens: 128,
+        contextWindow: 1000,
+        percent: 12.8,
+      },
+    })
+
+    session.nextContextUsage = {
+      tokens: 256,
+      contextWindow: 1000,
+      percent: 25.6,
+    }
+
+    nowSpy.mockReturnValue(2_500)
+    session.emit({
+      type: 'message_update',
+      message: {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'partial' }],
+      },
+    })
+    await Promise.resolve()
+
+    expect(session.contextUsageCalls).toBe(1)
+    expect(statuses.at(-1)).toEqual({
+      status: 'streaming',
+      contextUsage: {
+        tokens: 128,
+        contextWindow: 1000,
+        percent: 12.8,
+      },
+    })
+
+    nowSpy.mockRestore()
   })
 
   it('passes image attachments through prompt options when text is present', async () => {

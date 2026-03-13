@@ -911,6 +911,64 @@ describe('SwarmManager', () => {
     expect(history).toHaveLength(0)
   })
 
+  it('keeps internal runtime activity out of the manager session file while retaining it in the cache', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    seedManagerDescriptorForRuntimeEventTests(manager, config)
+
+    const state = manager as unknown as {
+      descriptors: Map<string, AgentDescriptor>
+    }
+
+    state.descriptors.set('worker', {
+      agentId: 'worker',
+      displayName: 'Worker',
+      role: 'worker',
+      managerId: 'manager',
+      status: 'idle',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+      cwd: config.defaultCwd,
+      model: config.defaultModel,
+      sessionFile: join(config.paths.sessionsDir, 'worker.jsonl'),
+    })
+
+    await (manager as any).handleRuntimeSessionEvent('worker', {
+      type: 'tool_execution_update',
+      toolName: 'read_file',
+      toolCallId: 'tool-1',
+      partialResult: { chunk: 'hello' },
+    })
+
+    const history = manager.getConversationHistory('manager')
+    expect(
+      history.some(
+        (entry) =>
+          entry.type === 'agent_tool_call' &&
+          entry.kind === 'tool_execution_update' &&
+          entry.toolName === 'read_file',
+      ),
+    ).toBe(true)
+
+    const sessionFile = join(config.paths.sessionsDir, 'manager.jsonl')
+    const cacheFile = getConversationHistoryCacheFilePath(sessionFile)
+    const cacheText = await waitForFileText(cacheFile)
+    expect(cacheText).toContain('tool_execution_update')
+    expect(cacheText).toContain('read_file')
+
+    const sessionText = await readFile(sessionFile, 'utf8').catch((error) => {
+      if (isEnoentError(error)) {
+        return ''
+      }
+
+      throw error
+    })
+
+    expect(sessionText).not.toContain('tool_execution_update')
+    expect(sessionText).not.toContain('read_file')
+    expect(sessionText).not.toContain('swarm_conversation_entry')
+  })
+
   it('does not surface non-error manager turns that mention token limits', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)
