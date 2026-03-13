@@ -245,8 +245,8 @@ importers:
         specifier: ^19.2.0
         version: 19.2.4(react@19.2.4)
       react-grab:
-        specifier: ^0.1.23
-        version: 0.1.23(@types/react@19.2.14)(react@19.2.4)
+        specifier: ^0.1.28
+        version: 0.1.28(@types/react@19.2.14)(react@19.2.4)
       react-markdown:
         specifier: ^10.1.0
         version: 10.1.0(@types/react@19.2.14)(react@19.2.4)
@@ -1550,8 +1550,8 @@ packages:
   '@protobufjs/utf8@1.1.0':
     resolution: {integrity: sha512-Vvn3zZrhQZkkBE8LSuW3em98c0FwgO4nxzv6OdSxPKJIEKY2bGbHn+mhGIPerzI4twdxaP8/0+06HBpwf345Lw==}
 
-  '@react-grab/cli@0.1.23':
-    resolution: {integrity: sha512-F5d8Dd9SdT+5VbNrmLqS/FjM8AMHbPdpfGgbxKSWwYFL+63BGNy2tFRaBwaztZR3YkkHWP+BGiiRsRBrCwMHOg==}
+  '@react-grab/cli@0.1.28':
+    resolution: {integrity: sha512-IE4bTeH0mCq0FBRaYRUtdiIfvO7NCv14lHS4TiTY8YNG5tPYwHnLZZtniud0ElmLIWGP95Kk6E7A6J2uDmOY+Q==}
     hasBin: true
 
   '@rolldown/binding-android-arm64@1.0.0-rc.5':
@@ -2727,8 +2727,8 @@ packages:
     resolution: {integrity: sha512-Ceh+7ox5qe7LJuLHoY0feh3pHuUDHAcRUeyL2VYghZwfpkNIy/+8Ocg0a3UuSoYzavmylwuLWQOf3hl0jjMMIw==}
     engines: {node: '>=8'}
 
-  bippy@0.5.30:
-    resolution: {integrity: sha512-8CFmJAHD3gmTLDOCDHuWhjm1nxHSFZdlGoWtak9r53Uxn36ynOjxBLyxXHh/7h/XiKLyPvfdXa0gXWcD9o9lLQ==}
+  bippy@0.5.32:
+    resolution: {integrity: sha512-yt1mC8eReTxjfg41YBZdN4PvsDwHFWxltoiQX0Q+Htlbf41aSniopb7ECZits01HwNAvXEh69RGk/ImlswDTEw==}
     peerDependencies:
       react: '>=17.0.1'
 
@@ -4797,8 +4797,8 @@ packages:
     peerDependencies:
       react: ^19.2.4
 
-  react-grab@0.1.23:
-    resolution: {integrity: sha512-Muldl00IB8sA1qM4Tyg15vLXNar3xz0+wYU5QE6YSdu7u7kfG67N/5gLQclo6nKNYcoAOdg7L7m0TsQ6lRX1zg==}
+  react-grab@0.1.28:
+    resolution: {integrity: sha512-u3fvu7a7ejHhuWKzf/N6sFavV04vcqwtbcqyxwNPtvd3ts9KSVerpHp1ZH0/XVKTsh3MZz1u1jyIt0KYC9L/Rg==}
     hasBin: true
     peerDependencies:
       react: '>=17.0.0'
@@ -7673,7 +7673,7 @@ snapshots:
 
   '@protobufjs/utf8@1.1.0': {}
 
-  '@react-grab/cli@0.1.23':
+  '@react-grab/cli@0.1.28':
     dependencies:
       '@antfu/ni': 0.23.2
       commander: 14.0.3
@@ -9034,7 +9034,7 @@ snapshots:
 
   binary-extensions@2.3.0: {}
 
-  bippy@0.5.30(@types/react@19.2.14)(react@19.2.4):
+  bippy@0.5.32(@types/react@19.2.14)(react@19.2.4):
     dependencies:
       '@types/react-reconciler': 0.28.9(@types/react@19.2.14)
       react: 19.2.4
@@ -11454,11 +11454,11 @@ snapshots:
       react: 19.2.4
       scheduler: 0.27.0
 
-  react-grab@0.1.23(@types/react@19.2.14)(react@19.2.4):
+  react-grab@0.1.28(@types/react@19.2.14)(react@19.2.4):
     dependencies:
       '@medv/finder': 4.0.2
-      '@react-grab/cli': 0.1.23
-      bippy: 0.5.30(@types/react@19.2.14)(react@19.2.4)
+      '@react-grab/cli': 0.1.28
+      bippy: 0.5.32(@types/react@19.2.14)(react@19.2.4)
       solid-js: 1.9.11
     optionalDependencies:
       react: 19.2.4

@@ -183,7 +183,7 @@ export const MarkdownMessage = memo(function MarkdownMessage({
                 </li>
               )
             },
-            input(props) {
+            input({ node: _node, ref: _ref, ...props }) {
               if (props.type === 'checkbox') {
                 return (
                   <span
