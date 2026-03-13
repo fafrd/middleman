@@ -475,49 +475,49 @@ export const NotesMarkdownEditor = memo(function NotesMarkdownEditor({
           </div>
         </div>
 
-        <div className="border-t border-border/70 bg-[color-mix(in_srgb,var(--background)_18%,#0f172a)]/95 px-3 py-2 shadow-[0_-12px_30px_rgba(2,6,23,0.08)] backdrop-blur md:px-4">
-          <div className="mx-auto flex max-w-[860px] flex-wrap items-center gap-1.5">
+        <div className="border-t border-border/50 bg-card/95 px-3 py-1.5 backdrop-blur-sm md:px-4">
+          <div className="mx-auto flex max-w-[860px] flex-wrap items-center gap-0.5">
             <ToolbarButton active={toolbarState.isBold} label="Bold" onClick={toggleBold}>
-              <Bold className="size-4" />
+              <Bold className="size-3.5" />
             </ToolbarButton>
             <ToolbarButton active={toolbarState.isItalic} label="Italic" onClick={toggleItalic}>
-              <Italic className="size-4" />
+              <Italic className="size-3.5" />
             </ToolbarButton>
             <ToolbarButton active={toolbarState.isStrikethrough} label="Strikethrough" onClick={toggleStrikethrough}>
-              <Strikethrough className="size-4" />
+              <Strikethrough className="size-3.5" />
             </ToolbarButton>
             <ToolbarButton active={toolbarState.isCode} label="Inline code" onClick={toggleInlineCode}>
-              <Code className="size-4" />
+              <Code className="size-3.5" />
             </ToolbarButton>
-            <Separator className="mx-1 hidden h-6 sm:block" orientation="vertical" />
+            <Separator className="mx-1.5 hidden h-4 sm:block" orientation="vertical" />
             <ToolbarButton active={toolbarState.blockType === 'h1'} label="Heading 1" onClick={() => toggleHeading(1)}>
-              <Heading1 className="size-4" />
+              <Heading1 className="size-3.5" />
             </ToolbarButton>
             <ToolbarButton active={toolbarState.blockType === 'h2'} label="Heading 2" onClick={() => toggleHeading(2)}>
-              <Heading2 className="size-4" />
+              <Heading2 className="size-3.5" />
             </ToolbarButton>
             <ToolbarButton active={toolbarState.blockType === 'h3'} label="Heading 3" onClick={() => toggleHeading(3)}>
-              <Heading3 className="size-4" />
+              <Heading3 className="size-3.5" />
             </ToolbarButton>
-            <Separator className="mx-1 hidden h-6 sm:block" orientation="vertical" />
+            <Separator className="mx-1.5 hidden h-4 sm:block" orientation="vertical" />
             <ToolbarButton active={toolbarState.listType === 'bullet'} label="Bulleted list" onClick={toggleBulletList}>
-              <List className="size-4" />
+              <List className="size-3.5" />
             </ToolbarButton>
             <ToolbarButton active={toolbarState.listType === 'number'} label="Numbered list" onClick={toggleOrderedList}>
-              <ListOrdered className="size-4" />
+              <ListOrdered className="size-3.5" />
             </ToolbarButton>
             <ToolbarButton active={toolbarState.listType === 'check'} label="Checklist" onClick={toggleTaskList}>
-              <ListTodo className="size-4" />
+              <ListTodo className="size-3.5" />
             </ToolbarButton>
-            <Separator className="mx-1 hidden h-6 sm:block" orientation="vertical" />
+            <Separator className="mx-1.5 hidden h-4 sm:block" orientation="vertical" />
             <ToolbarButton active={toolbarState.blockType === 'code'} label="Code block" onClick={toggleCodeBlock}>
-              <SquareCode className="size-4" />
+              <SquareCode className="size-3.5" />
             </ToolbarButton>
             <ToolbarButton active={toolbarState.blockType === 'quote'} label="Quote" onClick={toggleBlockquote}>
-              <TextQuote className="size-4" />
+              <TextQuote className="size-3.5" />
             </ToolbarButton>
             <ToolbarButton active={toolbarState.isLink} label="Link" onClick={toggleLink}>
-              <Link2 className="size-4" />
+              <Link2 className="size-3.5" />
             </ToolbarButton>
           </div>
         </div>
@@ -542,8 +542,8 @@ function ToolbarButton({
       aria-label={label}
       aria-pressed={active}
       className={cn(
-        'rounded-full border border-transparent bg-transparent text-secondary-foreground/72 shadow-none hover:border-border/60 hover:bg-accent/70 hover:text-secondary-foreground focus-visible:ring-1 focus-visible:ring-ring/60',
-        active && 'border-primary/35 bg-primary/16 text-primary',
+        'size-7 rounded-md border border-transparent bg-transparent text-muted-foreground shadow-none transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring/60',
+        active && 'bg-primary/12 text-primary hover:bg-primary/18 hover:text-primary',
       )}
       onClick={onClick}
       size="icon-sm"
