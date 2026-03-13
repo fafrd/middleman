@@ -521,7 +521,7 @@ describe('IndexPage create manager model selection', () => {
     expect(queryByText(container, /foreign-call/)).toBeNull()
   })
 
-  it('swaps the favicon when agents in the selected manager scope start or stop streaming', async () => {
+  it('swaps the favicon when any agent starts or stops streaming', async () => {
     const socket = await renderPage()
 
     emitServerEvent(socket, {
@@ -547,22 +547,11 @@ describe('IndexPage create manager model selection', () => {
 
     await vi.advanceTimersByTimeAsync(0)
 
-    expect(getFaviconHref()).toBe(`data:image/png;base64,${encodeURIComponent('👔')}`)
-
-    emitServerEvent(socket, {
-      type: 'agent_status',
-      agentId: 'worker-owned',
-      status: 'streaming',
-      pendingCount: 1,
-    })
-
-    await vi.advanceTimersByTimeAsync(0)
-
     expect(getFaviconHref()).toBe(`data:image/png;base64,${encodeURIComponent('👨‍💻')}`)
 
     emitServerEvent(socket, {
       type: 'agent_status',
-      agentId: 'worker-owned',
+      agentId: 'worker-foreign',
       status: 'idle',
       pendingCount: 0,
     })
