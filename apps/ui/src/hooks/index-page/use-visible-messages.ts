@@ -85,6 +85,46 @@ interface UseVisibleMessagesOptions {
   activeAgent: AgentDescriptor | null
 }
 
+export function deriveVisibleMessages({
+  messages,
+  activityMessages,
+  agents,
+  activeAgent,
+}: UseVisibleMessagesOptions): {
+  allMessages: ConversationEntry[]
+  visibleMessages: ConversationEntry[]
+} {
+  const activeAgentRole = activeAgent?.role
+  const activeAgentId = activeAgent?.agentId
+  const managerScopedAgentIds =
+    activeAgentRole === 'manager' && activeAgentId
+      ? buildManagerScopedAgentIds(agents, activeAgentId)
+      : null
+
+  const allMessages =
+    activeAgentRole === 'worker'
+      ? mergeConversationAndActivityMessages(messages, activityMessages)
+      : messages
+
+  const visibleMessages =
+    activeAgentRole === 'manager' && managerScopedAgentIds
+      ? messages.filter((entry) => isManagerScopedTranscriptEntry(entry, managerScopedAgentIds))
+      : activeAgentRole === 'worker'
+        ? allMessages
+        : messages.filter((entry) => {
+            if (entry.type !== 'conversation_message') {
+              return true
+            }
+
+            return (entry.sourceContext?.channel ?? 'web') === 'web'
+          })
+
+  return {
+    allMessages,
+    visibleMessages,
+  }
+}
+
 export function useVisibleMessages({
   messages,
   activityMessages,
@@ -94,41 +134,14 @@ export function useVisibleMessages({
   allMessages: ConversationEntry[]
   visibleMessages: ConversationEntry[]
 } {
-  const managerScopedAgentIds = useMemo(() => {
-    if (activeAgent?.role !== 'manager') {
-      return null
-    }
-
-    return buildManagerScopedAgentIds(agents, activeAgent.agentId)
-  }, [activeAgent, agents])
-
-  const allMessages = useMemo(
-    () => mergeConversationAndActivityMessages(messages, activityMessages),
-    [activityMessages, messages],
+  return useMemo(
+    () =>
+      deriveVisibleMessages({
+        messages,
+        activityMessages,
+        agents,
+        activeAgent,
+      }),
+    [activeAgent, activityMessages, agents, messages],
   )
-
-  const visibleMessages = useMemo(() => {
-    if (activeAgent?.role === 'manager' && managerScopedAgentIds) {
-      return allMessages.filter((entry) =>
-        isManagerScopedTranscriptEntry(entry, managerScopedAgentIds),
-      )
-    }
-
-    if (activeAgent?.role === 'worker') {
-      return allMessages
-    }
-
-    return messages.filter((entry) => {
-      if (entry.type !== 'conversation_message') {
-        return true
-      }
-
-      return (entry.sourceContext?.channel ?? 'web') === 'web'
-    })
-  }, [activeAgent, allMessages, managerScopedAgentIds, messages])
-
-  return {
-    allMessages,
-    visibleMessages,
-  }
 }

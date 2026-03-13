@@ -1,6 +1,7 @@
 import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { getScheduleFilePath } from "../scheduler/schedule-storage.js";
+import { getConversationHistoryCacheFilePath } from "./conversation-history-cache.js";
 import { getAgentMemoryPath as getAgentMemoryPathForDataDir } from "./memory-paths.js";
 import type { AgentDescriptor, AgentsStoreFile, SwarmConfig } from "./types.js";
 
@@ -91,14 +92,10 @@ export class PersistenceService {
   }
 
   async deleteManagerSessionFile(sessionFile: string): Promise<void> {
-    try {
-      await unlink(sessionFile);
-    } catch (error) {
-      if (isEnoentError(error)) {
-        return;
-      }
-      throw error;
-    }
+    await Promise.all([
+      deleteFileIfPresent(sessionFile),
+      deleteFileIfPresent(getConversationHistoryCacheFilePath(sessionFile))
+    ]);
   }
 
   async deleteManagerSchedulesFile(managerId: string): Promise<void> {
@@ -209,4 +206,15 @@ function isEnoentError(error: unknown): boolean {
     "code" in error &&
     (error as { code?: string }).code === "ENOENT"
   );
+}
+
+async function deleteFileIfPresent(path: string): Promise<void> {
+  try {
+    await unlink(path);
+  } catch (error) {
+    if (isEnoentError(error)) {
+      return;
+    }
+    throw error;
+  }
 }

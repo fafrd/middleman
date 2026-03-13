@@ -668,15 +668,15 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
       terminatedWorkerIds.push(descriptor.agentId);
       await this.terminateDescriptor(descriptor, { abort: true, emitStatus: true });
+      this.conversationProjector.deleteConversationHistory(descriptor.agentId);
       this.descriptors.delete(descriptor.agentId);
       this.lastWorkerCompletionReportTimestampByAgentId.delete(descriptor.agentId);
-      this.conversationProjector.deleteConversationHistory(descriptor.agentId);
     }
 
     await this.terminateDescriptor(target, { abort: true, emitStatus: true });
+    this.conversationProjector.deleteConversationHistory(targetManagerId);
     this.descriptors.delete(targetManagerId);
     this.managerOrder = this.managerOrder.filter((managerId) => managerId !== targetManagerId);
-    this.conversationProjector.deleteConversationHistory(targetManagerId);
 
     await this.deleteManagerSchedulesFile(targetManagerId);
     const deletedEscalationIds = await this.escalationStorage.deleteForManager(targetManagerId);
