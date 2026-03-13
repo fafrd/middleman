@@ -169,36 +169,9 @@ importers:
       '@middleman/protocol':
         specifier: workspace:*
         version: link:../../packages/protocol
-      '@milkdown/kit':
+      '@milkdown/crepe':
         specifier: ^7.19.0
-        version: 7.19.0(@codemirror/language@6.12.2)(@codemirror/state@6.6.0)(@codemirror/view@6.40.0)(typescript@5.9.3)
-      '@milkdown/plugin-block':
-        specifier: ^7.19.0
-        version: 7.19.0
-      '@milkdown/plugin-clipboard':
-        specifier: ^7.19.0
-        version: 7.19.0
-      '@milkdown/plugin-cursor':
-        specifier: ^7.19.0
-        version: 7.19.0
-      '@milkdown/plugin-history':
-        specifier: ^7.19.0
-        version: 7.19.0
-      '@milkdown/plugin-indent':
-        specifier: ^7.19.0
-        version: 7.19.0
-      '@milkdown/plugin-listener':
-        specifier: ^7.19.0
-        version: 7.19.0
-      '@milkdown/plugin-trailing':
-        specifier: ^7.19.0
-        version: 7.19.0
-      '@milkdown/react':
-        specifier: ^7.19.0
-        version: 7.19.0(@codemirror/language@6.12.2)(@codemirror/state@6.6.0)(@codemirror/view@6.40.0)(prosemirror-model@1.25.4)(prosemirror-state@1.4.4)(prosemirror-view@1.41.6)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(typescript@5.9.3)
-      '@milkdown/theme-nord':
-        specifier: ^7.19.0
-        version: 7.19.0
+        version: 7.19.0(prosemirror-model@1.25.4)(prosemirror-state@1.4.4)(prosemirror-view@1.41.6)(typescript@5.9.3)
       '@tailwindcss/vite':
         specifier: ^4.1.18
         version: 4.1.18(vite@7.3.1(@types/node@22.19.11)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0)(yaml@2.8.2))
@@ -1009,14 +982,8 @@ packages:
   '@floating-ui/core@1.7.4':
     resolution: {integrity: sha512-C3HlIdsBxszvm5McXlB8PeOEWfBhcGBTZGkGlWc2U0KFY5IwG5OQEuQ8rq52DZmcHDlPLd+YFBK+cZcytwIFWg==}
 
-  '@floating-ui/core@1.7.5':
-    resolution: {integrity: sha512-1Ih4WTWyw0+lKyFMcBHGbb5U5FtuHJuujoyyr5zTaWS5EYMeT6Jb2AuDeftsCsEuchO+mM2ij5+q9crhydzLhQ==}
-
   '@floating-ui/dom@1.7.5':
     resolution: {integrity: sha512-N0bD2kIPInNHUHehXhMke1rBGs1dwqvC9O9KYMyyjK7iXt7GAhnro7UlcuYcGdS/yYOlq0MAVgrow8IbWJwyqg==}
-
-  '@floating-ui/dom@1.7.6':
-    resolution: {integrity: sha512-9gZSAI5XM36880PPMm//9dfiEngYoC6Am2izES1FF406YFsjvyBMmeJ2g4SAju3xWwtuynNRFL2s9hgxpLI5SQ==}
 
   '@floating-ui/react-dom@2.1.7':
     resolution: {integrity: sha512-0tLRojf/1Go2JgEVm+3Frg9A3IW8bJgKgdO0BN5RkF//ufuz2joZM63Npau2ff3J6lUVYgDSNzNkR+aH3IVfjg==}
@@ -1026,9 +993,6 @@ packages:
 
   '@floating-ui/utils@0.2.10':
     resolution: {integrity: sha512-aGTxbpbg8/b5JfU1HXSrbH3wXZuLPJcNEcZQFMxLs3oSzgtVu6nFPkbbGGUvBcUjKV2YyB9Wxxabo+HEH9tcRQ==}
-
-  '@floating-ui/utils@0.2.11':
-    resolution: {integrity: sha512-RiB/yIh78pcIxl6lLMG0CgBXAZ2Y0eVHqMPYugu+9U0AeT6YBeiJpf7lbdJNIugFP5SIjwNRgo4DhR1Qxi26Gg==}
 
   '@fontsource-variable/inter@5.2.8':
     resolution: {integrity: sha512-kOfP2D+ykbcX/P3IFnokOhVRNoTozo5/JxhAIVYLpea/UBmCQ/YWPBfWIDuBImXX/15KH+eKh4xpEUyS2sQQGQ==}
@@ -1418,15 +1382,6 @@ packages:
 
   '@milkdown/prose@7.19.0':
     resolution: {integrity: sha512-T/uYqSr4YT4uZtu4nBxTWyvZhVs2Lzh9qpcYH81PVwtZUT3b57+e+39s1D7UKAwFGi0qB7qZu/53l6pcw8radg==}
-
-  '@milkdown/react@7.19.0':
-    resolution: {integrity: sha512-rtvnM2tC8A0IAzkG2u7XYPNtN08Yek+z9AHUbf4SRyVbXsOCTRSZxA7FEGul1iLl6TUz4oU8tQnMHPH4iWXBtA==}
-    peerDependencies:
-      react: '*'
-      react-dom: '*'
-
-  '@milkdown/theme-nord@7.19.0':
-    resolution: {integrity: sha512-TBbUuAJT8wiw3wZVVpDuA0U+UmNUulRgdtXnu72y2QNHdMLmYalw0Yjfx11cDEB52/Ld/z+xHuRvPNf30OSMjw==}
 
   '@milkdown/transformer@7.19.0':
     resolution: {integrity: sha512-Ui1vwbyTd1nAaieTylI8ibNbXSAxygkiFjkwOPGO5w0Eu7leH+0hVrbeGUCSzYdJfjGsN537CYu/8kvLIR+lQg==}
@@ -6839,19 +6794,10 @@ snapshots:
     dependencies:
       '@floating-ui/utils': 0.2.10
 
-  '@floating-ui/core@1.7.5':
-    dependencies:
-      '@floating-ui/utils': 0.2.11
-
   '@floating-ui/dom@1.7.5':
     dependencies:
       '@floating-ui/core': 1.7.4
       '@floating-ui/utils': 0.2.10
-
-  '@floating-ui/dom@1.7.6':
-    dependencies:
-      '@floating-ui/core': 1.7.5
-      '@floating-ui/utils': 0.2.11
 
   '@floating-ui/react-dom@2.1.7(react-dom@19.2.4(react@19.2.4))(react@19.2.4)':
     dependencies:
@@ -6860,8 +6806,6 @@ snapshots:
       react-dom: 19.2.4(react@19.2.4)
 
   '@floating-ui/utils@0.2.10': {}
-
-  '@floating-ui/utils@0.2.11': {}
 
   '@fontsource-variable/inter@5.2.8': {}
 
@@ -7268,7 +7212,7 @@ snapshots:
       '@codemirror/language': 6.12.2
       '@codemirror/state': 6.6.0
       '@codemirror/view': 6.40.0
-      '@floating-ui/dom': 1.7.6
+      '@floating-ui/dom': 1.7.5
       '@milkdown/core': 7.19.0
       '@milkdown/ctx': 7.19.0
       '@milkdown/exception': 7.19.0
@@ -7361,7 +7305,7 @@ snapshots:
 
   '@milkdown/plugin-block@7.19.0':
     dependencies:
-      '@floating-ui/dom': 1.7.6
+      '@floating-ui/dom': 1.7.5
       '@milkdown/core': 7.19.0
       '@milkdown/ctx': 7.19.0
       '@milkdown/prose': 7.19.0
@@ -7418,7 +7362,7 @@ snapshots:
 
   '@milkdown/plugin-slash@7.19.0':
     dependencies:
-      '@floating-ui/dom': 1.7.6
+      '@floating-ui/dom': 1.7.5
       '@milkdown/ctx': 7.19.0
       '@milkdown/prose': 7.19.0
       '@milkdown/utils': 7.19.0
@@ -7429,7 +7373,7 @@ snapshots:
 
   '@milkdown/plugin-tooltip@7.19.0':
     dependencies:
-      '@floating-ui/dom': 1.7.6
+      '@floating-ui/dom': 1.7.5
       '@milkdown/ctx': 7.19.0
       '@milkdown/prose': 7.19.0
       '@milkdown/utils': 7.19.0
@@ -7500,31 +7444,6 @@ snapshots:
       prosemirror-tables: 1.8.5
       prosemirror-transform: 1.11.0
       prosemirror-view: 1.41.6
-
-  '@milkdown/react@7.19.0(@codemirror/language@6.12.2)(@codemirror/state@6.6.0)(@codemirror/view@6.40.0)(prosemirror-model@1.25.4)(prosemirror-state@1.4.4)(prosemirror-view@1.41.6)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(typescript@5.9.3)':
-    dependencies:
-      '@milkdown/crepe': 7.19.0(prosemirror-model@1.25.4)(prosemirror-state@1.4.4)(prosemirror-view@1.41.6)(typescript@5.9.3)
-      '@milkdown/kit': 7.19.0(@codemirror/language@6.12.2)(@codemirror/state@6.6.0)(@codemirror/view@6.40.0)(typescript@5.9.3)
-      react: 19.2.4
-      react-dom: 19.2.4(react@19.2.4)
-    transitivePeerDependencies:
-      - '@codemirror/language'
-      - '@codemirror/state'
-      - '@codemirror/view'
-      - prosemirror-model
-      - prosemirror-state
-      - prosemirror-view
-      - supports-color
-      - typescript
-
-  '@milkdown/theme-nord@7.19.0':
-    dependencies:
-      '@milkdown/core': 7.19.0
-      '@milkdown/ctx': 7.19.0
-      '@milkdown/prose': 7.19.0
-      clsx: 2.1.1
-    transitivePeerDependencies:
-      - supports-color
 
   '@milkdown/transformer@7.19.0':
     dependencies:
