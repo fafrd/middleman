@@ -1,5 +1,9 @@
+import { existsSync, readFileSync } from "node:fs";
+import { mkdir, rm, writeFile } from "node:fs/promises";
+import { dirname } from "node:path";
 import { SessionManager } from "@mariozechner/pi-coding-agent";
 import type { ServerEvent } from "@middleman/protocol";
+import { getConversationHistoryCacheFilePath } from "./conversation-history-cache.js";
 import { isConversationEntryEvent } from "./conversation-validators.js";
 import {
   extractMessageErrorMessage,
@@ -47,6 +51,9 @@ interface ConversationProjectorDependencies {
 }
 
 export class ConversationProjector {
+  private readonly pendingCacheWrites = new Map<string, Promise<void>>();
+  private readonly queuedCacheSnapshots = new Map<string, ConversationEntryEvent[] | null>();
+
   constructor(private readonly deps: ConversationProjectorDependencies) {}
 
   getConversationHistory(agentId: string, limit?: number): ConversationEntryEvent[] {
@@ -54,7 +61,7 @@ export class ConversationProjector {
     const normalizedLimit =
       typeof limit === "number" && Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : undefined;
     const startIndex = normalizedLimit ? findVisibleHistoryStartIndex(history, normalizedLimit) : 0;
-    return history.slice(startIndex).map((entry) => ({ ...entry }));
+    return history.slice(startIndex);
   }
 
   getVisibleTranscript(
@@ -66,15 +73,23 @@ export class ConversationProjector {
     const normalizedLimit =
       typeof limit === "number" && Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : undefined;
     const startIndex = normalizedLimit ? Math.max(0, visibleEntries.length - normalizedLimit) : 0;
-    return visibleEntries.slice(startIndex).map((entry) => ({ ...entry }));
+    return visibleEntries.slice(startIndex);
   }
 
   resetConversationHistory(agentId: string): void {
     this.deps.conversationEntriesByAgentId.set(agentId, []);
+    const descriptor = this.deps.descriptors.get(agentId);
+    if (descriptor) {
+      this.queueCacheSnapshotWrite(descriptor.sessionFile, null);
+    }
   }
 
   deleteConversationHistory(agentId: string): void {
     this.deps.conversationEntriesByAgentId.delete(agentId);
+    const descriptor = this.deps.descriptors.get(agentId);
+    if (descriptor) {
+      this.queueCacheSnapshotWrite(descriptor.sessionFile, null);
+    }
   }
 
   emitConversationMessage(event: ConversationMessageEvent): void {
@@ -249,6 +264,7 @@ export class ConversationProjector {
     history.push(event);
     trimConversationHistory(history);
     this.deps.conversationEntriesByAgentId.set(event.agentId, history);
+    this.queueConversationHistoryCacheWrite(event.agentId, history);
 
     const runtime = this.deps.runtimes.get(event.agentId);
     try {
@@ -271,7 +287,7 @@ export class ConversationProjector {
   }
 
   private shouldPreloadHistoryForDescriptor(descriptor: AgentDescriptor): boolean {
-    return descriptor.status === "streaming";
+    return descriptor.role === "manager" || descriptor.status === "streaming";
   }
 
   private getOrLoadConversationHistory(agentId: string): ConversationEntryEvent[] {
@@ -289,6 +305,17 @@ export class ConversationProjector {
   }
 
   private loadConversationHistoryForDescriptor(descriptor: AgentDescriptor): ConversationEntryEvent[] {
+    const cachedEntries = this.loadConversationHistoryFromCache(descriptor.sessionFile);
+    if (cachedEntries) {
+      trimConversationHistory(cachedEntries);
+      this.deps.conversationEntriesByAgentId.set(descriptor.agentId, cachedEntries);
+      this.deps.logDebug("history:load:cache", {
+        agentId: descriptor.agentId,
+        messageCount: cachedEntries.length
+      });
+      return cachedEntries;
+    }
+
     const entriesForAgent: ConversationEntryEvent[] = [];
 
     try {
@@ -323,7 +350,103 @@ export class ConversationProjector {
     }
 
     this.deps.conversationEntriesByAgentId.set(descriptor.agentId, entriesForAgent);
+    this.queueConversationHistoryCacheWrite(descriptor.agentId, entriesForAgent);
     return entriesForAgent;
+  }
+
+  private loadConversationHistoryFromCache(sessionFile: string): ConversationEntryEvent[] | null {
+    const cacheFile = getConversationHistoryCacheFilePath(sessionFile);
+    if (!existsSync(cacheFile)) {
+      return null;
+    }
+
+    try {
+      const raw = readFileSync(cacheFile, "utf8");
+      if (raw.trim().length === 0) {
+        return [];
+      }
+
+      const entries: ConversationEntryEvent[] = [];
+      for (const line of raw.split("\n")) {
+        if (!line.trim()) {
+          continue;
+        }
+
+        let parsed: unknown;
+        try {
+          parsed = JSON.parse(line);
+        } catch {
+          continue;
+        }
+
+        if (isConversationEntryEvent(parsed)) {
+          entries.push(parsed);
+        }
+      }
+
+      if (entries.length === 0 && raw.trim().length > 0) {
+        return null;
+      }
+
+      return entries;
+    } catch (error) {
+      this.deps.logDebug("history:load:cache:error", {
+        cacheFile,
+        message: error instanceof Error ? error.message : String(error)
+      });
+      return null;
+    }
+  }
+
+  private queueConversationHistoryCacheWrite(agentId: string, history: ConversationEntryEvent[]): void {
+    const descriptor = this.deps.descriptors.get(agentId);
+    if (!descriptor) {
+      return;
+    }
+
+    this.queueCacheSnapshotWrite(descriptor.sessionFile, history.slice());
+  }
+
+  private queueCacheSnapshotWrite(sessionFile: string, history: ConversationEntryEvent[] | null): void {
+    const cacheFile = getConversationHistoryCacheFilePath(sessionFile);
+    this.queuedCacheSnapshots.set(cacheFile, history);
+
+    if (this.pendingCacheWrites.has(cacheFile)) {
+      return;
+    }
+
+    const writePromise = this.flushQueuedCacheSnapshot(cacheFile)
+      .catch((error) => {
+        this.deps.logDebug("history:cache:write:error", {
+          cacheFile,
+          message: error instanceof Error ? error.message : String(error)
+        });
+      })
+      .finally(() => {
+        this.pendingCacheWrites.delete(cacheFile);
+        if (this.queuedCacheSnapshots.has(cacheFile)) {
+          this.queueCacheSnapshotWrite(sessionFile, this.queuedCacheSnapshots.get(cacheFile) ?? null);
+        }
+      });
+
+    this.pendingCacheWrites.set(cacheFile, writePromise);
+  }
+
+  private async flushQueuedCacheSnapshot(cacheFile: string): Promise<void> {
+    while (this.queuedCacheSnapshots.has(cacheFile)) {
+      const history = this.queuedCacheSnapshots.get(cacheFile) ?? null;
+      this.queuedCacheSnapshots.delete(cacheFile);
+
+      if (history === null) {
+        await rm(cacheFile, { force: true });
+        continue;
+      }
+
+      await mkdir(dirname(cacheFile), { recursive: true });
+      const serializedHistory =
+        history.length === 0 ? "" : `${history.map((entry) => JSON.stringify(entry)).join("\n")}\n`;
+      await writeFile(cacheFile, serializedHistory, "utf8");
+    }
   }
 
   private captureManagerRuntimeErrorConversationEvent(agentId: string, event: RuntimeSessionEvent): void {

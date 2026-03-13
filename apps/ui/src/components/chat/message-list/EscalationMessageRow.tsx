@@ -1,3 +1,4 @@
+import { memo } from 'react'
 import { EscalationCard } from '@/components/chat/EscalationCard'
 import type { UserEscalation } from '@middleman/protocol'
 
@@ -11,7 +12,7 @@ interface EscalationMessageRowProps {
   onOpenEscalationsView?: () => void
 }
 
-export function EscalationMessageRow({
+export const EscalationMessageRow = memo(function EscalationMessageRow({
   escalation,
   onResolveEscalation,
   onOpenEscalationsView,
@@ -24,4 +25,4 @@ export function EscalationMessageRow({
       onOpenEscalationsView={onOpenEscalationsView}
     />
   )
-}
+})

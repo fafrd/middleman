@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest'
 import { SessionManager } from '@mariozechner/pi-coding-agent'
 import { getEscalationsFilePath } from '../escalations/escalation-storage.js'
 import { getScheduleFilePath } from '../scheduler/schedule-storage.js'
+import { getConversationHistoryCacheFilePath } from '../swarm/conversation-history-cache.js'
 import { SwarmManager } from '../swarm/swarm-manager.js'
 import type {
   AgentContextUsage,
@@ -143,6 +144,31 @@ function appendSessionConversationMessage(sessionFile: string, agentId: string, 
     timestamp: '2026-01-01T00:00:00.000Z',
     source: 'speak_to_user',
   })
+}
+
+async function waitForFileText(path: string): Promise<string> {
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    try {
+      return await readFile(path, 'utf8')
+    } catch (error) {
+      if (!isEnoentError(error)) {
+        throw error
+      }
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 20))
+  }
+
+  throw new Error(`Timed out waiting for ${path}`)
+}
+
+function isEnoentError(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'code' in error &&
+    (error as { code?: string }).code === 'ENOENT'
+  )
 }
 
 function seedManagerDescriptorForRuntimeEventTests(manager: TestSwarmManager, config: SwarmConfig): void {
@@ -1717,7 +1743,7 @@ describe('SwarmManager', () => {
     await manager.boot()
 
     expect(manager.createdRuntimeIds).toEqual([])
-    expect(manager.getLoadedConversationAgentIdsForTest()).toEqual([])
+    expect(manager.getLoadedConversationAgentIdsForTest()).toEqual(['manager'])
 
     const terminatedHistory = manager.getConversationHistory('worker-terminated')
     expect(
@@ -1725,7 +1751,7 @@ describe('SwarmManager', () => {
         (entry) => entry.type === 'conversation_message' && entry.text === 'terminated-worker-history',
       ),
     ).toBe(true)
-    expect(manager.getLoadedConversationAgentIdsForTest()).toEqual(['worker-terminated'])
+    expect(manager.getLoadedConversationAgentIdsForTest()).toEqual(['manager', 'worker-terminated'])
   })
 
   it('does not implicitly recreate the configured manager when other agents already exist', async () => {
@@ -1818,6 +1844,46 @@ describe('SwarmManager', () => {
 
     await firstBoot.handleUserMessage('persist this')
     await firstBoot.publishToUser('manager', 'saved reply', 'speak_to_user')
+
+    const secondBoot = new TestSwarmManager(config)
+    await bootWithDefaultManager(secondBoot, config)
+
+    const history = secondBoot.getConversationHistory('manager')
+    expect(
+      history.some(
+        (message) =>
+          message.type === 'conversation_message' &&
+          message.text === 'persist this' &&
+          message.source === 'user_input',
+      ),
+    ).toBe(true)
+    expect(
+      history.some(
+        (message) =>
+          message.type === 'conversation_message' &&
+          message.text === 'saved reply' &&
+          message.source === 'speak_to_user',
+      ),
+    ).toBe(true)
+  })
+
+  it('reloads manager history from the conversation cache when session conversation entries are unavailable', async () => {
+    const config = await makeTempConfig()
+    const firstBoot = new TestSwarmManager(config)
+    await bootWithDefaultManager(firstBoot, config)
+
+    await firstBoot.handleUserMessage('persist this')
+    await firstBoot.publishToUser('manager', 'saved reply', 'speak_to_user')
+
+    const sessionFile = join(config.paths.sessionsDir, 'manager.jsonl')
+    const cacheFile = getConversationHistoryCacheFilePath(sessionFile)
+    const cacheText = await waitForFileText(cacheFile)
+    expect(cacheText).toContain('persist this')
+    expect(cacheText).toContain('saved reply')
+
+    const sessionManager = SessionManager.open(sessionFile)
+    const header = sessionManager.getHeader()
+    await writeFile(sessionFile, header ? `${JSON.stringify(header)}\n` : '', 'utf8')
 
     const secondBoot = new TestSwarmManager(config)
     await bootWithDefaultManager(secondBoot, config)

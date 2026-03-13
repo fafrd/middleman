@@ -1,3 +1,4 @@
+import { memo } from 'react'
 import { MarkdownMessage } from '@/components/chat/MarkdownMessage'
 import type { ArtifactReference } from '@/lib/artifacts'
 import { MessageAttachments } from './MessageAttachments'
@@ -10,7 +11,7 @@ interface ConversationMessageRowProps {
   wsUrl?: string
 }
 
-export function ConversationMessageRow({
+export const ConversationMessageRow = memo(function ConversationMessageRow({
   message,
   onArtifactClick,
   wsUrl,
@@ -91,4 +92,4 @@ export function ConversationMessageRow({
       ) : null}
     </div>
   )
-}
+})

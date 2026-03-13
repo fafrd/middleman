@@ -523,7 +523,7 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
               return (
                 <div
                   key={entry.id}
-                  className={rowSpacingClass}
+                  className={cn(rowSpacingClass, '[content-visibility:auto] [contain-intrinsic-size:auto_96px]')}
                 >
                   <ConversationMessageRow
                     message={entry.message}
@@ -538,7 +538,7 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
               return (
                 <div
                   key={entry.id}
-                  className={rowSpacingClass}
+                  className={cn(rowSpacingClass, '[content-visibility:auto] [contain-intrinsic-size:auto_96px]')}
                 >
                   <EscalationMessageRow
                     escalation={escalationById.get(entry.message.escalation.id) ?? entry.message.escalation}
@@ -553,7 +553,7 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
               return (
                 <div
                   key={entry.id}
-                  className={rowSpacingClass}
+                  className={cn(rowSpacingClass, '[content-visibility:auto] [contain-intrinsic-size:auto_84px]')}
                 >
                   <AgentMessageRow message={entry.message} />
                 </div>
@@ -563,7 +563,7 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
             return (
               <div
                 key={entry.id}
-                className={rowSpacingClass}
+                className={cn(rowSpacingClass, '[content-visibility:auto] [contain-intrinsic-size:auto_84px]')}
               >
                 <ToolLogRow
                   type={entry.type}
