@@ -61,9 +61,71 @@ const speakToUserTargetSchema = Type.Object({
   )
 });
 
-type ListAgentsEntry = Pick<AgentDescriptor, "agentId" | "role" | "managerId" | "status" | "model">;
+type ListAgentsEntry = Pick<
+  AgentDescriptor,
+  "agentId" | "role" | "managerId" | "status" | "model"
+> & {
+  isExternal?: boolean;
+};
 
 const ACTIVE_AGENT_STATUSES = new Set<AgentStatus>(["idle", "streaming"]);
+
+function buildVisibleAgentEntries(
+  caller: AgentDescriptor,
+  agents: AgentDescriptor[],
+  options: {
+    includeManagers?: boolean;
+    includeTerminated?: boolean;
+  }
+): ListAgentsEntry[] {
+  const teamManagerId = caller.role === "manager" ? caller.agentId : caller.managerId;
+  const includeInactive = options.includeTerminated === true;
+
+  const isVisible = (agent: AgentDescriptor): boolean => {
+    if (!includeInactive && !ACTIVE_AGENT_STATUSES.has(agent.status)) {
+      return false;
+    }
+
+    if (agent.role === "manager") {
+      if (agent.agentId === teamManagerId) {
+        return true;
+      }
+
+      return caller.role === "manager" && options.includeManagers === true;
+    }
+
+    return agent.managerId === teamManagerId;
+  };
+
+  const teamAgents: ListAgentsEntry[] = [];
+  const externalManagers: ListAgentsEntry[] = [];
+
+  for (const agent of agents) {
+    if (!isVisible(agent)) {
+      continue;
+    }
+
+    const entry: ListAgentsEntry = {
+      agentId: agent.agentId,
+      role: agent.role,
+      managerId: agent.managerId,
+      status: agent.status,
+      model: agent.model
+    };
+
+    if (agent.role === "manager" && agent.agentId !== teamManagerId) {
+      externalManagers.push({
+        ...entry,
+        isExternal: true
+      });
+      continue;
+    }
+
+    teamAgents.push(entry);
+  }
+
+  return [...teamAgents, ...externalManagers];
+}
 
 export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor): ToolDefinition[] {
   const shared: ToolDefinition[] = [
@@ -71,28 +133,26 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
       name: "list_agents",
       label: "List Agents",
       description:
-        "List swarm agents with ids, roles, manager ids, status, and model. Returns active agents (idle/streaming) by default; set includeTerminated=true to include inactive agents.",
+        "List the caller's current team with ids, roles, manager ids, status, and model. Returns active agents (idle/streaming) by default; set includeTerminated=true to include inactive agents. Managers can set includeManagers=true to also include other managers in the system, flagged with isExternal=true.",
       parameters: Type.Object({
         includeTerminated: Type.Optional(
           Type.Boolean({
             description: "When true, include stopped/terminated/error agents in the results."
+          })
+        ),
+        includeManagers: Type.Optional(
+          Type.Boolean({
+            description:
+              "Manager only. When true, also include other managers outside the caller's own team."
           })
         )
       }),
       async execute(_toolCallId, params) {
         const parsed = params as {
           includeTerminated?: boolean;
+          includeManagers?: boolean;
         };
-        const agents: ListAgentsEntry[] = host
-          .listAgents()
-          .filter((agent) => parsed.includeTerminated === true || ACTIVE_AGENT_STATUSES.has(agent.status))
-          .map((agent) => ({
-            agentId: agent.agentId,
-            role: agent.role,
-            managerId: agent.managerId,
-            status: agent.status,
-            model: agent.model
-          }));
+        const agents = buildVisibleAgentEntries(descriptor, host.listAgents(), parsed);
         return {
           content: [
             {

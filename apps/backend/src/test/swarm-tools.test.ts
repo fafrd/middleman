@@ -2,12 +2,12 @@ import { describe, expect, it } from 'vitest'
 import { buildSwarmTools, type SwarmToolHost } from '../swarm/swarm-tools.js'
 import type { AgentDescriptor, SendMessageReceipt, SpawnAgentInput } from '../swarm/types.js'
 
-function makeManagerDescriptor(): AgentDescriptor {
+function makeManagerDescriptor(agentId = 'manager'): AgentDescriptor {
   return {
-    agentId: 'manager',
-    displayName: 'manager',
+    agentId,
+    displayName: agentId,
     role: 'manager',
-    managerId: 'manager',
+    managerId: agentId,
     archetypeId: 'manager',
     status: 'idle',
     createdAt: '2026-01-01T00:00:00.000Z',
@@ -18,16 +18,16 @@ function makeManagerDescriptor(): AgentDescriptor {
       modelId: 'gpt-5.3-codex',
       thinkingLevel: 'xhigh',
     },
-    sessionFile: '/tmp/swarm/manager.jsonl',
+    sessionFile: `/tmp/swarm/${agentId}.jsonl`,
   }
 }
 
-function makeWorkerDescriptor(agentId: string): AgentDescriptor {
+function makeWorkerDescriptor(agentId: string, managerId = 'manager'): AgentDescriptor {
   return {
     agentId,
     displayName: agentId,
     role: 'worker',
-    managerId: 'manager',
+    managerId,
     status: 'idle',
     createdAt: '2026-01-01T00:00:00.000Z',
     updatedAt: '2026-01-01T00:00:00.000Z',
@@ -67,6 +67,8 @@ describe('buildSwarmTools', () => {
   it('returns only active agents with a compact payload for list_agents', async () => {
     const activeManager = makeManagerDescriptor()
     const activeWorker = makeWorkerDescriptor('worker-active')
+    const externalManager = makeManagerDescriptor('manager-two')
+    const externalWorker = makeWorkerDescriptor('worker-external', externalManager.agentId)
     const stoppedWorker: AgentDescriptor = {
       ...makeWorkerDescriptor('worker-stopped'),
       status: 'stopped',
@@ -75,9 +77,21 @@ describe('buildSwarmTools', () => {
       ...makeWorkerDescriptor('worker-terminated'),
       status: 'terminated',
     }
+    const stoppedExternalManager: AgentDescriptor = {
+      ...makeManagerDescriptor('manager-stopped'),
+      status: 'stopped',
+    }
 
     const host: SwarmToolHost = {
-      listAgents: () => [activeManager, activeWorker, stoppedWorker, terminatedWorker],
+      listAgents: () => [
+        activeManager,
+        externalManager,
+        stoppedExternalManager,
+        activeWorker,
+        externalWorker,
+        stoppedWorker,
+        terminatedWorker,
+      ],
       spawnAgent: async () => makeWorkerDescriptor('worker'),
       killAgent: async () => {},
       sendMessage: async () => ({
@@ -131,6 +145,8 @@ describe('buildSwarmTools', () => {
     const textContent = result.content.find((block) => block.type === 'text')
     expect(textContent?.text).toContain('"agentId": "manager"')
     expect(textContent?.text).toContain('"agentId": "worker-active"')
+    expect(textContent?.text).not.toContain('manager-two')
+    expect(textContent?.text).not.toContain('worker-external')
     expect(textContent?.text).not.toContain('worker-stopped')
     expect(textContent?.text).not.toContain('worker-terminated')
     expect(textContent?.text).not.toContain('sessionFile')
@@ -198,8 +214,89 @@ describe('buildSwarmTools', () => {
     const includeInactiveText = resultWithInactive.content.find((block) => block.type === 'text')
     expect(includeInactiveText?.text).toContain('worker-stopped')
     expect(includeInactiveText?.text).toContain('worker-terminated')
+    expect(includeInactiveText?.text).not.toContain('manager-two')
+    expect(includeInactiveText?.text).not.toContain('manager-stopped')
     expect(includeInactiveText?.text).not.toContain('sessionFile')
     expect(includeInactiveText?.text).not.toContain('cwd')
+  })
+
+  it('lets managers opt into external manager discovery without exposing other teams workers', async () => {
+    const host: SwarmToolHost = {
+      listAgents: () => [
+        makeManagerDescriptor(),
+        makeManagerDescriptor('manager-two'),
+        makeWorkerDescriptor('worker-owned'),
+        makeWorkerDescriptor('worker-external', 'manager-two'),
+      ],
+      spawnAgent: async () => makeWorkerDescriptor('worker'),
+      killAgent: async () => {},
+      sendMessage: async () => ({
+        targetAgentId: 'worker',
+        deliveryId: 'delivery-1',
+        acceptedMode: 'prompt',
+      }),
+      publishToUser: async () => ({
+        targetContext: { channel: 'web' },
+      }),
+    }
+
+    const tools = buildSwarmTools(host, makeManagerDescriptor())
+    const listAgentsTool = tools.find((tool) => tool.name === 'list_agents')
+    expect(listAgentsTool).toBeDefined()
+
+    const result = await listAgentsTool!.execute(
+      'tool-call',
+      {
+        includeManagers: true,
+      },
+      undefined,
+      undefined,
+      undefined as any,
+    )
+
+    expect(result.details).toEqual({
+      agents: [
+        {
+          agentId: 'manager',
+          role: 'manager',
+          managerId: 'manager',
+          status: 'idle',
+          model: {
+            provider: 'openai-codex',
+            modelId: 'gpt-5.3-codex',
+            thinkingLevel: 'xhigh',
+          },
+        },
+        {
+          agentId: 'worker-owned',
+          role: 'worker',
+          managerId: 'manager',
+          status: 'idle',
+          model: {
+            provider: 'anthropic',
+            modelId: 'claude-opus-4-6',
+            thinkingLevel: 'xhigh',
+          },
+        },
+        {
+          agentId: 'manager-two',
+          role: 'manager',
+          managerId: 'manager-two',
+          status: 'idle',
+          model: {
+            provider: 'openai-codex',
+            modelId: 'gpt-5.3-codex',
+            thinkingLevel: 'xhigh',
+          },
+          isExternal: true,
+        },
+      ],
+    })
+
+    const textContent = result.content.find((block) => block.type === 'text')
+    expect(textContent?.text).toContain('"agentId": "manager-two"')
+    expect(textContent?.text).toContain('"isExternal": true')
+    expect(textContent?.text).not.toContain('worker-external')
   })
 
   it('propagates spawn_agent model preset to host.spawnAgent', async () => {

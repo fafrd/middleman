@@ -2482,6 +2482,30 @@ describe('SwarmManager', () => {
     expect(descriptor?.status).toBe('terminated')
   })
 
+  it('allows managers to message other managers directly', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const secondary = await manager.createManager('manager', {
+      name: 'Delivery Manager',
+      cwd: config.defaultCwd,
+    })
+
+    const receipt = await manager.sendMessage('manager', secondary.agentId, 'coordinate on handoff')
+
+    expect(receipt).toMatchObject({
+      targetAgentId: secondary.agentId,
+      acceptedMode: 'prompt',
+    })
+
+    const targetRuntime = manager.runtimeByAgentId.get(secondary.agentId)
+    expect(targetRuntime?.sendCalls.at(-1)).toEqual({
+      message: 'SYSTEM: coordinate on handoff',
+      delivery: 'auto',
+    })
+  })
+
   it('routes user-to-worker delivery through the owning manager context', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)

@@ -143,7 +143,7 @@ describe('buildClaudeCodeMcpServer', () => {
     expect(killAgentResult.content[0].text).toContain('Tool kill_agent failed: blocked')
   })
 
-  it('accepts optional includeTerminated argument for list_agents and forwards it to the tool callback', async () => {
+  it('accepts optional list_agents flags and forwards them to the tool callback', async () => {
     const execute = vi.fn(async () => ({
       content: [
         {
@@ -165,6 +165,7 @@ describe('buildClaudeCodeMcpServer', () => {
     await registeredTools.list_agents.handler(
       {
         includeTerminated: true,
+        includeManagers: true,
       },
       {},
     )
@@ -174,6 +175,7 @@ describe('buildClaudeCodeMcpServer', () => {
       'sdk-call',
       {
         includeTerminated: true,
+        includeManagers: true,
       },
       undefined,
       undefined,
