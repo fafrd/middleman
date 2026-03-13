@@ -4,14 +4,13 @@ import {
   editorViewCtx,
   editorViewOptionsCtx,
   rootCtx,
-  serializerCtx,
 } from '@milkdown/kit/core'
 import { type Ctx } from '@milkdown/kit/ctx'
 import { clipboard } from '@milkdown/kit/plugin/clipboard'
 import { cursor } from '@milkdown/kit/plugin/cursor'
 import { history } from '@milkdown/kit/plugin/history'
 import { indent } from '@milkdown/kit/plugin/indent'
-import { listener } from '@milkdown/kit/plugin/listener'
+import { listener, listenerCtx } from '@milkdown/kit/plugin/listener'
 import { trailing } from '@milkdown/kit/plugin/trailing'
 import {
   blockquoteSchema,
@@ -188,6 +187,11 @@ function NotesMarkdownEditorContent({
         .config((ctx) => {
           ctx.set(rootCtx, root)
           ctx.set(defaultValueCtx, initialMarkdown)
+          ctx.get(listenerCtx).markdownUpdated((_ctx, markdown, prevMarkdown) => {
+            if (markdown !== prevMarkdown) {
+              publishMarkdown(markdown)
+            }
+          })
           ctx.update(editorViewOptionsCtx, (options) => ({
             ...options,
             attributes: { class: 'editor' },
@@ -202,17 +206,6 @@ function NotesMarkdownEditorContent({
               if (transaction.docChanged || selectionChanged || transaction.storedMarksSet) {
                 syncToolbarState(ctx, nextState)
               }
-
-              if (!transaction.docChanged) {
-                return
-              }
-
-              const nextMarkdown = ctx.get(serializerCtx)(nextState.doc)
-              if (nextMarkdown === lastSerializedMarkdownRef.current) {
-                return
-              }
-
-              publishMarkdown(nextMarkdown)
             },
           }))
         })
@@ -286,6 +279,61 @@ function NotesMarkdownEditorContent({
       syncToolbarState(ctx, view.state)
     })
   }, [loading, syncToolbarState])
+
+  useEffect(() => {
+    if (loading) {
+      return
+    }
+
+    return withEditor((ctx, view) => {
+      const handleTaskListClick = (event: MouseEvent) => {
+        const target = event.target as HTMLElement
+        const taskItem = target.closest('li[data-item-type="task"]') as HTMLElement | null
+        if (!taskItem) {
+          return
+        }
+
+        // Only toggle when clicking in the checkbox area (the ::before pseudo-element region)
+        const itemRect = taskItem.getBoundingClientRect()
+        const clickX = event.clientX - itemRect.left
+        // The checkbox is positioned at left:0 with ~1.15rem width + padding
+        if (clickX > 32) {
+          return
+        }
+
+        event.preventDefault()
+
+        const pos = view.posAtDOM(taskItem, 0)
+        const resolvedPos = view.state.doc.resolve(pos)
+        const listItemType = listItemSchema.type(ctx)
+
+        // Walk up to find the list_item node
+        for (let depth = resolvedPos.depth; depth >= 0; depth--) {
+          const node = resolvedPos.node(depth)
+          if (node.type === listItemType) {
+            const nodePos = resolvedPos.before(depth)
+            const currentChecked = node.attrs.checked
+            if (currentChecked === null || currentChecked === undefined) {
+              return
+            }
+
+            const tr = view.state.tr.setNodeMarkup(nodePos, undefined, {
+              ...node.attrs,
+              checked: !currentChecked,
+            })
+            view.dispatch(tr)
+            return
+          }
+        }
+      }
+
+      view.dom.addEventListener('click', handleTaskListClick)
+
+      return () => {
+        view.dom.removeEventListener('click', handleTaskListClick)
+      }
+    })
+  }, [loading])
 
   useEffect(() => {
     if (loading) {
@@ -469,7 +517,7 @@ function NotesMarkdownEditorContent({
         </div>
       ) : null}
 
-      <div className="min-h-0 flex-1 overflow-y-auto">
+      <div className="notes-milkdown-scroll-area min-h-0 flex-1 overflow-y-auto">
         <div className="notes-milkdown-shell mx-auto min-h-full w-full max-w-[860px]">
           {isEmpty ? (
             <div className="notes-milkdown-placeholder" aria-hidden="true">
@@ -486,7 +534,7 @@ function NotesMarkdownEditorContent({
       </div>
 
       <div className="border-t border-border/50 bg-card/95 px-3 py-1.5 backdrop-blur-sm md:px-4">
-        <div className="mx-auto flex max-w-[860px] flex-wrap items-center gap-0.5">
+        <div className="mx-auto flex max-w-[860px] flex-wrap items-center justify-center gap-0.5">
           <ToolbarButton active={toolbarState.isBold} label="Bold" onClick={toggleBold}>
             <Bold className="size-3.5" />
           </ToolbarButton>

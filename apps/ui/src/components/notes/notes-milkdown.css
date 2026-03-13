@@ -299,6 +299,26 @@
   background: color-mix(in srgb, var(--muted) 22%, var(--background));
 }
 
+/* ─── Scrollbar ───────────────────────────────────────────────────────────── */
+
+.notes-milkdown-scroll-area {
+  color-scheme: dark;
+}
+
+.notes-milkdown-scroll-area::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.notes-milkdown-scroll-area::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.notes-milkdown-scroll-area::-webkit-scrollbar-thumb {
+  background: hsl(var(--muted));
+  border-radius: 4px;
+}
+
 /* ─── Selection ───────────────────────────────────────────────────────────── */
 
 .notes-milkdown-shell .editor ::selection {
