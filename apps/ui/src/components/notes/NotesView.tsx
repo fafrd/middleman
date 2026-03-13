@@ -51,6 +51,7 @@ const DEFAULT_NEW_NOTE_CONTENT = '# Untitled note\n'
 const NOTES_HOME_LABEL = '~/.middleman/notes'
 const ROOT_FOLDER_VALUE = '__root__'
 const NOTES_EXPLORER_COLLAPSED_STORAGE_KEY = 'middleman:notes:explorer-collapsed'
+const NOTES_LAST_OPEN_STORAGE_KEY = 'middleman:notes:last-open'
 const NOTE_SEARCH_SHORTCUT_LABEL = 'Cmd/Ctrl+P'
 const NotesMarkdownEditor = lazy(async () => {
   const module = await import('@/components/notes/NotesMarkdownEditor')
@@ -112,6 +113,8 @@ export function NotesView({
   const loadedNotePathRef = useRef<string | null>(null)
   const renameSubmittingRef = useRef(false)
   const hasInitializedExpansionRef = useRef(false)
+  const lastOpenNotePathRef = useRef(readStoredLastOpenNotePath())
+  const hasResolvedInitialLastOpenNoteRef = useRef(false)
 
   const noteList = useMemo(() => flattenNoteTree(tree), [tree])
   const folderList = useMemo(() => flattenFolderTree(tree), [tree])
@@ -186,9 +189,14 @@ export function NotesView({
     ) => {
       const nextTree = await fetchNoteTree(wsUrl, signal)
       const nextNotes = flattenNoteTree(nextTree)
+      const storedLastOpenNotePath =
+        !hasResolvedInitialLastOpenNoteRef.current && options?.preferredSelectedPath === undefined
+          ? lastOpenNotePathRef.current
+          : null
       const nextSelectedPath = findNextSelectedNotePath(
-        options?.preferredSelectedPath ?? selectedNotePathRef.current,
+        options?.preferredSelectedPath ?? storedLastOpenNotePath ?? selectedNotePathRef.current,
         nextNotes,
+        storedLastOpenNotePath !== null,
       )
       const nextExpandedFolders = mergeExpandedFolderPaths(
         expandedFolderPathsRef.current,
@@ -198,7 +206,12 @@ export function NotesView({
         !hasInitializedExpansionRef.current,
       )
 
+      if (!hasResolvedInitialLastOpenNoteRef.current) {
+        writeStoredLastOpenNotePath(nextSelectedPath)
+      }
+
       hasInitializedExpansionRef.current = true
+      hasResolvedInitialLastOpenNoteRef.current = true
       startTransition(() => {
         setTree(nextTree)
         setSelectedNotePath(nextSelectedPath)
@@ -425,6 +438,14 @@ export function NotesView({
   useEffect(() => {
     writeStoredExplorerCollapsed(isExplorerCollapsed)
   }, [isExplorerCollapsed])
+
+  useEffect(() => {
+    if (!hasResolvedInitialLastOpenNoteRef.current) {
+      return
+    }
+
+    writeStoredLastOpenNotePath(selectedNotePath)
+  }, [selectedNotePath])
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -1211,6 +1232,36 @@ function readStoredExplorerCollapsed(): boolean {
   }
 }
 
+function readStoredLastOpenNotePath(): string | null {
+  if (typeof window === 'undefined') {
+    return null
+  }
+
+  try {
+    const storedPath = window.localStorage.getItem(NOTES_LAST_OPEN_STORAGE_KEY)?.trim()
+    return storedPath ? storedPath : null
+  } catch {
+    return null
+  }
+}
+
+function writeStoredLastOpenNotePath(path: string | null): void {
+  if (typeof window === 'undefined') {
+    return
+  }
+
+  try {
+    if (path) {
+      window.localStorage.setItem(NOTES_LAST_OPEN_STORAGE_KEY, path)
+      return
+    }
+
+    window.localStorage.removeItem(NOTES_LAST_OPEN_STORAGE_KEY)
+  } catch {
+    // Ignore localStorage write failures in restricted environments.
+  }
+}
+
 function writeStoredExplorerCollapsed(isCollapsed: boolean): void {
   if (typeof window === 'undefined') {
     return
@@ -1313,9 +1364,17 @@ function createUntitledNoteName(notes: NoteSummary[], folderPath: string | null)
   return `Untitled ${Date.now()}.md`
 }
 
-function findNextSelectedNotePath(currentPath: string | null, notes: NoteSummary[]): string | null {
+function findNextSelectedNotePath(
+  currentPath: string | null,
+  notes: NoteSummary[],
+  preserveEmptySelectionWhenMissing = false,
+): string | null {
   if (currentPath && notes.some((note) => note.path === currentPath)) {
     return currentPath
+  }
+
+  if (currentPath && preserveEmptySelectionWhenMissing) {
+    return null
   }
 
   return notes[0]?.path ?? null

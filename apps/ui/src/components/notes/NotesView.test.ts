@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { NotesView } from './NotesView'
 
 const NOTES_EXPLORER_COLLAPSED_STORAGE_KEY = 'middleman:notes:explorer-collapsed'
+const NOTES_LAST_OPEN_STORAGE_KEY = 'middleman:notes:last-open'
 
 const notesApiMocks = vi.hoisted(() => ({
   createFolder: vi.fn(),
@@ -347,5 +348,58 @@ describe('NotesView', () => {
     await waitFor(() => {
       expect(document.body.querySelector('input[aria-label="Search notes"]')).toBeNull()
     })
+  })
+
+  it('restores the last opened note when the saved path still exists', async () => {
+    notesApiMocks.fetchNoteTree.mockResolvedValue([
+      {
+        kind: 'file',
+        ...createNoteSummary('first.md'),
+      },
+      {
+        kind: 'file',
+        ...createNoteSummary('second.md'),
+      },
+    ])
+    notesApiMocks.fetchNote.mockImplementation(async (_wsUrl: string, path: string) =>
+      createNoteDocument(path, path === 'second.md' ? '# Second note\n' : '# First note\n'),
+    )
+    window.localStorage.setItem(NOTES_LAST_OPEN_STORAGE_KEY, 'second.md')
+
+    renderNotesView()
+
+    await waitFor(() => {
+      expect(notesApiMocks.fetchNote).toHaveBeenCalledWith(
+        'ws://127.0.0.1:47187',
+        'second.md',
+        expect.any(AbortSignal),
+      )
+    })
+
+    await waitFor(() => {
+      expect(container.querySelector('[data-testid="notes-editor"]')?.textContent).toBe('# Second note\n')
+    })
+
+    expect(window.localStorage.getItem(NOTES_LAST_OPEN_STORAGE_KEY)).toBe('second.md')
+  })
+
+  it('shows the empty state when the saved last-open note no longer exists', async () => {
+    notesApiMocks.fetchNoteTree.mockResolvedValue([
+      {
+        kind: 'file',
+        ...createNoteSummary('first.md'),
+      },
+    ])
+    window.localStorage.setItem(NOTES_LAST_OPEN_STORAGE_KEY, 'missing.md')
+
+    renderNotesView()
+
+    await waitFor(() => {
+      expect(getByText(container, 'first.md')).toBeTruthy()
+    })
+
+    expect(notesApiMocks.fetchNote).not.toHaveBeenCalled()
+    expect(getByText(container, 'Choose a note to start writing')).toBeTruthy()
+    expect(window.localStorage.getItem(NOTES_LAST_OPEN_STORAGE_KEY)).toBeNull()
   })
 })
