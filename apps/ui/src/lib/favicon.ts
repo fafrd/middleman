@@ -92,13 +92,14 @@ export function hasStreamingAgentInManagerScope(
 }
 
 export function resolveManagerFaviconEmoji(
-  managerId: string | null,
+  _managerId: string | null,
   agents: AgentDescriptor[],
   statuses: AgentLiveStatuses,
 ): string {
-  return hasStreamingAgentInManagerScope(managerId, agents, statuses)
-    ? ACTIVE_FAVICON_EMOJI
-    : DEFAULT_FAVICON_EMOJI
+  const anyStreaming = agents.some(
+    (agent) => getAgentLiveStatus(agent, statuses) === 'streaming',
+  )
+  return anyStreaming ? ACTIVE_FAVICON_EMOJI : DEFAULT_FAVICON_EMOJI
 }
 
 export function setDocumentFavicon(emoji: string): void {
