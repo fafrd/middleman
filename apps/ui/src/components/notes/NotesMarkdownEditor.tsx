@@ -4,13 +4,13 @@ import {
   editorViewCtx,
   editorViewOptionsCtx,
   rootCtx,
+  serializerCtx,
 } from '@milkdown/kit/core'
 import { type Ctx } from '@milkdown/kit/ctx'
 import { clipboard } from '@milkdown/kit/plugin/clipboard'
 import { cursor } from '@milkdown/kit/plugin/cursor'
 import { history } from '@milkdown/kit/plugin/history'
 import { indent } from '@milkdown/kit/plugin/indent'
-import { listener, listenerCtx } from '@milkdown/kit/plugin/listener'
 import { trailing } from '@milkdown/kit/plugin/trailing'
 import {
   blockquoteSchema,
@@ -179,6 +179,10 @@ function NotesMarkdownEditorContent({
   })
 
   const publishMarkdown = useEffectEvent((nextMarkdown: string) => {
+    if (nextMarkdown === lastSerializedMarkdownRef.current) {
+      return
+    }
+
     lastSerializedMarkdownRef.current = nextMarkdown
     setIsEmpty(nextMarkdown.trim().length === 0)
     onChangeRef.current(nextMarkdown)
@@ -190,13 +194,23 @@ function NotesMarkdownEditorContent({
         return new Plugin({
           key: toolbarSyncPluginKey,
           view: () => ({
-            update: (view) => {
+            update: (view, prevState) => {
               syncToolbarState(ctx, view.state)
+
+              if (!prevState || prevState.doc.eq(view.state.doc)) {
+                return
+              }
+
+              if (!ctx.isInjected(editorViewCtx) || ctx.get(editorViewCtx) !== view) {
+                return
+              }
+
+              publishMarkdown(ctx.get(serializerCtx)(view.state.doc))
             },
           }),
         })
       }),
-    [syncToolbarState],
+    [publishMarkdown, syncToolbarState],
   )
 
   const { get: getEditor, loading } = useEditor(
@@ -205,11 +219,6 @@ function NotesMarkdownEditorContent({
         .config((ctx) => {
           ctx.set(rootCtx, root)
           ctx.set(defaultValueCtx, initialMarkdown)
-          ctx.get(listenerCtx).markdownUpdated((_ctx, markdown, prevMarkdown) => {
-            if (markdown !== prevMarkdown) {
-              publishMarkdown(markdown)
-            }
-          })
           ctx.update(editorViewOptionsCtx, (options) => ({
             ...options,
             attributes: { class: 'editor' },
@@ -222,7 +231,6 @@ function NotesMarkdownEditorContent({
         .use(cursor)
         .use(trailing)
         .use(indent)
-        .use(listener)
         .use(toolbarSyncPlugin)
         .use(imageViewPlugin),
     [editorId, imageViewPlugin, initialMarkdown, toolbarSyncPlugin],

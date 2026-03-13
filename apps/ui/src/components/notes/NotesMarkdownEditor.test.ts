@@ -75,6 +75,7 @@ vi.mock('@milkdown/kit/prose/schema-list', () => ({
 }))
 
 vi.mock('@milkdown/kit/utils', () => ({
+  $prose: () => ({}),
   $view: () => ({}),
   callCommand: () => () => false,
   insert: () => () => undefined,
