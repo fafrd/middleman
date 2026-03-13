@@ -152,8 +152,17 @@
 
 .notes-lexical-list-item-checked input[type='checkbox'],
 .notes-lexical-list-item-unchecked input[type='checkbox'] {
-  outline: none;
-  box-shadow: none;
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 1.05rem;
+  height: 1.05rem;
+  margin: 0;
+  padding: 0;
+  opacity: 0;
+  cursor: pointer;
+  z-index: 1;
 }
 
 .notes-lexical-list-item-checked::before,
