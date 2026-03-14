@@ -59,7 +59,8 @@ export const Route = createFileRoute('/')({
 const DEFAULT_MANAGER_MODEL: ManagerModelPreset = 'pi-codex'
 const DEFAULT_DEV_WS_URL = 'ws://127.0.0.1:47187'
 const DESKTOP_SIDEBAR_MEDIA_QUERY = '(min-width: 768px)'
-const SIDEBAR_WIDTH_STORAGE_KEY = 'middleman:index:sidebar-width'
+const SIDEBAR_WIDTH_STORAGE_KEY = 'middleman:sidebar-width'
+const LEGACY_SIDEBAR_WIDTH_STORAGE_KEY = 'middleman:index:sidebar-width'
 const SIDEBAR_DEFAULT_WIDTH = 320
 const SIDEBAR_MIN_WIDTH = 256
 const SIDEBAR_MAX_WIDTH = 480
@@ -86,23 +87,40 @@ function clampSidebarWidth(width: number): number {
   )
 }
 
+function parseStoredSidebarWidth(value: string | null): number | null {
+  if (!value) {
+    return null
+  }
+
+  const parsed = Number.parseFloat(value)
+  if (!Number.isFinite(parsed)) {
+    return null
+  }
+
+  return clampSidebarWidth(parsed)
+}
+
 function readStoredSidebarWidth(): number {
   if (typeof window === 'undefined') {
     return SIDEBAR_DEFAULT_WIDTH
   }
 
   try {
-    const stored = window.localStorage.getItem(SIDEBAR_WIDTH_STORAGE_KEY)
-    if (!stored) {
-      return SIDEBAR_DEFAULT_WIDTH
+    const storedWidth = parseStoredSidebarWidth(
+      window.localStorage.getItem(SIDEBAR_WIDTH_STORAGE_KEY),
+    )
+    if (storedWidth !== null) {
+      return storedWidth
     }
 
-    const parsed = Number.parseFloat(stored)
-    if (!Number.isFinite(parsed)) {
-      return SIDEBAR_DEFAULT_WIDTH
+    const legacyStoredWidth = parseStoredSidebarWidth(
+      window.localStorage.getItem(LEGACY_SIDEBAR_WIDTH_STORAGE_KEY),
+    )
+    if (legacyStoredWidth !== null) {
+      return legacyStoredWidth
     }
 
-    return clampSidebarWidth(parsed)
+    return SIDEBAR_DEFAULT_WIDTH
   } catch {
     return SIDEBAR_DEFAULT_WIDTH
   }
