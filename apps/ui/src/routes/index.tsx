@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -191,7 +192,13 @@ export function IndexPage() {
   const messageInputRef = useRef<MessageInputHandle | null>(null)
   const messageListRef = useRef<MessageListHandle | null>(null)
   const sidebarPanelRef = usePanelRef()
-  const storedSidebarWidthRef = useRef(readStoredSidebarWidth())
+  // Capture the stored width once for use as the Panel's defaultSize.
+  // This value must be stable across renders — if it changes, the library
+  // re-registers the panel and recalculates layout, which causes a visible
+  // snap/jump.  The mutable ref below tracks the *live* width for syncing
+  // back to localStorage and for the desktop-layout restore effect.
+  const [initialSidebarWidth] = useState(readStoredSidebarWidth)
+  const storedSidebarWidthRef = useRef(initialSidebarWidth)
   const navigate = useOptionalNavigate()
   const location = useOptionalLocation()
   const pruneMessageDrafts = useSetAtom(pruneMessageDraftsAtom)
@@ -442,7 +449,10 @@ export function IndexPage() {
     }
   }, [isDesktopSidebarLayout])
 
-  useEffect(() => {
+  // Synchronise the sidebar size when the desktop/mobile media query flips.
+  // useLayoutEffect (not useEffect) so the resize is applied before the
+  // browser paints — avoids a brief flash of the wrong width.
+  useLayoutEffect(() => {
     const sidebarPanel = sidebarPanelRef.current
     if (!sidebarPanel) {
       return
@@ -735,7 +745,7 @@ export function IndexPage() {
           <ResizablePanel
             id="agent-sidebar"
             panelRef={sidebarPanelRef}
-            defaultSize={isDesktopSidebarLayout ? storedSidebarWidthRef.current : 0}
+            defaultSize={isDesktopSidebarLayout ? initialSidebarWidth : 0}
             minSize={isDesktopSidebarLayout ? SIDEBAR_MIN_WIDTH : 0}
             maxSize={isDesktopSidebarLayout ? SIDEBAR_MAX_WIDTH : 0}
             disabled={!isDesktopSidebarLayout}
