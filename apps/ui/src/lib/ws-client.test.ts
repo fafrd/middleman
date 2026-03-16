@@ -270,7 +270,6 @@ describe('ManagerWsClient', () => {
     client.sendUserMessage('', {
       attachments: [
         {
-          type: 'image',
           mimeType: 'image/png',
           data: 'aGVsbG8=',
           fileName: 'diagram.png',
@@ -283,7 +282,6 @@ describe('ManagerWsClient', () => {
       text: '',
       attachments: [
         {
-          type: 'image',
           mimeType: 'image/png',
           data: 'aGVsbG8=',
           fileName: 'diagram.png',

@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 
 import type {
+  ContentPart,
   DeliveryMode as SwarmdDeliveryMode,
   EventEnvelope,
   HostCallRequest,
@@ -21,7 +22,6 @@ import {
   loadArchetypePromptRegistry,
   type ArchetypePromptRegistry,
 } from "./archetypes/archetype-prompt-registry.js";
-import { toConversationContentParts } from "./conversation-content-parts.js";
 import {
   listDirectories,
   normalizeAllowlistRoots,
@@ -481,7 +481,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       },
     };
 
-    this.coreOrThrow().messageService.send(target.agentId, toConversationContentParts(text, attachments), {
+    this.coreOrThrow().messageService.send(target.agentId, toContentParts(text, attachments), {
       delivery: toSwarmdDeliveryMode(options?.delivery),
       role: "user",
       metadata,
@@ -510,7 +510,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
     const receipt = this.coreOrThrow().messageService.send(
       target.agentId,
-      toConversationContentParts(message, []),
+      toContentParts(message, []),
       {
         delivery: toSwarmdDeliveryMode(delivery),
         role: "system",
@@ -1208,6 +1208,50 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     }
     return this.secretsEnvService;
   }
+}
+
+function toContentParts(text: string, attachments: ConversationAttachment[]): ContentPart[] {
+  const parts: ContentPart[] = [{ type: "text", text }];
+
+  for (const attachment of attachments) {
+    if ("filePath" in attachment && attachment.filePath) {
+      parts.push({
+        type: "file",
+        mimeType: attachment.mimeType,
+        fileName: attachment.fileName,
+        path: attachment.filePath,
+      });
+      continue;
+    }
+
+    if (attachment.type === "text") {
+      parts.push({
+        type: "file",
+        mimeType: attachment.mimeType,
+        fileName: attachment.fileName,
+        data: Buffer.from(attachment.text, "utf8").toString("base64"),
+      });
+      continue;
+    }
+
+    if (attachment.type === "binary") {
+      parts.push({
+        type: "file",
+        mimeType: attachment.mimeType,
+        fileName: attachment.fileName,
+        data: attachment.data,
+      });
+      continue;
+    }
+
+    parts.push({
+      type: "image",
+      mimeType: attachment.mimeType,
+      data: attachment.data,
+    });
+  }
+
+  return parts;
 }
 
 const MAX_WORKER_COMPLETION_REPORT_CHARS = 1_000;
