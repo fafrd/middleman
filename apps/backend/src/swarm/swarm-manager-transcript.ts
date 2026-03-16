@@ -268,7 +268,7 @@ export function buildAttachmentMetadata(
   }
 
   return attachments.map((attachment) => ({
-    type: attachment.type ?? (attachment.mimeType.startsWith("image/") ? "image" : undefined),
+    type: attachment.type,
     mimeType: attachment.mimeType,
     fileName: attachment.fileName,
     filePath: "filePath" in attachment ? attachment.filePath : undefined,

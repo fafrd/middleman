@@ -121,7 +121,6 @@ export function parseConversationAttachments(
     }
 
     attachments.push({
-      type: "image",
       mimeType,
       data: maybe.data.trim(),
       fileName: fileName || undefined

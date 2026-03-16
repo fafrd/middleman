@@ -899,7 +899,6 @@ function normalizeConversationAttachments(
     }
 
     normalized.push({
-      type: 'image',
       mimeType,
       data,
       fileName: fileName || undefined,
