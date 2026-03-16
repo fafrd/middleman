@@ -23,6 +23,7 @@ import {
   parseArtifactReference,
   type ArtifactReference,
 } from '@/lib/artifacts'
+import { isLocalFileUrl, rewriteLocalFileUrl } from '@/lib/read-file-url'
 import { cn } from '@/lib/utils'
 import { ContentZoomDialog } from './ContentZoomDialog'
 
@@ -33,7 +34,7 @@ const MARKDOWN_EXTENSION_PATTERN = /\.(md|markdown|mdx)$/i
 let mermaidInitialized = false
 
 function urlTransform(url: string): string {
-  if (EXTRA_ALLOWED_PROTOCOLS.test(url)) return url
+  if (EXTRA_ALLOWED_PROTOCOLS.test(url) || isLocalFileUrl(url)) return url
   return defaultUrlTransform(url)
 }
 
@@ -43,6 +44,7 @@ interface MarkdownMessageProps {
   onArtifactClick?: (artifact: ArtifactReference) => void
   enableMermaid?: boolean
   className?: string
+  wsUrl?: string
 }
 
 type ZoomTarget =
@@ -62,6 +64,7 @@ export const MarkdownMessage = memo(function MarkdownMessage({
   onArtifactClick,
   enableMermaid = false,
   className,
+  wsUrl,
 }: MarkdownMessageProps) {
   const isDocument = variant === 'document'
   const canExpandContent = isDocument && enableMermaid
@@ -224,7 +227,12 @@ export const MarkdownMessage = memo(function MarkdownMessage({
               )
             },
             a({ children, href }) {
-              const artifact = parseArtifactReference(href, {
+              const rawHref = typeof href === 'string' ? href : undefined
+              const resolvedHref = rawHref
+                ? rewriteLocalFileUrl(wsUrl, rawHref) ?? rawHref
+                : rawHref
+
+              const artifact = parseArtifactReference(rawHref, {
                 title: extractLinkText(children),
               })
               if (artifact && onArtifactClick) {
@@ -238,7 +246,7 @@ export const MarkdownMessage = memo(function MarkdownMessage({
 
               return (
                 <a
-                  href={href}
+                  href={resolvedHref}
                   target="_blank"
                   rel="noopener noreferrer"
                   className={cn(
@@ -252,7 +260,10 @@ export const MarkdownMessage = memo(function MarkdownMessage({
               )
             },
             img({ src, alt, title }) {
-              const imageSrc = typeof src === 'string' ? src : null
+              const imageSrc =
+                typeof src === 'string'
+                  ? rewriteLocalFileUrl(wsUrl, src) ?? src
+                  : null
               if (!imageSrc) {
                 return null
               }
