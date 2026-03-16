@@ -26,12 +26,12 @@ import { ArtifactsSidebar } from '@/components/chat/ArtifactsSidebar'
 import { ChatHeader } from '@/components/chat/ChatHeader'
 import { CreateManagerDialog } from '@/components/chat/CreateManagerDialog'
 import { DeleteManagerDialog } from '@/components/chat/DeleteManagerDialog'
-import { EscalationView } from '@/components/chat/EscalationView'
 import { MessageInput, type MessageInputHandle } from '@/components/chat/MessageInput'
 import { MessageList, type MessageListHandle } from '@/components/chat/MessageList'
 import { SettingsPanel } from '@/components/chat/SettingsDialog'
 import { NotesView } from '@/components/notes/NotesView'
 import { chooseFallbackAgentId } from '@/lib/agent-hierarchy'
+import { isActiveAgentStatus, isWorkingAgentStatus } from '@/lib/agent-status'
 import type { ArtifactReference } from '@/lib/artifacts'
 import { collectArtifactsFromMessages } from '@/lib/collect-artifacts'
 import { pruneMessageDraftsAtom } from '@/lib/message-drafts'
@@ -49,14 +49,13 @@ import { useDynamicFavicon } from '@/hooks/index-page/use-dynamic-favicon'
 import type {
   ConversationAttachment,
   ManagerModelPreset,
-  UserEscalation,
 } from '@middleman/protocol'
 
 export const Route = createFileRoute('/')({
   component: IndexPage,
 })
 
-const DEFAULT_MANAGER_MODEL: ManagerModelPreset = 'pi-codex'
+const DEFAULT_MANAGER_MODEL: ManagerModelPreset = 'codex-app'
 const DEFAULT_DEV_WS_URL = 'ws://127.0.0.1:47187'
 const DESKTOP_SIDEBAR_MEDIA_QUERY = '(min-width: 768px)'
 const SIDEBAR_WIDTH_STORAGE_KEY = 'middleman:index:sidebar-width'
@@ -264,10 +263,12 @@ export function IndexPage() {
     messages: state.messages,
   })
 
-  const isLoading = activeAgentStatus === 'streaming' || isAwaitingResponseStart
+  const isLoading =
+    (activeAgentStatus ? isWorkingAgentStatus(activeAgentStatus) : false) ||
+    isAwaitingResponseStart
   const canStopAllAgents =
     isActiveManager &&
-    (activeAgentStatus === 'idle' || activeAgentStatus === 'streaming')
+    (activeAgentStatus ? isActiveAgentStatus(activeAgentStatus) : false)
 
   const { allMessages, visibleMessages } = useVisibleMessages({
     messages: state.messages,
@@ -279,14 +280,6 @@ export function IndexPage() {
   const collectedArtifacts = useMemo(
     () => collectArtifactsFromMessages(allMessages),
     [allMessages],
-  )
-  const pinnedEscalations = useMemo(
-    () =>
-      state.escalations.filter(
-        (escalation) =>
-          escalation.managerId === activeManagerId && escalation.status === 'open',
-      ),
-    [activeManagerId, state.escalations],
   )
 
   const {
@@ -312,17 +305,12 @@ export function IndexPage() {
     handleRequestDeleteManager,
     handleConfirmDeleteManager,
     handleCloseDeleteManagerDialog,
-    isCompactingManager,
-    handleCompactManager,
     isStoppingAllAgents,
     handleStopAllAgents,
   } = useManagerActions({
-    wsUrl,
     clientRef,
     agents: state.agents,
     activeAgent,
-    activeAgentId,
-    isActiveManager,
     defaultManagerModel: DEFAULT_MANAGER_MODEL,
     navigateToRoute,
     setState,
@@ -449,16 +437,6 @@ export function IndexPage() {
       return
     }
 
-    const compactCommand =
-      isActiveManager && (!attachments || attachments.length === 0)
-        ? parseCompactSlashCommand(text)
-        : null
-
-    if (compactCommand) {
-      void handleCompactManager(compactCommand.customInstructions)
-      return
-    }
-
     markPendingResponse(activeAgentId, state.messages.length)
 
     clientRef.current?.sendUserMessage(text, {
@@ -505,23 +483,6 @@ export function IndexPage() {
     navigateToRoute({ view: 'notes' })
   }
 
-  const handleOpenEscalationsPanel = () => {
-    navigateToRoute({ view: 'escalations' })
-  }
-
-  const handleResolveEscalation = async (input: {
-    escalationId: string
-    choice: string
-    isCustom: boolean
-  }) => {
-    const client = clientRef.current
-    if (!client) {
-      throw new Error('WebSocket client is not available.')
-    }
-
-    await client.resolveEscalation(input)
-  }
-
   const handleSuggestionClick = (prompt: string) => {
     messageInputRef.current?.setInput(prompt)
   }
@@ -540,18 +501,6 @@ export function IndexPage() {
   const handleCloseArtifact = useCallback(() => {
     setPanelSelection(null)
   }, [])
-
-  const handleOpenEscalation = useCallback((escalation: UserEscalation) => {
-    setPanelSelection({
-      type: 'escalation',
-      escalationId: escalation.id,
-    })
-  }, [])
-
-  const handleOpenEscalationsView = useCallback(() => {
-    setPanelSelection(null)
-    navigateToRoute({ view: 'escalations' })
-  }, [navigateToRoute])
 
   const statusBanner = state.lastError ? (
     <div className="border-b border-destructive/20 bg-destructive/10 px-3 py-2 text-xs text-destructive">
@@ -619,20 +568,6 @@ export function IndexPage() {
             }
             onToggleMobileSidebar={() => setIsMobileSidebarOpen((previous) => !previous)}
           />
-        ) : activeView === 'escalations' ? (
-          <EscalationView
-            escalations={state.escalations}
-            managers={state.agents.filter((agent) => agent.role === 'manager')}
-            statusBanner={statusBanner}
-            onBack={() =>
-              navigateToRoute({
-                view: 'chat',
-                agentId: activeAgentId ?? DEFAULT_MANAGER_AGENT_ID,
-              })
-            }
-            onResolveEscalation={handleResolveEscalation}
-            onToggleMobileSidebar={() => setIsMobileSidebarOpen((previous) => !previous)}
-          />
         ) : (
           <>
             <ChatHeader
@@ -642,9 +577,6 @@ export function IndexPage() {
               activeAgentArchetypeId={activeAgent?.archetypeId}
               activeAgentStatus={activeAgentStatus}
               contextWindowUsage={contextWindowUsage}
-              showCompact={isActiveManager}
-              compactInProgress={isCompactingManager}
-              onCompact={() => void handleCompactManager()}
               showStopAll={isActiveManager}
               stopAllInProgress={isStoppingAllAgents}
               stopAllDisabled={!state.connected || !canStopAllAgents}
@@ -667,9 +599,6 @@ export function IndexPage() {
               isWorkerDetailView={activeAgent?.role === 'worker'}
               onSuggestionClick={handleSuggestionClick}
               onArtifactClick={handleOpenArtifact}
-              escalations={state.escalations}
-              onResolveEscalation={handleResolveEscalation}
-              onOpenEscalationsView={handleOpenEscalationsView}
               wsUrl={wsUrl}
             />
 
@@ -677,8 +606,6 @@ export function IndexPage() {
               ref={messageInputRef}
               agentId={activeAgentId}
               onSend={handleSend}
-              pinnedEscalations={pinnedEscalations}
-              onEscalationClick={handleOpenEscalation}
               onSubmitted={handleMessageInputSubmitted}
               isLoading={isLoading}
               disabled={!state.connected || !activeAgentId}
@@ -695,11 +622,9 @@ export function IndexPage() {
           wsUrl={wsUrl}
           managerId={activeManagerId}
           artifacts={collectedArtifacts}
-          escalations={state.escalations}
           isOpen={isArtifactsPanelOpen}
           onClose={() => setIsArtifactsPanelOpen(false)}
           onArtifactClick={handleOpenArtifact}
-          onEscalationClick={handleOpenEscalation}
         />
       ) : null}
     </div>
@@ -731,9 +656,7 @@ export function IndexPage() {
               statuses={state.statuses}
               selectedAgentId={activeAgentId}
               isSettingsActive={activeView === 'settings'}
-              isEscalationsActive={activeView === 'escalations'}
               isNotesActive={activeView === 'notes'}
-              escalations={state.escalations}
               isMobileOpen={isMobileSidebarOpen}
               onMobileClose={() => setIsMobileSidebarOpen(false)}
               onAddManager={handleOpenCreateManagerDialog}
@@ -749,7 +672,6 @@ export function IndexPage() {
                 void client.reorderManagers(managerIds).catch(() => undefined)
               }}
               onOpenNotes={handleOpenNotesPanel}
-              onOpenEscalations={handleOpenEscalationsPanel}
               onOpenSettings={handleOpenSettingsPanel}
             />
           </ResizablePanel>
@@ -768,12 +690,9 @@ export function IndexPage() {
 
       <ArtifactPanel
         selection={panelSelection}
-        escalations={state.escalations}
         wsUrl={wsUrl}
         onClose={handleCloseArtifact}
         onArtifactClick={handleOpenArtifact}
-        onResolveEscalation={handleResolveEscalation}
-        onOpenEscalationsView={handleOpenEscalationsView}
       />
 
       <CreateManagerDialog
@@ -809,22 +728,6 @@ export function IndexPage() {
       />
     </main>
   )
-}
-
-function parseCompactSlashCommand(
-  text: string,
-): { customInstructions?: string } | null {
-  const match = text.trim().match(/^\/compact(?:\s+([\s\S]+))?$/i)
-  if (!match) {
-    return null
-  }
-
-  const customInstructions = match[1]?.trim()
-  if (!customInstructions) {
-    return {}
-  }
-
-  return { customInstructions }
 }
 
 function useOptionalLocation(): { pathname: string; search: unknown } {
