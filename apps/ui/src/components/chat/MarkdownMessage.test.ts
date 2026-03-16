@@ -68,4 +68,41 @@ describe('MarkdownMessage', () => {
     expect(html).toContain('Terminal Support Plan')
     expect(html).toContain('docs/plans/terminal-support.md')
   })
+
+  it('rewrites file urls for inline images through the read-file endpoint', () => {
+    const html = renderToStaticMarkup(
+      createElement(MarkdownMessage, {
+        content: '![Local image](file:///tmp/test%20image.png)',
+        wsUrl: 'ws://127.0.0.1:47187',
+      }),
+    )
+
+    expect(html).toContain('<img')
+    expect(html).toContain(
+      'src="http://127.0.0.1:47187/api/read-file?path=%2Ftmp%2Ftest%20image.png"',
+    )
+  })
+
+  it('rewrites file urls for links without touching app-relative image paths', () => {
+    const content = [
+      '[Local image link](file:///tmp/link-image.png)',
+      '',
+      '![Bundled asset](/agents/codex-logo.svg)',
+    ].join('\n')
+
+    const html = renderToStaticMarkup(
+      createElement(MarkdownMessage, {
+        content,
+        wsUrl: 'ws://127.0.0.1:47187',
+      }),
+    )
+
+    expect(html).toContain(
+      'href="http://127.0.0.1:47187/api/read-file?path=%2Ftmp%2Flink-image.png"',
+    )
+    expect(html).toContain('src="/agents/codex-logo.svg"')
+    expect(html).not.toContain(
+      'src="http://127.0.0.1:47187/api/read-file?path=%2Fagents%2Fcodex-logo.svg"',
+    )
+  })
 })

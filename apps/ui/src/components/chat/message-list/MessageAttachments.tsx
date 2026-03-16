@@ -1,5 +1,5 @@
 import { File, FileText } from 'lucide-react'
-import { resolveApiEndpoint } from '@/lib/api-endpoint'
+import { resolveReadFileUrl } from '@/lib/read-file-url'
 import { cn } from '@/lib/utils'
 import type { ConversationMessageAttachment } from '@middleman/protocol'
 
@@ -32,9 +32,7 @@ function resolveImageAttachmentSrc(
     return null
   }
 
-  const endpoint = resolveApiEndpoint(wsUrl, '/api/read-file')
-  const separator = endpoint.includes('?') ? '&' : '?'
-  return `${endpoint}${separator}path=${encodeURIComponent(filePath)}`
+  return resolveReadFileUrl(wsUrl, filePath)
 }
 
 function attachmentKey(attachment: ConversationMessageAttachment, index: number): string {

@@ -12,6 +12,7 @@ import { Button } from '@/components/ui/button'
 import { Dialog, DialogOverlay, DialogPortal, DialogTitle } from '@/components/ui/dialog'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import type { ArtifactReference } from '@/lib/artifacts'
+import { resolveReadFileEndpoint, resolveReadFileUrl } from '@/lib/read-file-url'
 import { toVscodeInsidersHref } from '@/lib/artifacts'
 import { cn } from '@/lib/utils'
 import { MarkdownMessage } from './MarkdownMessage'
@@ -312,6 +313,7 @@ export function ArtifactPanel({
                     variant="document"
                     enableMermaid
                     onArtifactClick={onArtifactClick}
+                    wsUrl={wsUrl}
                   />
                 </article>
               ) : selectedArtifact ? (
@@ -377,23 +379,4 @@ async function readArtifactFile({
     path: resolvedPath,
     content,
   }
-}
-
-function resolveReadFileEndpoint(wsUrl: string): string {
-  try {
-    const parsed = new URL(wsUrl)
-    parsed.protocol = parsed.protocol === 'wss:' ? 'https:' : 'http:'
-    parsed.pathname = '/api/read-file'
-    parsed.search = ''
-    parsed.hash = ''
-    return parsed.toString()
-  } catch {
-    return '/api/read-file'
-  }
-}
-
-function resolveReadFileUrl(wsUrl: string, path: string): string {
-  const endpoint = resolveReadFileEndpoint(wsUrl)
-  const separator = endpoint.includes('?') ? '&' : '?'
-  return `${endpoint}${separator}path=${encodeURIComponent(path)}`
 }
