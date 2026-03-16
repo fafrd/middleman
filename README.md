@@ -6,6 +6,9 @@
 
 A local-first multi-agent orchestration platform. One manager, many workers, zero tab-juggling.
 
+> [!WARNING]
+> Middleman is pre-v1, experimental, and updated constantly. Expect breaking changes.
+
 If you're using agentic coding tools, you've probably hit this wall: you start with one agent, then two, then five. You're branching, worktree-ing, reviewing, merging, context-switching. The agents are cranking out code. But your entire day is spent *managing them*, sequencing work, checking output, nudging things along.
 
 You're not an IC anymore. You've become a project manager. You need a middle manager.
