@@ -1,345 +1,351 @@
-import { createServer, type IncomingMessage, type Server as HttpServer, type ServerResponse } from "node:http";
-import { readFile, stat } from "node:fs/promises";
-import { extname, resolve, sep } from "node:path";
-import { WebSocketServer } from "ws";
-import type { IntegrationRegistryService } from "../integrations/registry.js";
-import type { ServerEvent } from "@middleman/protocol";
-import { getControlPidFileCandidates } from "../reboot/control-pid.js";
-import type { SwarmManager } from "../swarm/swarm-manager.js";
-import { applyCorsHeaders, resolveReadFileContentType, resolveRequestUrl, sendJson } from "./http-utils.js";
-import { createFileRoutes } from "./routes/file-routes.js";
-import { createHealthRoutes } from "./routes/health-routes.js";
-import type { HttpRoute } from "./routes/http-route.js";
-import { createIntegrationRoutes } from "./routes/integration-routes.js";
-import { createSchedulerRoutes } from "./routes/scheduler-routes.js";
-import { createSettingsRoutes, type SettingsRouteBundle } from "./routes/settings-routes.js";
-import { createNotesHttpRoutes } from "./routes/notes-routes.js";
-import { createTranscriptionRoutes } from "./routes/transcription-routes.js";
-import { WsHandler } from "./ws-handler.js";
+import { serve } from "@hono/node-server"
+import { Hono, type Context } from "hono"
+import type { Server as HttpServer } from "node:http"
+import { readFile, stat } from "node:fs/promises"
+import { extname, resolve, sep } from "node:path"
+import { WebSocketServer } from "ws"
+import type { ServerEvent } from "@middleman/protocol"
+import type { IntegrationRegistryService } from "../integrations/registry.js"
+import { getControlPidFileCandidates } from "../reboot/control-pid.js"
+import type { SwarmManager } from "../swarm/swarm-manager.js"
+import { resolveReadFileContentType } from "./http-utils.js"
+import { type NodeServerEnv } from "./hono-utils.js"
+import { createFileRoutes } from "./routes/file-routes.js"
+import { createHealthRoutes } from "./routes/health-routes.js"
+import { createIntegrationRoutes } from "./routes/integration-routes.js"
+import { createNotesHttpRoutes } from "./routes/notes-routes.js"
+import { createSchedulerRoutes } from "./routes/scheduler-routes.js"
+import { createSettingsRoutes, type SettingsRouteBundle } from "./routes/settings-routes.js"
+import { createTranscriptionRoutes } from "./routes/transcription-routes.js"
+import { WsHandler } from "./ws-handler.js"
 
 export class SwarmWebSocketServer {
-  private readonly swarmManager: SwarmManager;
-  private readonly host: string;
-  private readonly port: number;
-  private readonly integrationRegistry: IntegrationRegistryService | null;
-  private readonly uiDir: string;
-  private uiDirAvailable = false;
+  private readonly swarmManager: SwarmManager
+  private readonly host: string
+  private readonly port: number
+  private readonly integrationRegistry: IntegrationRegistryService | null
+  private readonly uiDir: string
+  private uiDirAvailable = false
 
-  private httpServer: HttpServer | null = null;
-  private wss: WebSocketServer | null = null;
+  private httpServer: HttpServer | null = null
+  private wss: WebSocketServer | null = null
 
-  private readonly wsHandler: WsHandler;
-  private readonly settingsRoutes: SettingsRouteBundle;
-  private readonly httpRoutes: HttpRoute[];
+  private readonly httpApp: Hono<NodeServerEnv>
+  private readonly wsHandler: WsHandler
+  private readonly settingsRoutes: SettingsRouteBundle
 
   private readonly onConversationMessage = (event: ServerEvent): void => {
-    if (event.type !== "conversation_message") return;
-    this.wsHandler.broadcastToSubscribed(event);
-  };
+    if (event.type !== "conversation_message") return
+    this.wsHandler.broadcastToSubscribed(event)
+  }
 
   private readonly onConversationLog = (event: ServerEvent): void => {
-    if (event.type !== "conversation_log") return;
-    this.wsHandler.broadcastToSubscribed(event);
-  };
+    if (event.type !== "conversation_log") return
+    this.wsHandler.broadcastToSubscribed(event)
+  }
 
   private readonly onAgentMessage = (event: ServerEvent): void => {
-    if (event.type !== "agent_message") return;
-    this.wsHandler.broadcastToSubscribed(event);
-  };
+    if (event.type !== "agent_message") return
+    this.wsHandler.broadcastToSubscribed(event)
+  }
 
   private readonly onAgentToolCall = (event: ServerEvent): void => {
-    if (event.type !== "agent_tool_call") return;
-    this.wsHandler.broadcastToSubscribed(event);
-  };
+    if (event.type !== "agent_tool_call") return
+    this.wsHandler.broadcastToSubscribed(event)
+  }
 
   private readonly onConversationReset = (event: ServerEvent): void => {
-    if (event.type !== "conversation_reset") return;
-    this.wsHandler.broadcastToSubscribed(event);
-  };
+    if (event.type !== "conversation_reset") return
+    this.wsHandler.broadcastToSubscribed(event)
+  }
 
   private readonly onAgentStatus = (event: ServerEvent): void => {
-    if (event.type !== "agent_status") return;
-    this.wsHandler.broadcastToSubscribed(event);
-  };
+    if (event.type !== "agent_status") return
+    this.wsHandler.broadcastToSubscribed(event)
+  }
 
   private readonly onAgentsSnapshot = (event: ServerEvent): void => {
-    if (event.type !== "agents_snapshot") return;
-    this.wsHandler.broadcastToSubscribed(event);
-  };
+    if (event.type !== "agents_snapshot") return
+    this.wsHandler.broadcastToSubscribed(event)
+  }
 
   private readonly onSlackStatus = (event: ServerEvent): void => {
-    if (event.type !== "slack_status") return;
-    this.wsHandler.broadcastToSubscribed(event);
-  };
+    if (event.type !== "slack_status") return
+    this.wsHandler.broadcastToSubscribed(event)
+  }
 
   private readonly onTelegramStatus = (event: ServerEvent): void => {
-    if (event.type !== "telegram_status") return;
-    this.wsHandler.broadcastToSubscribed(event);
-  };
+    if (event.type !== "telegram_status") return
+    this.wsHandler.broadcastToSubscribed(event)
+  }
 
   constructor(options: {
-    swarmManager: SwarmManager;
-    host: string;
-    port: number;
-    allowNonManagerSubscriptions: boolean;
-    integrationRegistry?: IntegrationRegistryService;
-    uiDir?: string;
+    swarmManager: SwarmManager
+    host: string
+    port: number
+    allowNonManagerSubscriptions: boolean
+    integrationRegistry?: IntegrationRegistryService
+    uiDir?: string
   }) {
-    this.swarmManager = options.swarmManager;
-    this.host = options.host;
-    this.port = options.port;
-    this.integrationRegistry = options.integrationRegistry ?? null;
-    this.uiDir = options.uiDir ?? this.swarmManager.getConfig().paths.uiDir;
+    this.swarmManager = options.swarmManager
+    this.host = options.host
+    this.port = options.port
+    this.integrationRegistry = options.integrationRegistry ?? null
+    this.uiDir = options.uiDir ?? this.swarmManager.getConfig().paths.uiDir
 
     this.wsHandler = new WsHandler({
       swarmManager: this.swarmManager,
       integrationRegistry: this.integrationRegistry,
-      allowNonManagerSubscriptions: options.allowNonManagerSubscriptions
-    });
+      allowNonManagerSubscriptions: options.allowNonManagerSubscriptions,
+    })
 
-    this.settingsRoutes = createSettingsRoutes({ swarmManager: this.swarmManager });
-    this.httpRoutes = [
-      ...createHealthRoutes({
-        resolveControlPidFiles: () => {
-          const { installDir, runDir } = this.swarmManager.getConfig().paths;
-          return getControlPidFileCandidates({ installDir, runDir });
-        }
-      }),
-      ...createFileRoutes({ swarmManager: this.swarmManager }),
-      ...createTranscriptionRoutes({ swarmManager: this.swarmManager }),
-      ...createSchedulerRoutes({ swarmManager: this.swarmManager }),
-      ...createNotesHttpRoutes({ swarmManager: this.swarmManager }),
-      ...this.settingsRoutes.routes,
-      ...createIntegrationRoutes({
-        swarmManager: this.swarmManager,
-        integrationRegistry: this.integrationRegistry
-      })
-    ];
+    this.settingsRoutes = createSettingsRoutes({ swarmManager: this.swarmManager })
+    this.httpApp = this.createHttpApp()
   }
 
   async start(): Promise<void> {
     if (this.httpServer || this.wss) {
-      return;
+      return
     }
 
-    this.uiDirAvailable = await isDirectory(this.uiDir);
+    this.uiDirAvailable = await isDirectory(this.uiDir)
 
-    const httpServer = createServer((request, response) => {
-      void this.handleHttpRequest(request, response);
-    });
+    const httpServer = await this.startHttpServer()
     const wss = new WebSocketServer({
-      server: httpServer
-    });
+      server: httpServer,
+    })
 
-    this.httpServer = httpServer;
-    this.wss = wss;
+    this.httpServer = httpServer
+    this.wss = wss
 
-    this.wsHandler.attach(wss);
+    this.wsHandler.attach(wss)
 
-    await new Promise<void>((resolve, reject) => {
-      const onListening = (): void => {
-        cleanup();
-        resolve();
-      };
-
-      const onError = (error: Error): void => {
-        cleanup();
-        reject(error);
-      };
-
-      const cleanup = (): void => {
-        httpServer.off("listening", onListening);
-        httpServer.off("error", onError);
-      };
-
-      httpServer.on("listening", onListening);
-      httpServer.on("error", onError);
-      httpServer.listen(this.port, this.host);
-    });
-
-    this.swarmManager.on("conversation_message", this.onConversationMessage);
-    this.swarmManager.on("conversation_log", this.onConversationLog);
-    this.swarmManager.on("agent_message", this.onAgentMessage);
-    this.swarmManager.on("agent_tool_call", this.onAgentToolCall);
-    this.swarmManager.on("conversation_reset", this.onConversationReset);
-    this.swarmManager.on("agent_status", this.onAgentStatus);
-    this.swarmManager.on("agents_snapshot", this.onAgentsSnapshot);
-    this.integrationRegistry?.on("slack_status", this.onSlackStatus);
-    this.integrationRegistry?.on("telegram_status", this.onTelegramStatus);
+    this.swarmManager.on("conversation_message", this.onConversationMessage)
+    this.swarmManager.on("conversation_log", this.onConversationLog)
+    this.swarmManager.on("agent_message", this.onAgentMessage)
+    this.swarmManager.on("agent_tool_call", this.onAgentToolCall)
+    this.swarmManager.on("conversation_reset", this.onConversationReset)
+    this.swarmManager.on("agent_status", this.onAgentStatus)
+    this.swarmManager.on("agents_snapshot", this.onAgentsSnapshot)
+    this.integrationRegistry?.on("slack_status", this.onSlackStatus)
+    this.integrationRegistry?.on("telegram_status", this.onTelegramStatus)
   }
 
   async stop(): Promise<void> {
-    this.swarmManager.off("conversation_message", this.onConversationMessage);
-    this.swarmManager.off("conversation_log", this.onConversationLog);
-    this.swarmManager.off("agent_message", this.onAgentMessage);
-    this.swarmManager.off("agent_tool_call", this.onAgentToolCall);
-    this.swarmManager.off("conversation_reset", this.onConversationReset);
-    this.swarmManager.off("agent_status", this.onAgentStatus);
-    this.swarmManager.off("agents_snapshot", this.onAgentsSnapshot);
-    this.integrationRegistry?.off("slack_status", this.onSlackStatus);
-    this.integrationRegistry?.off("telegram_status", this.onTelegramStatus);
+    this.swarmManager.off("conversation_message", this.onConversationMessage)
+    this.swarmManager.off("conversation_log", this.onConversationLog)
+    this.swarmManager.off("agent_message", this.onAgentMessage)
+    this.swarmManager.off("agent_tool_call", this.onAgentToolCall)
+    this.swarmManager.off("conversation_reset", this.onConversationReset)
+    this.swarmManager.off("agent_status", this.onAgentStatus)
+    this.swarmManager.off("agents_snapshot", this.onAgentsSnapshot)
+    this.integrationRegistry?.off("slack_status", this.onSlackStatus)
+    this.integrationRegistry?.off("telegram_status", this.onTelegramStatus)
 
-    const currentWss = this.wss;
-    const currentHttpServer = this.httpServer;
+    const currentWss = this.wss
+    const currentHttpServer = this.httpServer
 
-    this.wss = null;
-    this.httpServer = null;
+    this.wss = null
+    this.httpServer = null
 
-    this.wsHandler.reset();
-    this.settingsRoutes.cancelActiveSettingsAuthLoginFlows();
+    this.wsHandler.reset()
+    this.settingsRoutes.cancelActiveSettingsAuthLoginFlows()
 
     if (currentWss) {
-      await closeWebSocketServer(currentWss);
+      await closeWebSocketServer(currentWss)
     }
 
     if (currentHttpServer) {
-      await closeHttpServer(currentHttpServer);
+      await closeHttpServer(currentHttpServer)
     }
   }
 
-  private async handleHttpRequest(request: IncomingMessage, response: ServerResponse): Promise<void> {
-    const requestUrl = resolveRequestUrl(request, `${this.host}:${this.port}`);
-    const route = this.httpRoutes.find((candidate) => candidate.matches(requestUrl.pathname));
+  private createHttpApp(): Hono<NodeServerEnv> {
+    const app = new Hono<NodeServerEnv>()
+    app.notFound((c) => c.text("Not Found", 404))
+    app.onError((error, c) => this.handleHttpError(error, c))
 
-    if (!route) {
-      if (await this.maybeHandleStaticRequest(request, response, requestUrl)) {
-        return;
-      }
+    app.route(
+      "/",
+      createHealthRoutes({
+        resolveControlPidFiles: () => {
+          const { installDir, runDir } = this.swarmManager.getConfig().paths
+          return getControlPidFileCandidates({ installDir, runDir })
+        },
+      }),
+    )
+    app.route("/", createFileRoutes({ swarmManager: this.swarmManager }))
+    app.route("/", createTranscriptionRoutes({ swarmManager: this.swarmManager }))
+    app.route("/", createSchedulerRoutes({ swarmManager: this.swarmManager }))
+    app.route("/", createNotesHttpRoutes({ swarmManager: this.swarmManager }))
+    app.route("/", this.settingsRoutes.app)
+    app.route(
+      "/",
+      createIntegrationRoutes({
+        swarmManager: this.swarmManager,
+        integrationRegistry: this.integrationRegistry,
+      }),
+    )
+    app.on(["GET", "HEAD"], "*", async (c) => this.handleStaticRequest(c))
 
-      response.statusCode = 404;
-      response.end("Not Found");
-      return;
-    }
-
-    try {
-      await route.handle(request, response, requestUrl);
-    } catch (error) {
-      if (response.writableEnded || response.headersSent) {
-        return;
-      }
-
-      const message = error instanceof Error ? error.message : String(error);
-      const statusCode =
-        message.includes("must be") ||
-        message.includes("Invalid") ||
-        message.includes("Missing") ||
-        message.includes("too large")
-          ? 400
-          : 500;
-
-      applyCorsHeaders(request, response, route.methods);
-      sendJson(response, statusCode, { error: message });
-    }
+    return app
   }
 
-  private async maybeHandleStaticRequest(
-    request: IncomingMessage,
-    response: ServerResponse,
-    requestUrl: URL
-  ): Promise<boolean> {
-    if ((request.method !== "GET" && request.method !== "HEAD") || !this.uiDirAvailable) {
-      return false;
+  private async startHttpServer(): Promise<HttpServer> {
+    return await new Promise<HttpServer>((resolvePromise, rejectPromise) => {
+      let httpServer: HttpServer
+
+      const onListening = (): void => {
+        cleanup()
+        resolvePromise(httpServer)
+      }
+
+      const onError = (error: Error): void => {
+        cleanup()
+        rejectPromise(error)
+      }
+
+      const cleanup = (): void => {
+        httpServer.off("error", onError)
+      }
+
+      httpServer = serve(
+        {
+          fetch: this.httpApp.fetch,
+          hostname: this.host,
+          port: this.port,
+        },
+        onListening,
+      ) as HttpServer
+
+      httpServer.on("error", onError)
+    })
+  }
+
+  private handleHttpError(error: unknown, c: Context<NodeServerEnv>): Response {
+    const message = error instanceof Error ? error.message : String(error)
+    const statusCode =
+      message.includes("must be") ||
+      message.includes("Invalid") ||
+      message.includes("Missing") ||
+      message.includes("too large")
+        ? 400
+        : 500
+
+    if (c.req.path.startsWith("/api/")) {
+      return c.json({ error: message }, statusCode)
     }
 
-    if (requestUrl.pathname.startsWith("/api/")) {
-      return false;
+    return c.text(message, statusCode)
+  }
+
+  private async handleStaticRequest(c: Context<NodeServerEnv>): Promise<Response> {
+    if (!this.uiDirAvailable || c.req.path.startsWith("/api/")) {
+      return c.notFound()
     }
 
-    const assetPath = await this.resolveStaticAssetPath(requestUrl.pathname);
+    const assetPath = await this.resolveStaticAssetPath(c.req.path)
     if (!assetPath) {
-      return false;
+      return c.notFound()
     }
 
-    const body = request.method === "HEAD" ? undefined : await readFile(assetPath);
-    response.statusCode = 200;
-    response.setHeader("Content-Type", resolveReadFileContentType(assetPath));
-    response.setHeader("Cache-Control", isUiAssetRoute(requestUrl.pathname) ? "public, max-age=31536000, immutable" : "no-store");
-    if (body) {
-      response.setHeader("Content-Length", String(body.byteLength));
-      response.end(body);
-      return true;
+    const headers = new Headers({
+      "Cache-Control": isUiAssetRoute(c.req.path) ? "public, max-age=31536000, immutable" : "no-store",
+      "Content-Type": resolveReadFileContentType(assetPath),
+    })
+
+    if (c.req.method === "HEAD") {
+      return new Response(null, {
+        status: 200,
+        headers,
+      })
     }
 
-    response.end();
-    return true;
+    const body = await readFile(assetPath)
+    headers.set("Content-Length", String(body.byteLength))
+
+    return new Response(body, {
+      status: 200,
+      headers,
+    })
   }
 
   private async resolveStaticAssetPath(pathname: string): Promise<string | null> {
-    const normalizedPath = pathname === "/" ? "/_shell.html" : pathname;
-    const candidateFilePath = this.resolveUiPath(normalizedPath);
+    const normalizedPath = pathname === "/" ? "/_shell.html" : pathname
+    const candidateFilePath = this.resolveUiPath(normalizedPath)
     if (candidateFilePath && (await isFile(candidateFilePath))) {
-      return candidateFilePath;
+      return candidateFilePath
     }
 
     if (extname(pathname).length > 0) {
-      return null;
+      return null
     }
 
-    const shellPath = this.resolveUiPath("/_shell.html");
+    const shellPath = this.resolveUiPath("/_shell.html")
     if (shellPath && (await isFile(shellPath))) {
-      return shellPath;
+      return shellPath
     }
 
-    return null;
+    return null
   }
 
   private resolveUiPath(pathname: string): string | null {
-    const relativePath = pathname.replace(/^\/+/, "");
-    const uiRoot = resolve(this.uiDir);
-    const candidatePath = resolve(uiRoot, relativePath);
+    const relativePath = pathname.replace(/^\/+/, "")
+    const uiRoot = resolve(this.uiDir)
+    const candidatePath = resolve(uiRoot, relativePath)
 
     if (candidatePath === uiRoot || candidatePath.startsWith(`${uiRoot}${sep}`)) {
-      return candidatePath;
+      return candidatePath
     }
 
-    return null;
+    return null
   }
 }
 
 async function isFile(path: string): Promise<boolean> {
   try {
-    const fileStats = await stat(path);
-    return fileStats.isFile();
+    const fileStats = await stat(path)
+    return fileStats.isFile()
   } catch {
-    return false;
+    return false
   }
 }
 
 async function isDirectory(path: string): Promise<boolean> {
   try {
-    const fileStats = await stat(path);
-    return fileStats.isDirectory();
+    const fileStats = await stat(path)
+    return fileStats.isDirectory()
   } catch {
-    return false;
+    return false
   }
 }
 
 function isUiAssetRoute(pathname: string): boolean {
-  return pathname.startsWith("/assets/");
+  return pathname.startsWith("/assets/")
 }
 
 async function closeWebSocketServer(server: WebSocketServer): Promise<void> {
-  await new Promise<void>((resolve, reject) => {
+  await new Promise<void>((resolvePromise, rejectPromise) => {
     server.close((error) => {
       if (error) {
-        reject(error);
-        return;
+        rejectPromise(error)
+        return
       }
 
-      resolve();
-    });
-  });
+      resolvePromise()
+    })
+  })
 }
 
 async function closeHttpServer(server: HttpServer): Promise<void> {
-  await new Promise<void>((resolve, reject) => {
+  await new Promise<void>((resolvePromise, rejectPromise) => {
     server.close((error) => {
       if (error) {
-        reject(error);
-        return;
+        rejectPromise(error)
+        return
       }
 
-      resolve();
-    });
-  });
+      resolvePromise()
+    })
+  })
 }

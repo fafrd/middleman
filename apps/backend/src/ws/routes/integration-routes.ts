@@ -1,310 +1,284 @@
-import type { IncomingMessage, ServerResponse } from "node:http";
-import type { IntegrationRegistryService } from "../../integrations/registry.js";
-import type { SwarmManager } from "../../swarm/swarm-manager.js";
+import { Hono } from "hono"
+import type { IntegrationRegistryService } from "../../integrations/registry.js"
+import type { SwarmManager } from "../../swarm/swarm-manager.js"
 import {
-  applyCorsHeaders,
-  decodePathSegment,
-  matchPathPattern,
+  DEFAULT_MAX_HTTP_BODY_SIZE_BYTES,
+  createBodyLimit,
+  createCorsMiddleware,
+  createMethodGuard,
   readJsonBody,
-  sendJson
-} from "../http-utils.js";
-import type { HttpRoute } from "./http-route.js";
+  type NodeServerEnv,
+} from "../hono-utils.js"
 
-const MANAGER_SLACK_INTEGRATION_ENDPOINT_PATTERN = /^\/api\/managers\/([^/]+)\/integrations\/slack$/;
-const MANAGER_SLACK_INTEGRATION_TEST_ENDPOINT_PATTERN =
-  /^\/api\/managers\/([^/]+)\/integrations\/slack\/test$/;
-const MANAGER_SLACK_INTEGRATION_CHANNELS_ENDPOINT_PATTERN =
-  /^\/api\/managers\/([^/]+)\/integrations\/slack\/channels$/;
-const MANAGER_TELEGRAM_INTEGRATION_ENDPOINT_PATTERN = /^\/api\/managers\/([^/]+)\/integrations\/telegram$/;
-const MANAGER_TELEGRAM_INTEGRATION_TEST_ENDPOINT_PATTERN =
-  /^\/api\/managers\/([^/]+)\/integrations\/telegram\/test$/;
+const SLACK_CONFIG_ENDPOINT_PATH = "/api/managers/:managerId/integrations/slack"
+const SLACK_TEST_ENDPOINT_PATH = "/api/managers/:managerId/integrations/slack/test"
+const SLACK_CHANNELS_ENDPOINT_PATH = "/api/managers/:managerId/integrations/slack/channels"
+const TELEGRAM_CONFIG_ENDPOINT_PATH = "/api/managers/:managerId/integrations/telegram"
+const TELEGRAM_TEST_ENDPOINT_PATH = "/api/managers/:managerId/integrations/telegram/test"
+const CONFIG_METHODS = ["GET", "PUT", "DELETE"] as const
+const TEST_METHODS = ["POST"] as const
+const CHANNEL_METHODS = ["GET"] as const
 
 export function createIntegrationRoutes(options: {
-  swarmManager: SwarmManager;
-  integrationRegistry: IntegrationRegistryService | null;
-}): HttpRoute[] {
-  const { swarmManager, integrationRegistry } = options;
+  swarmManager: SwarmManager
+  integrationRegistry: IntegrationRegistryService | null
+}): Hono<NodeServerEnv> {
+  const { swarmManager, integrationRegistry } = options
+  const app = new Hono<NodeServerEnv>()
 
-  return [
-    {
-      methods: "GET, PUT, DELETE, POST, OPTIONS",
-      matches: (pathname) => isSlackIntegrationPath(pathname),
-      handle: async (request, response, requestUrl) => {
-        await handleSlackIntegrationHttpRequest(
-          swarmManager,
-          integrationRegistry,
-          request,
-          response,
-          requestUrl
-        );
+  app.use(SLACK_CONFIG_ENDPOINT_PATH, createCorsMiddleware(CONFIG_METHODS))
+  app.use(SLACK_CONFIG_ENDPOINT_PATH, createMethodGuard(CONFIG_METHODS))
+  app.get(SLACK_CONFIG_ENDPOINT_PATH, async (c) => {
+    const managerId = c.req.param("managerId")
+    const registryResponse = requireIntegrationRegistry(
+      swarmManager,
+      integrationRegistry,
+      managerId,
+      "Slack",
+    )
+    if (registryResponse) {
+      return registryResponse
+    }
+
+    const registry = integrationRegistry as IntegrationRegistryService
+    const snapshot = await registry.getSlackSnapshot(managerId)
+    return c.json(snapshot)
+  })
+  app.put(
+    SLACK_CONFIG_ENDPOINT_PATH,
+    createBodyLimit(
+      DEFAULT_MAX_HTTP_BODY_SIZE_BYTES,
+      `Request body too large. Max ${DEFAULT_MAX_HTTP_BODY_SIZE_BYTES} bytes.`,
+      400,
+    ),
+    async (c) => {
+      const managerId = c.req.param("managerId")
+      const registryResponse = requireIntegrationRegistry(
+        swarmManager,
+        integrationRegistry,
+        managerId,
+        "Slack",
+      )
+      if (registryResponse) {
+        return registryResponse
       }
+
+      const registry = integrationRegistry as IntegrationRegistryService
+      const payload = await readJsonBody(c, {
+        emptyValue: {},
+        invalidJsonMessage: "Request body must be valid JSON",
+      })
+      const updated = await registry.updateSlackConfig(managerId, payload)
+      return c.json({ ok: true, ...updated })
     },
-    {
-      methods: "GET, PUT, DELETE, POST, OPTIONS",
-      matches: (pathname) => isTelegramIntegrationPath(pathname),
-      handle: async (request, response, requestUrl) => {
-        await handleTelegramIntegrationHttpRequest(
-          swarmManager,
-          integrationRegistry,
-          request,
-          response,
-          requestUrl
-        );
+  )
+  app.delete(SLACK_CONFIG_ENDPOINT_PATH, async (c) => {
+    const managerId = c.req.param("managerId")
+    const registryResponse = requireIntegrationRegistry(
+      swarmManager,
+      integrationRegistry,
+      managerId,
+      "Slack",
+    )
+    if (registryResponse) {
+      return registryResponse
+    }
+
+    const registry = integrationRegistry as IntegrationRegistryService
+    const disabled = await registry.disableSlack(managerId)
+    return c.json({ ok: true, ...disabled })
+  })
+
+  app.use(SLACK_TEST_ENDPOINT_PATH, createCorsMiddleware(TEST_METHODS))
+  app.use(SLACK_TEST_ENDPOINT_PATH, createMethodGuard(TEST_METHODS))
+  app.post(
+    SLACK_TEST_ENDPOINT_PATH,
+    createBodyLimit(
+      DEFAULT_MAX_HTTP_BODY_SIZE_BYTES,
+      `Request body too large. Max ${DEFAULT_MAX_HTTP_BODY_SIZE_BYTES} bytes.`,
+      400,
+    ),
+    async (c) => {
+      const managerId = c.req.param("managerId")
+      const registryResponse = requireIntegrationRegistry(
+        swarmManager,
+        integrationRegistry,
+        managerId,
+        "Slack",
+      )
+      if (registryResponse) {
+        return registryResponse
       }
+
+      const registry = integrationRegistry as IntegrationRegistryService
+      const payload = await readJsonBody(c, {
+        emptyValue: {},
+        invalidJsonMessage: "Request body must be valid JSON",
+      })
+      const result = await registry.testSlackConnection(managerId, payload)
+      return c.json({ ok: true, result })
+    },
+  )
+
+  app.use(SLACK_CHANNELS_ENDPOINT_PATH, createCorsMiddleware(CHANNEL_METHODS))
+  app.use(SLACK_CHANNELS_ENDPOINT_PATH, createMethodGuard(CHANNEL_METHODS))
+  app.get(SLACK_CHANNELS_ENDPOINT_PATH, async (c) => {
+    const managerId = c.req.param("managerId")
+    const registryResponse = requireIntegrationRegistry(
+      swarmManager,
+      integrationRegistry,
+      managerId,
+      "Slack",
+    )
+    if (registryResponse) {
+      return registryResponse
     }
-  ];
+
+    const registry = integrationRegistry as IntegrationRegistryService
+    const includePrivate = parseOptionalBoolean(c.req.query("includePrivateChannels") ?? null)
+    const channels = await registry.listSlackChannels(managerId, {
+      includePrivateChannels: includePrivate,
+    })
+
+    return c.json({ channels })
+  })
+
+  app.use(TELEGRAM_CONFIG_ENDPOINT_PATH, createCorsMiddleware(CONFIG_METHODS))
+  app.use(TELEGRAM_CONFIG_ENDPOINT_PATH, createMethodGuard(CONFIG_METHODS))
+  app.get(TELEGRAM_CONFIG_ENDPOINT_PATH, async (c) => {
+    const managerId = c.req.param("managerId")
+    const registryResponse = requireIntegrationRegistry(
+      swarmManager,
+      integrationRegistry,
+      managerId,
+      "Telegram",
+    )
+    if (registryResponse) {
+      return registryResponse
+    }
+
+    const registry = integrationRegistry as IntegrationRegistryService
+    const snapshot = await registry.getTelegramSnapshot(managerId)
+    return c.json(snapshot)
+  })
+  app.put(
+    TELEGRAM_CONFIG_ENDPOINT_PATH,
+    createBodyLimit(
+      DEFAULT_MAX_HTTP_BODY_SIZE_BYTES,
+      `Request body too large. Max ${DEFAULT_MAX_HTTP_BODY_SIZE_BYTES} bytes.`,
+      400,
+    ),
+    async (c) => {
+      const managerId = c.req.param("managerId")
+      const registryResponse = requireIntegrationRegistry(
+        swarmManager,
+        integrationRegistry,
+        managerId,
+        "Telegram",
+      )
+      if (registryResponse) {
+        return registryResponse
+      }
+
+      const registry = integrationRegistry as IntegrationRegistryService
+      const payload = await readJsonBody(c, {
+        emptyValue: {},
+        invalidJsonMessage: "Request body must be valid JSON",
+      })
+      const updated = await registry.updateTelegramConfig(managerId, payload)
+      return c.json({ ok: true, ...updated })
+    },
+  )
+  app.delete(TELEGRAM_CONFIG_ENDPOINT_PATH, async (c) => {
+    const managerId = c.req.param("managerId")
+    const registryResponse = requireIntegrationRegistry(
+      swarmManager,
+      integrationRegistry,
+      managerId,
+      "Telegram",
+    )
+    if (registryResponse) {
+      return registryResponse
+    }
+
+    const registry = integrationRegistry as IntegrationRegistryService
+    const disabled = await registry.disableTelegram(managerId)
+    return c.json({ ok: true, ...disabled })
+  })
+
+  app.use(TELEGRAM_TEST_ENDPOINT_PATH, createCorsMiddleware(TEST_METHODS))
+  app.use(TELEGRAM_TEST_ENDPOINT_PATH, createMethodGuard(TEST_METHODS))
+  app.post(
+    TELEGRAM_TEST_ENDPOINT_PATH,
+    createBodyLimit(
+      DEFAULT_MAX_HTTP_BODY_SIZE_BYTES,
+      `Request body too large. Max ${DEFAULT_MAX_HTTP_BODY_SIZE_BYTES} bytes.`,
+      400,
+    ),
+    async (c) => {
+      const managerId = c.req.param("managerId")
+      const registryResponse = requireIntegrationRegistry(
+        swarmManager,
+        integrationRegistry,
+        managerId,
+        "Telegram",
+      )
+      if (registryResponse) {
+        return registryResponse
+      }
+
+      const registry = integrationRegistry as IntegrationRegistryService
+      const payload = await readJsonBody(c, {
+        emptyValue: {},
+        invalidJsonMessage: "Request body must be valid JSON",
+      })
+      const result = await registry.testTelegramConnection(managerId, payload)
+      return c.json({ ok: true, result })
+    },
+  )
+
+  return app
 }
 
-type SlackIntegrationRoute = {
-  managerId: string;
-  action: "config" | "test" | "channels";
-};
-
-type TelegramIntegrationRoute = {
-  managerId: string;
-  action: "config" | "test";
-};
-
-async function handleSlackIntegrationHttpRequest(
+function requireIntegrationRegistry(
   swarmManager: SwarmManager,
   integrationRegistry: IntegrationRegistryService | null,
-  request: IncomingMessage,
-  response: ServerResponse,
-  requestUrl: URL
-): Promise<void> {
-  const methods = "GET, PUT, DELETE, POST, OPTIONS";
-
-  if (request.method === "OPTIONS") {
-    applyCorsHeaders(request, response, methods);
-    response.statusCode = 204;
-    response.end();
-    return;
-  }
-
-  applyCorsHeaders(request, response, methods);
-
+  managerId: string,
+  providerName: "Slack" | "Telegram",
+): Response | null {
   if (!integrationRegistry) {
-    sendJson(response, 501, { error: "Slack integration is unavailable" });
-    return;
+    return Response.json({ error: `${providerName} integration is unavailable` }, { status: 501 })
   }
 
-  const route = resolveSlackIntegrationRoute(requestUrl.pathname);
-  if (!route) {
-    response.setHeader("Allow", methods);
-    sendJson(response, 405, { error: "Method Not Allowed" });
-    return;
+  if (!isManagerAgent(swarmManager, managerId)) {
+    return Response.json({ error: `Unknown manager: ${managerId}` }, { status: 404 })
   }
 
-  if (!isManagerAgent(swarmManager, route.managerId)) {
-    sendJson(response, 404, { error: `Unknown manager: ${route.managerId}` });
-    return;
-  }
-
-  if (route.action === "config") {
-    if (request.method === "GET") {
-      const snapshot = await integrationRegistry.getSlackSnapshot(route.managerId);
-      sendJson(response, 200, snapshot);
-      return;
-    }
-
-    if (request.method === "PUT") {
-      const payload = await readJsonBody(request);
-      const updated = await integrationRegistry.updateSlackConfig(route.managerId, payload);
-      sendJson(response, 200, { ok: true, ...updated });
-      return;
-    }
-
-    if (request.method === "DELETE") {
-      const disabled = await integrationRegistry.disableSlack(route.managerId);
-      sendJson(response, 200, { ok: true, ...disabled });
-      return;
-    }
-  }
-
-  if (route.action === "test" && request.method === "POST") {
-    const payload = await readJsonBody(request);
-    const result = await integrationRegistry.testSlackConnection(route.managerId, payload);
-    sendJson(response, 200, { ok: true, result });
-    return;
-  }
-
-  if (route.action === "channels" && request.method === "GET") {
-    const includePrivate = parseOptionalBoolean(requestUrl.searchParams.get("includePrivateChannels"));
-
-    const channels = await integrationRegistry.listSlackChannels(route.managerId, {
-      includePrivateChannels: includePrivate
-    });
-
-    sendJson(response, 200, { channels });
-    return;
-  }
-
-  response.setHeader("Allow", methods);
-  sendJson(response, 405, { error: "Method Not Allowed" });
-}
-
-async function handleTelegramIntegrationHttpRequest(
-  swarmManager: SwarmManager,
-  integrationRegistry: IntegrationRegistryService | null,
-  request: IncomingMessage,
-  response: ServerResponse,
-  requestUrl: URL
-): Promise<void> {
-  const methods = "GET, PUT, DELETE, POST, OPTIONS";
-
-  if (request.method === "OPTIONS") {
-    applyCorsHeaders(request, response, methods);
-    response.statusCode = 204;
-    response.end();
-    return;
-  }
-
-  applyCorsHeaders(request, response, methods);
-
-  if (!integrationRegistry) {
-    sendJson(response, 501, { error: "Telegram integration is unavailable" });
-    return;
-  }
-
-  const route = resolveTelegramIntegrationRoute(requestUrl.pathname);
-  if (!route) {
-    response.setHeader("Allow", methods);
-    sendJson(response, 405, { error: "Method Not Allowed" });
-    return;
-  }
-
-  if (!isManagerAgent(swarmManager, route.managerId)) {
-    sendJson(response, 404, { error: `Unknown manager: ${route.managerId}` });
-    return;
-  }
-
-  if (route.action === "config") {
-    if (request.method === "GET") {
-      const snapshot = await integrationRegistry.getTelegramSnapshot(route.managerId);
-      sendJson(response, 200, snapshot);
-      return;
-    }
-
-    if (request.method === "PUT") {
-      const payload = await readJsonBody(request);
-      const updated = await integrationRegistry.updateTelegramConfig(route.managerId, payload);
-      sendJson(response, 200, { ok: true, ...updated });
-      return;
-    }
-
-    if (request.method === "DELETE") {
-      const disabled = await integrationRegistry.disableTelegram(route.managerId);
-      sendJson(response, 200, { ok: true, ...disabled });
-      return;
-    }
-  }
-
-  if (route.action === "test" && request.method === "POST") {
-    const payload = await readJsonBody(request);
-    const result = await integrationRegistry.testTelegramConnection(route.managerId, payload);
-    sendJson(response, 200, { ok: true, result });
-    return;
-  }
-
-  response.setHeader("Allow", methods);
-  sendJson(response, 405, { error: "Method Not Allowed" });
+  return null
 }
 
 function isManagerAgent(swarmManager: SwarmManager, managerId: string): boolean {
-  const descriptor = swarmManager.getAgent(managerId);
-  return Boolean(descriptor && descriptor.role === "manager");
-}
-
-function isSlackIntegrationPath(pathname: string): boolean {
-  return (
-    MANAGER_SLACK_INTEGRATION_ENDPOINT_PATTERN.test(pathname) ||
-    MANAGER_SLACK_INTEGRATION_TEST_ENDPOINT_PATTERN.test(pathname) ||
-    MANAGER_SLACK_INTEGRATION_CHANNELS_ENDPOINT_PATTERN.test(pathname)
-  );
-}
-
-function isTelegramIntegrationPath(pathname: string): boolean {
-  return (
-    MANAGER_TELEGRAM_INTEGRATION_ENDPOINT_PATTERN.test(pathname) ||
-    MANAGER_TELEGRAM_INTEGRATION_TEST_ENDPOINT_PATTERN.test(pathname)
-  );
-}
-
-function resolveSlackIntegrationRoute(pathname: string): SlackIntegrationRoute | null {
-  const configMatch = matchPathPattern(pathname, MANAGER_SLACK_INTEGRATION_ENDPOINT_PATTERN);
-  if (configMatch) {
-    const managerId = decodePathSegment(configMatch[1]);
-    if (!managerId) {
-      return null;
-    }
-
-    return { managerId, action: "config" };
-  }
-
-  const testMatch = matchPathPattern(pathname, MANAGER_SLACK_INTEGRATION_TEST_ENDPOINT_PATTERN);
-  if (testMatch) {
-    const managerId = decodePathSegment(testMatch[1]);
-    if (!managerId) {
-      return null;
-    }
-
-    return { managerId, action: "test" };
-  }
-
-  const channelsMatch = matchPathPattern(pathname, MANAGER_SLACK_INTEGRATION_CHANNELS_ENDPOINT_PATTERN);
-  if (channelsMatch) {
-    const managerId = decodePathSegment(channelsMatch[1]);
-    if (!managerId) {
-      return null;
-    }
-
-    return { managerId, action: "channels" };
-  }
-
-  return null;
-}
-
-function resolveTelegramIntegrationRoute(pathname: string): TelegramIntegrationRoute | null {
-  const configMatch = matchPathPattern(pathname, MANAGER_TELEGRAM_INTEGRATION_ENDPOINT_PATTERN);
-  if (configMatch) {
-    const managerId = decodePathSegment(configMatch[1]);
-    if (!managerId) {
-      return null;
-    }
-
-    return { managerId, action: "config" };
-  }
-
-  const testMatch = matchPathPattern(pathname, MANAGER_TELEGRAM_INTEGRATION_TEST_ENDPOINT_PATTERN);
-  if (testMatch) {
-    const managerId = decodePathSegment(testMatch[1]);
-    if (!managerId) {
-      return null;
-    }
-
-    return { managerId, action: "test" };
-  }
-
-  return null;
+  const descriptor = swarmManager.getAgent(managerId)
+  return Boolean(descriptor && descriptor.role === "manager")
 }
 
 function parseOptionalBoolean(value: string | null): boolean | undefined {
   if (value === null) {
-    return undefined;
+    return undefined
   }
 
-  const normalized = value.trim().toLowerCase();
+  const normalized = value.trim().toLowerCase()
   if (!normalized) {
-    return undefined;
+    return undefined
   }
 
   if (normalized === "1" || normalized === "true" || normalized === "yes" || normalized === "on") {
-    return true;
+    return true
   }
 
   if (normalized === "0" || normalized === "false" || normalized === "no" || normalized === "off") {
-    return false;
+    return false
   }
 
-  return undefined;
+  return undefined
 }
