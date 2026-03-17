@@ -666,17 +666,31 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(
     );
 
     const scrollToBottom = useCallback((behavior: ScrollBehavior = "auto") => {
-      const scrollBehavior = behavior === "smooth" ? "smooth" : "auto";
-      const scrollTargetTop =
-        scrollContainerRef.current?.scrollHeight ?? Number.MAX_SAFE_INTEGER;
+      if (displayEntries.length === 0) {
+        return;
+      }
 
-      virtuosoRef.current?.scrollTo({
-        top: scrollTargetTop,
+      const scrollBehavior = behavior === "smooth" ? "smooth" : "auto";
+
+      virtuosoRef.current?.scrollToIndex({
+        index: "LAST",
+        align: "end",
         behavior: scrollBehavior,
       });
 
       isAtBottomRef.current = true;
       setShowScrollButton(false);
+    }, [displayEntries.length]);
+
+    const followOutput = useCallback((isAtBottom: boolean) => {
+      if (
+        pendingOlderHistoryScrollRef.current ||
+        didPrependHistoryRef.current
+      ) {
+        return false;
+      }
+
+      return isAtBottom ? "smooth" : false;
     }, []);
 
     useImperativeHandle(
@@ -742,7 +756,7 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(
       }
     }, [displayEntries, resolvedIsLoadingOlderHistory]);
 
-    useEffect(() => {
+    useLayoutEffect(() => {
       const nextAgentId = resolvedActiveAgentId ?? null;
       const nextFirstEntryId = displayEntries[0]?.id ?? null;
       const nextEntryCount = displayEntries.length;
@@ -775,10 +789,9 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(
         didAgentChange ||
         didConversationReset ||
         didInitialConversationLoad;
-      const shouldAutoScroll = shouldForceScroll || isAtBottomRef.current;
 
-      if (shouldAutoScroll) {
-        scrollToBottom(shouldForceScroll ? "auto" : "smooth");
+      if (shouldForceScroll) {
+        scrollToBottom("auto");
       }
 
       if (didAgentChange || didConversationReset) {
@@ -789,7 +802,7 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(
       previousAgentIdRef.current = nextAgentId;
       previousFirstEntryIdRef.current = nextFirstEntryId;
       previousEntryCountRef.current = nextEntryCount;
-    }, [displayEntries, resolvedActiveAgentId, resolvedIsLoading, scrollToBottom]);
+    }, [displayEntries, resolvedActiveAgentId, scrollToBottom]);
 
     useEffect(() => {
       const container = scrollContainerRef.current;
@@ -920,6 +933,7 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(
                   ? displayEntries.length
                   : undefined
               }
+              followOutput={followOutput}
               increaseViewportBy={MESSAGE_LIST_VIEWPORT_BUFFER_PX}
               overscan={MESSAGE_LIST_OVERSCAN_PX}
               atBottomThreshold={AUTO_SCROLL_THRESHOLD_PX}
