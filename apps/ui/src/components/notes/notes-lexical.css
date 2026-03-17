@@ -220,67 +220,80 @@
   position: sticky;
   bottom: 0;
   z-index: 10;
-  background:
-    linear-gradient(
-      180deg,
-      transparent,
-      color-mix(in srgb, var(--background) 82%, transparent) 30%,
-      var(--background)
-    );
-  backdrop-filter: blur(14px);
+  border-top: 1px solid color-mix(in srgb, var(--border) 88%, transparent);
+  background: color-mix(in srgb, var(--card) 90%, var(--background));
+  backdrop-filter: blur(16px);
 }
 
 .notes-lexical-toolbar-track {
   overflow-x: auto;
   overscroll-behavior-x: contain;
   -webkit-overflow-scrolling: touch;
-  padding: 0.95rem 0.85rem calc(1.15rem + var(--app-safe-bottom));
+  scrollbar-width: none;
+  padding: 0.55rem 0.85rem calc(0.55rem + var(--app-safe-bottom));
+}
+
+.notes-lexical-toolbar-track::-webkit-scrollbar {
+  display: none;
 }
 
 .notes-lexical-toolbar {
   display: flex;
   width: max-content;
-  min-width: max-content;
+  min-width: 100%;
   align-items: center;
-  justify-content: flex-start;
-  gap: 0.25rem;
+  justify-content: center;
+  gap: 0.5rem;
   margin: 0;
-  padding: 0.4rem;
-  border: 1px solid color-mix(in srgb, var(--border) 74%, transparent);
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--background) 80%, var(--card));
-  box-shadow:
-    inset 0 1px 0 color-mix(in srgb, white 4%, transparent),
-    0 14px 40px color-mix(in srgb, black 18%, transparent);
+  padding: 0;
+}
+
+.notes-lexical-toolbar-group {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 0.15rem;
+}
+
+.notes-lexical-toolbar-separator {
+  flex: 0 0 auto;
+  height: 1.3rem;
+  background: color-mix(in srgb, var(--border) 78%, transparent);
 }
 
 .notes-lexical-toolbar-button {
   flex: 0 0 auto;
-  min-width: 2.5rem;
-  min-height: 2.5rem;
-  color: color-mix(in srgb, var(--foreground) 84%, transparent);
+  color: color-mix(in srgb, var(--muted-foreground) 92%, var(--foreground) 8%);
+  border-color: transparent;
+  background: transparent;
+}
+
+.notes-lexical-toolbar-button:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--muted) 92%, var(--background));
+  color: var(--foreground);
+}
+
+.notes-lexical-toolbar-button:disabled {
+  color: color-mix(in srgb, var(--muted-foreground) 68%, transparent);
+  opacity: 1;
 }
 
 .notes-lexical-toolbar-button-active {
-  background: color-mix(in srgb, var(--primary) 16%, var(--background));
-  color: color-mix(in srgb, var(--primary) 78%, white);
+  border-color: color-mix(in srgb, var(--primary) 18%, var(--border));
+  background: color-mix(in srgb, var(--primary) 14%, var(--card));
+  color: color-mix(in srgb, var(--primary) 76%, var(--foreground));
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, white 18%, transparent),
+    0 1px 1px color-mix(in srgb, black 10%, transparent);
+}
+
+.notes-lexical-toolbar-button-active:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--primary) 18%, var(--card));
 }
 
 @media (min-width: 768px) {
   .notes-lexical-toolbar-track {
     padding-inline: 1rem;
-  }
-
-  .notes-lexical-toolbar {
-    min-width: 100%;
-    justify-content: center;
-    gap: 0.15rem;
-    margin: 0 auto;
-  }
-
-  .notes-lexical-toolbar-button {
-    min-width: 1.75rem;
-    min-height: 1.75rem;
   }
 }
 

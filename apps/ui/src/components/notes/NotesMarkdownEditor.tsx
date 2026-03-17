@@ -78,6 +78,7 @@ import {
   useState,
   type ComponentProps,
   type MutableRefObject,
+  type ReactNode,
   type RefObject,
 } from 'react'
 
@@ -517,135 +518,157 @@ function NotesToolbarPlugin() {
   return (
     <div className="notes-lexical-toolbar-shell">
       <div className="notes-lexical-toolbar-track">
-        <div className="notes-lexical-toolbar">
-          <ToolbarButton
-            active={toolbarState.isBold}
-            aria-label="Bold"
-            disabled={!toolbarState.hasSelection}
-            onClick={() => editor.dispatchCommand(FORMAT_TEXT_COMMAND, 'bold')}
-            title="Bold"
-          >
-            <BoldIcon />
-          </ToolbarButton>
-          <ToolbarButton
-            active={toolbarState.isItalic}
-            aria-label="Italic"
-            disabled={!toolbarState.hasSelection}
-            onClick={() => editor.dispatchCommand(FORMAT_TEXT_COMMAND, 'italic')}
-            title="Italic"
-          >
-            <ItalicIcon />
-          </ToolbarButton>
-          <ToolbarButton
-            active={toolbarState.isStrikethrough}
-            aria-label="Strikethrough"
-            disabled={!toolbarState.hasSelection}
-            onClick={() => editor.dispatchCommand(FORMAT_TEXT_COMMAND, 'strikethrough')}
-            title="Strikethrough"
-          >
-            <StrikethroughIcon />
-          </ToolbarButton>
-          <ToolbarButton
-            active={toolbarState.isInlineCode}
-            aria-label="Inline code"
-            disabled={!toolbarState.hasSelection}
-            onClick={() => editor.dispatchCommand(FORMAT_TEXT_COMMAND, 'code')}
-            title="Inline code"
-          >
-            <InlineCodeIcon />
-          </ToolbarButton>
+        <div aria-label="Note formatting" className="notes-lexical-toolbar" role="toolbar">
+          <ToolbarGroup label="Text formatting">
+            <ToolbarButton
+              active={toolbarState.isBold}
+              aria-label="Bold"
+              disabled={!toolbarState.hasSelection}
+              onClick={() => editor.dispatchCommand(FORMAT_TEXT_COMMAND, 'bold')}
+              title="Bold"
+            >
+              <BoldIcon />
+            </ToolbarButton>
+            <ToolbarButton
+              active={toolbarState.isItalic}
+              aria-label="Italic"
+              disabled={!toolbarState.hasSelection}
+              onClick={() => editor.dispatchCommand(FORMAT_TEXT_COMMAND, 'italic')}
+              title="Italic"
+            >
+              <ItalicIcon />
+            </ToolbarButton>
+            <ToolbarButton
+              active={toolbarState.isStrikethrough}
+              aria-label="Strikethrough"
+              disabled={!toolbarState.hasSelection}
+              onClick={() => editor.dispatchCommand(FORMAT_TEXT_COMMAND, 'strikethrough')}
+              title="Strikethrough"
+            >
+              <StrikethroughIcon />
+            </ToolbarButton>
+            <ToolbarButton
+              active={toolbarState.isInlineCode}
+              aria-label="Inline code"
+              disabled={!toolbarState.hasSelection}
+              onClick={() => editor.dispatchCommand(FORMAT_TEXT_COMMAND, 'code')}
+              title="Inline code"
+            >
+              <InlineCodeIcon />
+            </ToolbarButton>
+          </ToolbarGroup>
 
-          <Separator className="mx-1 h-5 bg-border/50" orientation="vertical" />
+          <Separator className="notes-lexical-toolbar-separator" orientation="vertical" />
 
-          <ToolbarButton
-            active={toolbarState.blockType === 'h1'}
-            aria-label="Heading 1"
-            disabled={!toolbarState.hasSelection}
-            onClick={() => handleToggleHeading('h1')}
-            title="Heading 1"
-          >
-            <Heading1Icon />
-          </ToolbarButton>
-          <ToolbarButton
-            active={toolbarState.blockType === 'h2'}
-            aria-label="Heading 2"
-            disabled={!toolbarState.hasSelection}
-            onClick={() => handleToggleHeading('h2')}
-            title="Heading 2"
-          >
-            <Heading2Icon />
-          </ToolbarButton>
-          <ToolbarButton
-            active={toolbarState.blockType === 'h3'}
-            aria-label="Heading 3"
-            disabled={!toolbarState.hasSelection}
-            onClick={() => handleToggleHeading('h3')}
-            title="Heading 3"
-          >
-            <Heading3Icon />
-          </ToolbarButton>
+          <ToolbarGroup label="Headings">
+            <ToolbarButton
+              active={toolbarState.blockType === 'h1'}
+              aria-label="Heading 1"
+              disabled={!toolbarState.hasSelection}
+              onClick={() => handleToggleHeading('h1')}
+              title="Heading 1"
+            >
+              <Heading1Icon />
+            </ToolbarButton>
+            <ToolbarButton
+              active={toolbarState.blockType === 'h2'}
+              aria-label="Heading 2"
+              disabled={!toolbarState.hasSelection}
+              onClick={() => handleToggleHeading('h2')}
+              title="Heading 2"
+            >
+              <Heading2Icon />
+            </ToolbarButton>
+            <ToolbarButton
+              active={toolbarState.blockType === 'h3'}
+              aria-label="Heading 3"
+              disabled={!toolbarState.hasSelection}
+              onClick={() => handleToggleHeading('h3')}
+              title="Heading 3"
+            >
+              <Heading3Icon />
+            </ToolbarButton>
+          </ToolbarGroup>
 
-          <Separator className="mx-1 h-5 bg-border/50" orientation="vertical" />
+          <Separator className="notes-lexical-toolbar-separator" orientation="vertical" />
 
-          <ToolbarButton
-            active={toolbarState.blockType === 'bullet'}
-            aria-label="Bullet list"
-            disabled={!toolbarState.hasSelection}
-            onClick={() => handleToggleList('bullet')}
-            title="Bullet list"
-          >
-            <BulletListIcon />
-          </ToolbarButton>
-          <ToolbarButton
-            active={toolbarState.blockType === 'number'}
-            aria-label="Ordered list"
-            disabled={!toolbarState.hasSelection}
-            onClick={() => handleToggleList('number')}
-            title="Ordered list"
-          >
-            <OrderedListIcon />
-          </ToolbarButton>
-          <ToolbarButton
-            active={toolbarState.blockType === 'check'}
-            aria-label="Checklist"
-            disabled={!toolbarState.hasSelection}
-            onClick={() => handleToggleList('check')}
-            title="Checklist"
-          >
-            <ChecklistIcon />
-          </ToolbarButton>
+          <ToolbarGroup label="Lists">
+            <ToolbarButton
+              active={toolbarState.blockType === 'bullet'}
+              aria-label="Bullet list"
+              disabled={!toolbarState.hasSelection}
+              onClick={() => handleToggleList('bullet')}
+              title="Bullet list"
+            >
+              <BulletListIcon />
+            </ToolbarButton>
+            <ToolbarButton
+              active={toolbarState.blockType === 'number'}
+              aria-label="Ordered list"
+              disabled={!toolbarState.hasSelection}
+              onClick={() => handleToggleList('number')}
+              title="Ordered list"
+            >
+              <OrderedListIcon />
+            </ToolbarButton>
+            <ToolbarButton
+              active={toolbarState.blockType === 'check'}
+              aria-label="Checklist"
+              disabled={!toolbarState.hasSelection}
+              onClick={() => handleToggleList('check')}
+              title="Checklist"
+            >
+              <ChecklistIcon />
+            </ToolbarButton>
+          </ToolbarGroup>
 
-          <Separator className="mx-1 h-5 bg-border/50" orientation="vertical" />
+          <Separator className="notes-lexical-toolbar-separator" orientation="vertical" />
 
-          <ToolbarButton
-            active={toolbarState.blockType === 'code'}
-            aria-label="Code block"
-            disabled={!toolbarState.hasSelection}
-            onClick={handleToggleCodeBlock}
-            title="Code block"
-          >
-            <CodeBlockIcon />
-          </ToolbarButton>
-          <ToolbarButton
-            active={toolbarState.blockType === 'quote'}
-            aria-label="Blockquote"
-            disabled={!toolbarState.hasSelection}
-            onClick={handleToggleQuote}
-            title="Blockquote"
-          >
-            <QuoteIcon />
-          </ToolbarButton>
-          <ToolbarButton
-            active={toolbarState.linkUrl !== null}
-            aria-label="Link"
-            disabled={!toolbarState.hasSelection}
-            onClick={handleToggleLink}
-            title="Link"
-          >
-            <LinkIcon />
-          </ToolbarButton>
+          <ToolbarGroup label="Links and blocks">
+            <ToolbarButton
+              active={toolbarState.linkUrl !== null}
+              aria-label="Link"
+              disabled={!toolbarState.hasSelection}
+              onClick={handleToggleLink}
+              title="Link"
+            >
+              <LinkIcon />
+            </ToolbarButton>
+            <ToolbarButton
+              active={toolbarState.blockType === 'quote'}
+              aria-label="Blockquote"
+              disabled={!toolbarState.hasSelection}
+              onClick={handleToggleQuote}
+              title="Blockquote"
+            >
+              <QuoteIcon />
+            </ToolbarButton>
+            <ToolbarButton
+              active={toolbarState.blockType === 'code'}
+              aria-label="Code block"
+              disabled={!toolbarState.hasSelection}
+              onClick={handleToggleCodeBlock}
+              title="Code block"
+            >
+              <CodeBlockIcon />
+            </ToolbarButton>
+          </ToolbarGroup>
         </div>
       </div>
+    </div>
+  )
+}
+
+function ToolbarGroup({
+  label,
+  children,
+}: {
+  label: string
+  children: ReactNode
+}) {
+  return (
+    <div aria-label={label} className="notes-lexical-toolbar-group" role="group">
+      {children}
     </div>
   )
 }
@@ -661,8 +684,13 @@ function ToolbarButton({
 }) {
   return (
     <Button
+      aria-pressed={active}
       {...props}
-      className={cn('notes-lexical-toolbar-button', active && 'notes-lexical-toolbar-button-active', className)}
+      className={cn(
+        'notes-lexical-toolbar-button [&_svg:not([class*="size-"])]:size-4',
+        active && 'notes-lexical-toolbar-button-active',
+        className,
+      )}
       onMouseDown={(event) => {
         event.preventDefault()
         onMouseDown?.(event)
