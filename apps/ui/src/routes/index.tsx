@@ -717,6 +717,7 @@ export function IndexPage() {
               messages={visibleMessages}
               agents={state.agents}
               isLoading={isLoading}
+              isLoadingHistory={state.isLoadingHistory}
               canLoadOlderHistory={state.hasOlderHistory}
               isLoadingOlderHistory={state.isLoadingOlderHistory}
               activeAgentId={activeAgentId}

@@ -680,6 +680,49 @@ describe('IndexPage create manager model selection', () => {
     expect(window.location.search).toBe('')
   })
 
+  it('shows a loading state while switching agents until replacement history arrives', async () => {
+    const socket = await renderPage()
+
+    emitServerEvent(socket, {
+      type: 'agents_snapshot',
+      agents: [
+        buildManager('manager', '/tmp/manager'),
+        buildWorker('worker-1', 'manager', '/tmp/manager'),
+      ],
+    })
+
+    await flushWsUiUpdates()
+
+    const sidebar = getSidebar()
+
+    click(within(sidebar).getByRole('button', { name: 'Expand manager manager' }))
+    click(within(sidebar).getByRole('button', { name: 'worker-1' }))
+
+    await flushWsUiUpdates()
+
+    expect(queryByText(container, 'Loading conversation')).toBeTruthy()
+    expect(queryByText(container, 'What can I do for you?')).toBeNull()
+
+    emitServerEvent(socket, {
+      type: 'ready',
+      serverTime: new Date().toISOString(),
+      buildHash: TEST_BUILD_HASH,
+      subscribedAgentId: 'worker-1',
+    })
+
+    emitServerEvent(socket, {
+      type: 'conversation_history',
+      agentId: 'worker-1',
+      mode: 'replace',
+      messages: [],
+    })
+
+    await flushWsUiUpdates()
+
+    expect(queryByText(container, 'Loading conversation')).toBeNull()
+    expect(queryByText(container, 'What can I do for you?')).toBeTruthy()
+  })
+
   it('persists drafts per agent across selection changes and refresh, clears sent drafts, and prunes deleted agents', async () => {
     const socket = await renderPage()
 

@@ -47,6 +47,7 @@ function renderMessageList({
   handleRef,
   onLoadOlderHistory = vi.fn(),
   canLoadOlderHistory = false,
+  isLoadingHistory = false,
 }: {
   messages: ConversationEntry[];
   viewportHeight?: number;
@@ -54,6 +55,7 @@ function renderMessageList({
   handleRef?: RefObject<MessageListHandle | null>;
   onLoadOlderHistory?: () => void;
   canLoadOlderHistory?: boolean;
+  isLoadingHistory?: boolean;
 }) {
   return render(
     createElement(
@@ -67,6 +69,7 @@ function renderMessageList({
           messages,
           agents: [manager],
           isLoading: false,
+          isLoadingHistory,
           activeAgentId: "manager",
           canLoadOlderHistory,
           onLoadOlderHistory,
@@ -139,5 +142,25 @@ describe("MessageList", () => {
     });
 
     expect(typeof handleRef.current?.scrollToBottom).toBe("function");
+  });
+
+  it("shows a loading indicator instead of the empty state while history is loading", () => {
+    renderMessageList({
+      messages: [],
+      isLoadingHistory: true,
+    });
+
+    expect(screen.getByText("Loading conversation")).toBeTruthy();
+    expect(screen.queryByText("What can I do for you?")).toBeNull();
+  });
+
+  it("keeps the empty state when history has finished loading with no messages", () => {
+    renderMessageList({
+      messages: [],
+      isLoadingHistory: false,
+    });
+
+    expect(screen.getByText("What can I do for you?")).toBeTruthy();
+    expect(screen.queryByText("Loading conversation")).toBeNull();
   });
 });
