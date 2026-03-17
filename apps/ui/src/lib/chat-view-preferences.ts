@@ -52,16 +52,16 @@ const showInternalChatterStorage = {
       return initialValue;
     }
   },
-  setItem(key: string, value: boolean): void {
+  setItem(_key: string, value: boolean): void {
     writeStoredShowInternalChatter(value);
   },
-  removeItem(key: string): void {
+  removeItem(_key: string): void {
     if (typeof window === "undefined") {
       return;
     }
 
     try {
-      window.localStorage.removeItem(key);
+      window.localStorage.removeItem(_key);
     } catch {
       // Ignore localStorage removal failures in restricted environments.
     }
