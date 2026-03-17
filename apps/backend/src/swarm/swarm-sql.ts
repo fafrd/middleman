@@ -73,12 +73,6 @@ export const MIDDLEMAN_STORE_MIGRATIONS: readonly MigrationDefinition[] = [
     `,
   },
   {
-    id: "middleman_010_drop_removed_tables",
-    sql: `
-      DROP TABLE IF EXISTS middleman_escalations;
-    `,
-  },
-  {
     id: "middleman_011_drop_integration_profiles",
     sql: `
       DROP TABLE IF EXISTS middleman_integration_profiles;
