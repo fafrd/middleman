@@ -26,6 +26,7 @@ export interface ManagerWsState {
   oldestHistoryCursor: string | null;
   hasOlderHistory: boolean;
   isLoadingOlderHistory: boolean;
+  isLoadingHistory: boolean;
   agents: AgentDescriptor[];
   managerOrder: string[];
   statuses: Record<
@@ -54,6 +55,7 @@ export function createInitialManagerWsState(
     oldestHistoryCursor: null,
     hasOlderHistory: false,
     isLoadingOlderHistory: false,
+    isLoadingHistory: false,
     agents: [],
     managerOrder: [],
     statuses: {},

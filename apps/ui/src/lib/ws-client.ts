@@ -177,6 +177,7 @@ export class ManagerWsClient {
       oldestHistoryCursor: null,
       hasOlderHistory: false,
       isLoadingOlderHistory: false,
+      isLoadingHistory: true,
       lastError: null,
     });
 
@@ -768,6 +769,7 @@ export class ManagerWsClient {
             ),
             hasOlderHistory: event.hasMore ?? false,
             isLoadingOlderHistory: false,
+            isLoadingHistory: isPrepend ? this.state.isLoadingHistory : false,
             lastError: resolveLastErrorFromHistory(messages),
           });
         }
@@ -784,6 +786,7 @@ export class ManagerWsClient {
           oldestHistoryCursor: null,
           hasOlderHistory: false,
           isLoadingOlderHistory: false,
+          isLoadingHistory: false,
           lastError: null,
         });
         break;
@@ -947,6 +950,7 @@ export class ManagerWsClient {
       patch.oldestHistoryCursor = null;
       patch.hasOlderHistory = false;
       patch.isLoadingOlderHistory = false;
+      patch.isLoadingHistory = fallbackTarget !== null;
     }
 
     if (nextSubscribedAgentId !== this.state.subscribedAgentId) {

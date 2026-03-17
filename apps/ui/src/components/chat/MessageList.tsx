@@ -10,7 +10,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { ChevronDown } from "lucide-react";
+import { ChevronDown, Loader2 } from "lucide-react";
 import { Virtuoso, type VirtuosoHandle } from "react-virtuoso";
 import { Button } from "@/components/ui/button";
 import {
@@ -36,6 +36,7 @@ interface MessageListProps {
   messages: ConversationEntry[];
   agents: AgentDescriptor[];
   isLoading: boolean;
+  isLoadingHistory?: boolean;
   canLoadOlderHistory?: boolean;
   isLoadingOlderHistory?: boolean;
   activeAgentId?: string | null;
@@ -410,6 +411,29 @@ function LoadingIndicatorFooter() {
   );
 }
 
+function HistoryLoadingState() {
+  return (
+    <div
+      className="flex h-full flex-col items-center justify-center gap-3 p-6 text-center"
+      role="status"
+      aria-live="polite"
+    >
+      <Loader2
+        className="size-5 animate-spin text-muted-foreground"
+        aria-hidden="true"
+      />
+      <div className="space-y-1">
+        <p className="text-sm font-medium text-foreground">
+          Loading conversation
+        </p>
+        <p className="text-xs text-muted-foreground">
+          Fetching message history...
+        </p>
+      </div>
+    </div>
+  );
+}
+
 const VirtualizedMessageScroller = forwardRef<
   HTMLDivElement,
   ComponentPropsWithoutRef<"div">
@@ -570,6 +594,7 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(
       messages,
       agents,
       isLoading,
+      isLoadingHistory = false,
       canLoadOlderHistory = false,
       isLoadingOlderHistory = false,
       activeAgentId,
@@ -833,7 +858,11 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(
 
     return (
       <div className="relative min-h-0 flex flex-1 flex-col overflow-hidden">
-        {displayEntries.length === 0 && !isLoading ? (
+        {displayEntries.length === 0 && isLoadingHistory ? (
+          <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+            <HistoryLoadingState />
+          </div>
+        ) : displayEntries.length === 0 && !isLoading ? (
           <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
             <EmptyState
               activeAgentId={activeAgentId}

@@ -502,6 +502,72 @@ describe("ManagerWsClient", () => {
     client.destroy();
   });
 
+  it("marks history as loading until replacement history arrives for a switched agent", () => {
+    const client = new ManagerWsClient("ws://127.0.0.1:8787", "manager");
+
+    const snapshots: ReturnType<typeof client.getState>[] = [];
+    client.subscribe((state) => {
+      snapshots.push(state);
+    });
+
+    client.start();
+    vi.advanceTimersByTime(60);
+
+    const socket = FakeWebSocket.instances[0];
+    socket.emit("open");
+
+    emitServerEvent(socket, {
+      type: "ready",
+      serverTime: new Date().toISOString(),
+      buildHash: TEST_BUILD_HASH,
+      subscribedAgentId: "manager",
+    });
+
+    emitServerEvent(socket, {
+      type: "conversation_history",
+      agentId: "manager",
+      mode: "replace",
+      messages: [
+        {
+          type: "conversation_message",
+          agentId: "manager",
+          role: "assistant",
+          text: "hello manager",
+          timestamp: new Date().toISOString(),
+          source: "speak_to_user",
+        },
+      ],
+    });
+
+    client.subscribeToAgent("worker-1");
+
+    const switchingState = snapshots.at(-1);
+    expect(switchingState?.targetAgentId).toBe("worker-1");
+    expect(switchingState?.messages).toEqual([]);
+    expect(switchingState?.activityMessages).toEqual([]);
+    expect(switchingState?.isLoadingHistory).toBe(true);
+
+    emitServerEvent(socket, {
+      type: "ready",
+      serverTime: new Date().toISOString(),
+      buildHash: TEST_BUILD_HASH,
+      subscribedAgentId: "worker-1",
+    });
+
+    expect(snapshots.at(-1)?.isLoadingHistory).toBe(true);
+
+    emitServerEvent(socket, {
+      type: "conversation_history",
+      agentId: "worker-1",
+      mode: "replace",
+      messages: [],
+    });
+
+    expect(snapshots.at(-1)?.isLoadingHistory).toBe(false);
+
+    client.destroy();
+  });
+
   it("subscribes and unsubscribes agent detail streams for worker views", () => {
     const client = new ManagerWsClient("ws://127.0.0.1:8787", "manager");
 
