@@ -16,6 +16,7 @@
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.2.76",
     "@google/genai": "^1.42.0",
+    "@hono/node-server": "^1.19.11",
     "@mariozechner/pi-ai": "^0.58.4",
     "@mariozechner/pi-coding-agent": "^0.58.4",
     "@middleman/protocol": "workspace:*",
@@ -23,6 +24,7 @@
     "@sinclair/typebox": "^0.34.41",
     "cron-parser": "^5.4.0",
     "dotenv": "^17.3.1",
+    "hono": "^4.12.8",
     "jsdom": "^27.0.1",
     "mime": "^4.1.0",
     "swarmd": "workspace:*",
