@@ -96,6 +96,7 @@ const originalLocalStorageDescriptor = Object.getOwnPropertyDescriptor(window, '
 const originalMatchMediaDescriptor = Object.getOwnPropertyDescriptor(window, 'matchMedia')
 const originalResizeObserverDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'ResizeObserver')
 const originalGetAnimations = Element.prototype.getAnimations
+const originalScrollIntoView = HTMLElement.prototype.scrollIntoView
 let isDesktopLayout = true
 
 beforeEach(() => {
@@ -135,6 +136,11 @@ beforeEach(() => {
     configurable: true,
     writable: true,
     value: vi.fn(() => []),
+  })
+  Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
+    configurable: true,
+    writable: true,
+    value: vi.fn(),
   })
 
   notesApiMocks.fetchNoteTree.mockResolvedValue([
@@ -211,6 +217,11 @@ afterEach(() => {
     configurable: true,
     writable: true,
     value: originalGetAnimations,
+  })
+  Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
+    configurable: true,
+    writable: true,
+    value: originalScrollIntoView,
   })
 })
 
@@ -432,7 +443,7 @@ describe('NotesView', () => {
     fireEvent.input(input, { target: { value: 'road' } })
 
     await waitFor(() => {
-      expect(getByRole(document.body, 'button', { name: /projects\/roadmap/i })).toBeTruthy()
+      expect(getByRole(document.body, 'option', { name: /roadmap/i })).toBeTruthy()
     })
 
     fireEvent.keyDown(input, { key: 'Enter', bubbles: true })
