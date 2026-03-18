@@ -496,7 +496,7 @@ function SortableManagerRow({
 }
 
 export function AgentSidebar({
-  connected,
+  connected: _connected,
   agents,
   managerOrder,
   statuses,
@@ -513,12 +513,11 @@ export function AgentSidebar({
   onOpenNotes,
   onOpenSettings,
 }: AgentSidebarProps) {
-  const connectedFromAtom = useAtomValue(connectedAtom)
+  useAtomValue(connectedAtom)
   const agentsFromAtom = useAtomValue(agentsAtom)
   const managerOrderFromAtom = useAtomValue(managerOrderAtom)
   const selectedAgentIdFromAtom = useAtomValue(activeAgentIdAtom)
   const managerTreeFromAtom = useAtomValue(managerTreeAtom)
-  const resolvedConnected = connected ?? connectedFromAtom
   const resolvedAgents = agents ?? agentsFromAtom
   const resolvedManagerOrder = managerOrder ?? managerOrderFromAtom
   const resolvedSelectedAgentId = selectedAgentId ?? selectedAgentIdFromAtom
@@ -620,18 +619,6 @@ export function AgentSidebar({
         }
         trailing={
           <div className="flex items-center gap-1.5">
-            <div className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-[10px] font-medium text-muted-foreground">
-              <span
-                className={cn(
-                  'inline-block size-1.5 rounded-full',
-                  resolvedConnected ? 'bg-emerald-500' : 'bg-amber-500',
-                )}
-                title={resolvedConnected ? 'Connected' : 'Reconnecting'}
-              />
-              <span className="hidden xl:inline">
-                {resolvedConnected ? 'Live' : 'Retrying'}
-              </span>
-            </div>
             {onMobileClose ? (
               <button
                 type="button"
