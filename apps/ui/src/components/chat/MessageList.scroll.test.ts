@@ -16,6 +16,9 @@ const virtuosoMocks = vi.hoisted(() => ({
   scrollToIndex: vi.fn(),
 }));
 
+let nextAnimationFrameId = 0;
+const pendingAnimationFrames = new Map<number, FrameRequestCallback>();
+
 vi.mock("react-virtuoso", async () => {
   const React = await import("react");
 
@@ -29,6 +32,8 @@ vi.mock("react-virtuoso", async () => {
       scrollerRef,
       atBottomStateChange,
       followOutput,
+      className,
+      style,
     }: {
       data?: unknown[];
       components?: {
@@ -47,6 +52,8 @@ vi.mock("react-virtuoso", async () => {
         | "auto"
         | "smooth"
         | boolean;
+      className?: string;
+      style?: React.CSSProperties;
     },
     ref: React.ForwardedRef<{
       scrollTo: typeof virtuosoMocks.scrollTo;
@@ -108,7 +115,12 @@ vi.mock("react-virtuoso", async () => {
 
     return createElement(
       ScrollerElement,
-      { ref: scrollerElementRef } as Record<string, unknown>,
+      {
+        ref: scrollerElementRef,
+        className,
+        style,
+        "data-testid": "virtuoso-scroller",
+      } as Record<string, unknown>,
       Header ? createElement(Header) : null,
       createElement(
         ListElement,
@@ -190,17 +202,53 @@ function renderMessageList(props: {
   return render(createElement(MessageList, props));
 }
 
+function flushAnimationFrames(times = 1) {
+  for (let index = 0; index < times; index += 1) {
+    const callbacks = [...pendingAnimationFrames.values()];
+    pendingAnimationFrames.clear();
+    callbacks.forEach((callback) => callback(performance.now()));
+  }
+}
+
 beforeEach(() => {
   virtuosoMocks.isAtBottom = true;
   virtuosoMocks.scrollTo.mockReset();
   virtuosoMocks.scrollToIndex.mockReset();
+  nextAnimationFrameId = 0;
+  pendingAnimationFrames.clear();
+  window.requestAnimationFrame = vi.fn((callback: FrameRequestCallback) => {
+    nextAnimationFrameId += 1;
+    pendingAnimationFrames.set(nextAnimationFrameId, callback);
+    return nextAnimationFrameId;
+  });
+  window.cancelAnimationFrame = vi.fn((frameId: number) => {
+    pendingAnimationFrames.delete(frameId);
+  });
 });
 
 afterEach(() => {
   cleanup();
+  pendingAnimationFrames.clear();
 });
 
 describe("MessageList scroll behavior", () => {
+  it("keeps the transcript hidden until the initial scroll settles", async () => {
+    renderMessageList({
+      messages: buildConversationMessages("manager", 3),
+      agents: [manager],
+      activeAgentId: "manager",
+    });
+
+    const scroller = screen.getByTestId("virtuoso-scroller");
+    expect((scroller as HTMLElement).style.opacity).toBe("0");
+
+    flushAnimationFrames(2);
+
+    await waitFor(() => {
+      expect((scroller as HTMLElement).style.opacity).toBe("1");
+    });
+  });
+
   it("scrolls to the last item when replacement history renders after an agent switch", async () => {
     const managerMessages = buildConversationMessages("manager", 3);
 
@@ -217,6 +265,7 @@ describe("MessageList scroll behavior", () => {
         behavior: "auto",
       });
     });
+    flushAnimationFrames(2);
 
     virtuosoMocks.scrollToIndex.mockClear();
 
@@ -232,6 +281,9 @@ describe("MessageList scroll behavior", () => {
     expect(screen.getByText("message 0")).toBeTruthy();
     expect(screen.queryByText("Loading conversation")).toBeNull();
     expect(virtuosoMocks.scrollToIndex).not.toHaveBeenCalled();
+    expect(
+      (screen.getByTestId("virtuoso-scroller") as HTMLElement).style.opacity,
+    ).toBe("1");
 
     rerender(
       createElement(MessageList, {
@@ -247,6 +299,15 @@ describe("MessageList scroll behavior", () => {
         align: "end",
         behavior: "auto",
       });
+    });
+
+    const scroller = screen.getByTestId("virtuoso-scroller");
+    expect((scroller as HTMLElement).style.opacity).toBe("0");
+
+    flushAnimationFrames(2);
+
+    await waitFor(() => {
+      expect((scroller as HTMLElement).style.opacity).toBe("1");
     });
   });
 

@@ -632,6 +632,9 @@ const MessageListBase = forwardRef<MessageListHandle, MessageListProps>(
     const previousAgentIdRef = useRef<string | null>(null);
     const previousFirstEntryIdRef = useRef<string | null>(null);
     const previousEntryCountRef = useRef(0);
+    const pendingAgentHistorySwapRef = useRef<string | null>(null);
+    const settleScrollFrameRef = useRef<number | null>(null);
+    const settleScrollInnerFrameRef = useRef<number | null>(null);
     const hasScrolledRef = useRef(false);
     const isAtBottomRef = useRef(true);
     const pendingOlderHistoryScrollRef = useRef<{
@@ -639,6 +642,7 @@ const MessageListBase = forwardRef<MessageListHandle, MessageListProps>(
       previousEntryCount: number;
     } | null>(null);
     const didPrependHistoryRef = useRef(false);
+    const [isScrollSettled, setIsScrollSettled] = useState(true);
     const [showScrollButton, setShowScrollButton] = useState(false);
     const [firstItemIndex, setFirstItemIndex] = useState(
       MESSAGE_LIST_FIRST_ITEM_INDEX,
@@ -692,6 +696,40 @@ const MessageListBase = forwardRef<MessageListHandle, MessageListProps>(
 
       return isAtBottom ? "smooth" : false;
     }, []);
+
+    const cancelPendingScrollSettle = useCallback(() => {
+      if (typeof window === "undefined") {
+        return;
+      }
+
+      if (settleScrollFrameRef.current !== null) {
+        window.cancelAnimationFrame(settleScrollFrameRef.current);
+        settleScrollFrameRef.current = null;
+      }
+
+      if (settleScrollInnerFrameRef.current !== null) {
+        window.cancelAnimationFrame(settleScrollInnerFrameRef.current);
+        settleScrollInnerFrameRef.current = null;
+      }
+    }, []);
+
+    const scheduleScrollSettled = useCallback(() => {
+      if (typeof window === "undefined") {
+        setIsScrollSettled(true);
+        return;
+      }
+
+      cancelPendingScrollSettle();
+      settleScrollFrameRef.current = window.requestAnimationFrame(() => {
+        settleScrollFrameRef.current = null;
+        settleScrollInnerFrameRef.current = window.requestAnimationFrame(() => {
+          settleScrollInnerFrameRef.current = null;
+          setIsScrollSettled(true);
+        });
+      });
+    }, [cancelPendingScrollSettle]);
+
+    useEffect(() => cancelPendingScrollSettle, [cancelPendingScrollSettle]);
 
     useImperativeHandle(
       ref,
@@ -781,6 +819,11 @@ const MessageListBase = forwardRef<MessageListHandle, MessageListProps>(
         resolvedIsLoadingHistory &&
         previousEntryCountRef.current > 0 &&
         nextEntryCount > 0;
+      if (isPendingAgentHistorySwap) {
+        pendingAgentHistorySwapRef.current = nextAgentId;
+      } else if (didAgentChange) {
+        pendingAgentHistorySwapRef.current = null;
+      }
       const didConversationReset =
         previousEntryCountRef.current > 0 &&
         (nextEntryCount === 0 ||
@@ -794,9 +837,23 @@ const MessageListBase = forwardRef<MessageListHandle, MessageListProps>(
         (didAgentChange && !isPendingAgentHistorySwap) ||
         didConversationReset ||
         didInitialConversationLoad;
+      const shouldHideUntilScrollSettled =
+        nextEntryCount > 0 &&
+        (isInitialScroll ||
+          (didAgentChange && !isPendingAgentHistorySwap) ||
+          pendingAgentHistorySwapRef.current === nextAgentId);
 
       if (shouldForceScroll) {
+        if (shouldHideUntilScrollSettled) {
+          setIsScrollSettled(false);
+        }
+
         scrollToBottom("auto");
+
+        if (shouldHideUntilScrollSettled) {
+          pendingAgentHistorySwapRef.current = null;
+          scheduleScrollSettled();
+        }
       }
 
       if (
@@ -814,6 +871,7 @@ const MessageListBase = forwardRef<MessageListHandle, MessageListProps>(
       displayEntries,
       resolvedActiveAgentId,
       resolvedIsLoadingHistory,
+      scheduleScrollSettled,
       scrollToBottom,
     ]);
 
@@ -958,7 +1016,11 @@ const MessageListBase = forwardRef<MessageListHandle, MessageListProps>(
               computeItemKey={(_index, entry) => entry.id}
               itemContent={renderMessageRow}
               className="min-h-0 flex-1"
-              style={{ height: "100%", paddingTop: 16 }}
+              style={{
+                height: "100%",
+                paddingTop: 16,
+                opacity: isScrollSettled ? 1 : 0,
+              }}
             />
 
             <div className="pointer-events-none absolute inset-x-0 bottom-4 z-10 flex justify-center px-4">
