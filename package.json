@@ -34,7 +34,8 @@
     "prod:restart": "node scripts/prod-daemon-restart.mjs",
     "sessions:prune": "node scripts/prune-session-jsonl.mjs",
     "pretest": "pnpm --filter swarmd build",
-    "test": "pnpm --filter swarmd test && pnpm --filter @middleman/backend test && pnpm --filter @middleman/ui test"
+    "test": "pnpm --filter swarmd test && pnpm --filter @middleman/backend test && pnpm --filter @middleman/ui test",
+    "test:e2e": "pnpm build && pnpm --filter @middleman/ui test:e2e"
   },
   "pnpm": {
     "onlyBuiltDependencies": [

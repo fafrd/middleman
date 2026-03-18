@@ -7,7 +7,8 @@
     "dev": "vite dev --port ${MIDDLEMAN_UI_PORT:-47188} --strictPort",
     "build": "vite build",
     "preview": "vite preview --port 47189 --strictPort",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:e2e": "playwright test"
   },
   "dependencies": {
     "@base-ui/react": "^1.2.0",
@@ -51,6 +52,7 @@
     "vite-tsconfig-paths": "^5.1.4"
   },
   "devDependencies": {
+    "@playwright/test": "^1.58.2",
     "@tanstack/devtools-vite": "^0.3.11",
     "@testing-library/dom": "^10.4.0",
     "@testing-library/react": "^16.2.0",

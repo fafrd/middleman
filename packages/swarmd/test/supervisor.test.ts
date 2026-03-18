@@ -64,6 +64,41 @@ function createSessionRecord(id = "session-supervisor-test"): SessionRecord {
   };
 }
 
+function createMockRuntimeConfig(
+  sessionId: string,
+  responseText: string,
+): SessionRuntimeConfig {
+  return {
+    backend: "codex",
+    cwd: repoRoot,
+    model: "gpt-5",
+    systemPrompt: "You are swarmd.",
+    backendConfig: {
+      mockRuntime: {
+        fixture: {
+          sessions: {
+            [sessionId]: {
+              turns: [
+                {
+                  match: { index: 1 },
+                  steps: [
+                    { type: "status", status: "busy" },
+                    {
+                      type: "message_stream",
+                      chunks: [responseText],
+                    },
+                    { type: "status", status: "idle" },
+                  ],
+                },
+              ],
+            },
+          },
+        },
+      },
+    },
+  };
+}
+
 function createRuntimeConfig(): SessionRuntimeConfig {
   return {
     backend: "codex",
@@ -383,5 +418,52 @@ describe("RuntimeSupervisor", () => {
     expect(workerExits).toHaveLength(1);
     expect(workerExits[0]?.sessionId).toBe(session.id);
     expect(hasExited(handle.process)).toBe(true);
+  });
+
+  it("selects the scripted mock adapter in worker-entry when backendConfig.mockRuntime is present", async () => {
+    const session = createSessionRecord("session-mock-runtime-test");
+    const config = createMockRuntimeConfig(session.id, "hello from scripted mock");
+    const { child, protocol, waitForEvent } = spawnCompiledWorker();
+    childProcesses.push(child);
+
+    protocol.send({ type: "bootstrap", session, config });
+    await expect(waitForEvent((event) => event.type === "ready")).resolves.toMatchObject({
+      type: "ready",
+      capabilities: expectedCapabilities,
+      checkpoint: {
+        backend: "codex",
+        threadId: `thr_mock_${session.id}`,
+      },
+    });
+
+    protocol.send({
+      type: "send_input",
+      operationId: "operation-mock-runtime",
+      delivery: "auto",
+      input: {
+        id: "input-mock-runtime",
+        role: "user",
+        parts: [{ type: "text", text: "hello mock runtime" }],
+      },
+    });
+
+    await expect(
+      waitForEvent(
+        (event) =>
+          event.type === "normalized_event" &&
+          event.event.type === "message.completed" &&
+          event.event.sessionId === session.id,
+      ),
+    ).resolves.toMatchObject({
+      type: "normalized_event",
+      event: {
+        sessionId: session.id,
+        threadId: `thr_mock_${session.id}`,
+        type: "message.completed",
+        payload: {
+          text: "hello from scripted mock",
+        },
+      },
+    });
   });
 });
