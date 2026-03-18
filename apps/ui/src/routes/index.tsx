@@ -36,6 +36,7 @@ import {
 } from "@/components/chat/MessageList";
 import { SettingsPanel } from "@/components/chat/SettingsDialog";
 import { NotesView } from "@/components/notes/NotesView";
+import { writeStoredLastOpenNotePath } from "@/components/notes/notes-storage";
 import { chooseFallbackAgentId } from "@/lib/agent-hierarchy";
 import type { ArtifactReference } from "@/lib/artifacts";
 import { pruneMessageDraftsAtom } from "@/lib/message-drafts";
@@ -503,6 +504,16 @@ export function IndexPage() {
     navigateToRoute({ view: "notes" });
   };
 
+  const handleOpenArtifactInNotes = useCallback(
+    (notePath: string) => {
+      writeStoredLastOpenNotePath(notePath);
+      setPanelSelection(null);
+      setIsArtifactsPanelOpen(false);
+      navigateToRoute({ view: "notes" });
+    },
+    [navigateToRoute],
+  );
+
   const handleSuggestionClick = useCallback((prompt: string) => {
     messageInputRef.current?.setInput(prompt);
   }, []);
@@ -701,6 +712,7 @@ export function IndexPage() {
         wsUrl={wsUrl}
         onClose={handleCloseArtifact}
         onArtifactClick={handleOpenArtifact}
+        onOpenInNotes={handleOpenArtifactInNotes}
       />
 
       <CreateManagerDialog

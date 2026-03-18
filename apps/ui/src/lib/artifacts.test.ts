@@ -2,7 +2,10 @@ import { describe, expect, it } from 'vitest'
 import {
   normalizeArtifactShortcodes,
   parseArtifactReference,
+  toCursorHref,
+  toObsidianHref,
   toSwarmFileHref,
+  toVscodeHref,
   toVscodeInsidersHref,
 } from './artifacts'
 
@@ -64,6 +67,11 @@ describe('artifacts helpers', () => {
 
   it('builds artifact href helpers', () => {
     expect(toSwarmFileHref('/tmp/my notes.md')).toBe('swarm-file:///tmp/my%20notes.md')
+    expect(toVscodeHref('/tmp/my notes.md')).toBe('vscode://file/tmp/my%20notes.md')
     expect(toVscodeInsidersHref('/tmp/my notes.md')).toBe('vscode-insiders://file/tmp/my%20notes.md')
+    expect(toCursorHref('/tmp/my notes.md')).toBe('cursor://file/tmp/my%20notes.md')
+    expect(toObsidianHref({ vault: 'Personal Vault', file: 'Projects/My Note.md' })).toBe(
+      'obsidian://open?vault=Personal%20Vault&file=Projects%2FMy%20Note.md',
+    )
   })
 })

@@ -15,6 +15,7 @@ import {
   readJsonBody,
   type NodeServerEnv,
 } from "../hono-utils.js"
+import { resolveFileEditorTargets } from "./file-editor-targets.js"
 
 const READ_FILE_ENDPOINT_PATH = "/api/read-file"
 const READ_FILE_METHODS = ["GET", "POST"] as const
@@ -121,11 +122,19 @@ async function handleReadFileRequest(
       })
     }
 
-    const content = await readFile(resolvedPath, "utf8")
+    const [content, editorTargets] = await Promise.all([
+      readFile(resolvedPath, "utf8"),
+      resolveFileEditorTargets({
+        dataDir: config.paths.dataDir,
+        filePath: resolvedPath,
+      }),
+    ])
+
     return Response.json(
       {
         path: resolvedPath,
         content,
+        editorTargets,
       },
       { status: 200 },
     )
