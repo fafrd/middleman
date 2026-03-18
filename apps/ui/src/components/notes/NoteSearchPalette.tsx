@@ -1,13 +1,22 @@
-import { useDeferredValue, useEffect, useId, useMemo, useRef, useState, type KeyboardEvent } from 'react'
-import { Search } from 'lucide-react'
+import { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
+import { FileText, Search } from 'lucide-react'
+import { Badge } from '@/components/ui/badge'
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+  CommandShortcut,
+} from '@/components/ui/command'
 import {
   Dialog,
   DialogContent,
   DialogDescription,
   DialogTitle,
+  resolveDialogInitialFocus,
 } from '@/components/ui/dialog'
-import { Input } from '@/components/ui/input'
-import { ScrollArea } from '@/components/ui/scroll-area'
 import { cn } from '@/lib/utils'
 import type { NoteSummary } from '@middleman/protocol'
 
@@ -40,11 +49,11 @@ export function NoteSearchPalette({
   selectedNotePath,
   onOpenChange,
   onSelectNote,
+  shortcutLabel,
 }: NoteSearchPaletteProps) {
-  const inputId = useId()
-  const resultRefs = useRef(new Map<string, HTMLButtonElement | null>())
+  const inputRef = useRef<HTMLInputElement | null>(null)
   const [query, setQuery] = useState('')
-  const [activeIndex, setActiveIndex] = useState(0)
+  const [activePath, setActivePath] = useState('')
   const deferredQuery = useDeferredValue(query)
 
   const results = useMemo(() => fuzzySearchNotes(notes, deferredQuery), [notes, deferredQuery])
@@ -56,175 +65,244 @@ export function NoteSearchPalette({
 
     setQuery('')
     window.setTimeout(() => {
-      const input = document.getElementById(inputId) as HTMLInputElement | null
-      input?.focus()
-      input?.select()
+      inputRef.current?.select()
     }, 0)
-  }, [inputId, open])
+  }, [open])
 
   useEffect(() => {
     if (!open) {
       return
     }
 
-    const selectedIndex = results.findIndex((result) => result.note.path === selectedNotePath)
-    setActiveIndex(selectedIndex >= 0 ? selectedIndex : 0)
+    const nextActivePath =
+      (selectedNotePath && results.some((result) => result.note.path === selectedNotePath) ? selectedNotePath : null) ??
+      results[0]?.note.path ??
+      ''
+
+    setActivePath(nextActivePath)
   }, [open, results, selectedNotePath])
 
-  useEffect(() => {
-    if (!open || results.length === 0) {
-      return
-    }
-
-    const activeResult = results[Math.min(activeIndex, results.length - 1)]
-    const activeElement = resultRefs.current.get(activeResult.note.path)
-    if (typeof activeElement?.scrollIntoView === 'function') {
-      activeElement.scrollIntoView({
-        block: 'nearest',
-      })
-    }
-  }, [activeIndex, open, results])
-
-  const handleSelectResult = (result: NoteSearchResult) => {
-    onSelectNote(result.note.path)
+  const handleSelectResult = (path: string) => {
+    onSelectNote(path)
     onOpenChange(false)
   }
 
-  const handleInputKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
-    if (event.key === 'ArrowDown') {
-      event.preventDefault()
-      setActiveIndex((current) => Math.min(current + 1, Math.max(results.length - 1, 0)))
-      return
-    }
-
-    if (event.key === 'ArrowUp') {
-      event.preventDefault()
-      setActiveIndex((current) => Math.max(current - 1, 0))
-      return
-    }
-
-    if (event.key === 'Enter') {
-      event.preventDefault()
-      const activeResult = results[activeIndex]
-      if (activeResult) {
-        handleSelectResult(activeResult)
-      }
-      return
-    }
-
-    if (event.key === 'Escape') {
-      event.preventDefault()
-      onOpenChange(false)
-    }
-  }
+  const resultsSummary = summarizeResults(results.length, notes.length, deferredQuery)
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
         showCloseButton={false}
-        className="w-[min(42rem,calc(100%-2rem))] max-w-3xl gap-0 overflow-hidden border border-border/50 bg-popover p-0 shadow-2xl"
+        initialFocus={(openType) => (resolveDialogInitialFocus(openType) ? inputRef.current : false)}
+        className="w-[min(44rem,calc(100%-2rem))] max-w-none gap-0 overflow-hidden border border-border/60 bg-popover/95 p-0 shadow-2xl supports-backdrop-filter:backdrop-blur-xl sm:max-w-[44rem]"
       >
         <DialogTitle className="sr-only">Search notes</DialogTitle>
         <DialogDescription className="sr-only">
           Search note filenames and paths, then press Enter to open a match.
         </DialogDescription>
 
-        <div className="flex items-center gap-2 border-b border-border/40 px-3">
-          <Search className="size-4 shrink-0 text-muted-foreground/60" />
-          <Input
-            id={inputId}
-            aria-label="Search notes"
-            className="h-10 border-0 bg-transparent px-0 text-sm text-popover-foreground shadow-none placeholder:text-muted-foreground/50 focus-visible:border-0 focus-visible:ring-0"
-            onChange={(event) => setQuery(event.target.value)}
-            onKeyDown={handleInputKeyDown}
-            placeholder="Search notes…"
-            spellCheck={false}
-            value={query}
-          />
-        </div>
-
-        <ScrollArea className="max-h-[min(26rem,60vh)]">
-          {results.length === 0 ? (
-            <div className="px-4 py-8 text-center">
-              <p className="text-sm font-medium text-popover-foreground/70">No matching notes</p>
-              <p className="mt-1 text-xs text-muted-foreground/60">
-                Try a shorter filename fragment or part of the path.
-              </p>
+        <Command
+          label="Search notes"
+          shouldFilter={false}
+          loop
+          value={activePath}
+          onValueChange={setActivePath}
+          className="rounded-none bg-transparent p-0"
+        >
+          <div className="border-b border-border/50 bg-muted/20">
+            <div className="flex items-start justify-between gap-3 px-4 pt-3">
+              <div className="min-w-0">
+                <p className="text-[11px] font-semibold tracking-[0.18em] text-muted-foreground uppercase">
+                  Note Search
+                </p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Jump to a note by filename, folder, or full path.
+                </p>
+              </div>
+              {shortcutLabel ? (
+                <CommandShortcut className="hidden rounded-full border border-border/70 bg-background/75 px-2.5 py-1 text-[10px] sm:inline-flex">
+                  {shortcutLabel}
+                </CommandShortcut>
+              ) : null}
             </div>
-          ) : (
-            <div className="p-1">
-              {results.map((result, index) => {
-                const isActive = index === activeIndex
 
-                return (
-                  <button
-                    key={result.note.path}
-                    ref={(node) => {
-                      resultRefs.current.set(result.note.path, node)
-                    }}
-                    type="button"
-                    className={cn(
-                      'flex w-full items-center rounded-md px-2.5 py-1.5 text-left transition-colors focus-visible:outline-none',
-                      isActive
-                        ? 'bg-accent text-accent-foreground'
-                        : 'text-popover-foreground/70 hover:bg-accent/50 hover:text-popover-foreground',
-                    )}
-                    onClick={() => handleSelectResult(result)}
-                    onMouseEnter={() => setActiveIndex(index)}
-                  >
-                    <span className="min-w-0 truncate font-editor text-[13px] leading-tight">
-                      <HighlightedPath
-                        path={displayPath(result.note.path)}
-                        matchIndices={result.matchIndices}
-                        active={isActive}
-                      />
-                    </span>
-                  </button>
-                )
-              })}
+            <CommandInput
+              ref={inputRef}
+              aria-label="Search notes"
+              className="font-editor text-[13px]"
+              onValueChange={setQuery}
+              placeholder="Search notes, folders, and paths…"
+              value={query}
+            />
+
+            <div className="flex items-center justify-between gap-3 px-4 pb-3 text-[11px] text-muted-foreground">
+              <span>{resultsSummary}</span>
+              <span className="hidden sm:inline">Enter to open, arrow keys to move</span>
             </div>
-          )}
-        </ScrollArea>
+          </div>
 
-        <div className="flex items-center gap-3 border-t border-border/40 px-3 py-1.5 text-[11px] text-muted-foreground/50">
-          <span><kbd className="font-sans">↵</kbd> open</span>
-          <span><kbd className="font-sans">↑↓</kbd> navigate</span>
-          <span><kbd className="font-sans">esc</kbd> close</span>
-        </div>
+          <CommandList className="max-h-[min(26rem,60vh)] px-2 py-2">
+            <CommandEmpty>
+              <div className="flex flex-col items-center gap-3 px-4 py-6 text-center">
+                <div className="flex size-11 items-center justify-center rounded-2xl border border-border/60 bg-muted/50">
+                  <Search className="size-4 text-muted-foreground" />
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-popover-foreground/80">No matching notes</p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Try a shorter filename fragment or part of the path.
+                  </p>
+                </div>
+              </div>
+            </CommandEmpty>
+
+            {results.length > 0 ? (
+              <CommandGroup
+                heading={
+                  <div className="px-2 pb-1 text-[10px] font-semibold tracking-[0.18em] text-muted-foreground uppercase">
+                    {resultsSummary}
+                  </div>
+                }
+                className="p-0"
+              >
+                {results.map((result) => {
+                  const isCurrentNote = result.note.path === selectedNotePath
+                  const isActive = result.note.path === activePath
+                  const { basename, basenameOffset, directory } = splitDisplayPath(result.note.path)
+
+                  return (
+                    <CommandItem
+                      key={result.note.path}
+                      value={result.note.path}
+                      className="mx-2"
+                      onSelect={() => handleSelectResult(result.note.path)}
+                    >
+                      <div
+                        className={cn(
+                          'flex size-9 shrink-0 items-center justify-center rounded-lg border border-border/60 bg-muted/50 text-muted-foreground transition-colors group-data-[selected=true]/command-item:border-accent-foreground/15 group-data-[selected=true]/command-item:bg-background/25 group-data-[selected=true]/command-item:text-accent-foreground',
+                        )}
+                      >
+                        <FileText className="size-4" />
+                      </div>
+
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2">
+                          <span
+                            className={cn(
+                              'min-w-0 flex-1 truncate font-editor text-[13px] leading-tight text-foreground group-data-[selected=true]/command-item:text-accent-foreground',
+                            )}
+                          >
+                            <HighlightedText
+                              matchClassName={cn(
+                                'font-semibold',
+                                isActive ? 'text-accent-foreground' : 'text-foreground',
+                              )}
+                              matchIndices={result.matchIndices}
+                              offset={basenameOffset}
+                              text={basename}
+                            />
+                          </span>
+
+                          {isCurrentNote ? (
+                            <Badge
+                              variant="outline"
+                              className="h-5 shrink-0 rounded-full border-border/60 bg-background/70 px-1.5 text-[10px] font-semibold tracking-[0.14em] text-muted-foreground uppercase group-data-[selected=true]/command-item:border-accent-foreground/15 group-data-[selected=true]/command-item:bg-background/20 group-data-[selected=true]/command-item:text-accent-foreground/80"
+                            >
+                              Open
+                            </Badge>
+                          ) : null}
+                        </div>
+
+                        <div className="mt-1 min-w-0 truncate text-[11px] text-muted-foreground group-data-[selected=true]/command-item:text-accent-foreground/75">
+                          {directory ? (
+                            <>
+                              <span className="mr-1 opacity-70">in</span>
+                              <HighlightedText
+                                matchClassName={cn(
+                                  'font-medium',
+                                  isActive ? 'text-accent-foreground/85' : 'text-foreground/80',
+                                )}
+                                matchIndices={result.matchIndices}
+                                text={directory}
+                              />
+                            </>
+                          ) : (
+                            'Workspace root'
+                          )}
+                        </div>
+                      </div>
+                    </CommandItem>
+                  )
+                })}
+              </CommandGroup>
+            ) : null}
+          </CommandList>
+
+          <div className="flex flex-wrap items-center gap-2 border-t border-border/50 bg-muted/20 px-4 py-2 text-[11px] text-muted-foreground">
+            <ShortcutHint keys="Enter" label="open" />
+            <ShortcutHint keys="↑↓" label="navigate" />
+            <ShortcutHint keys="Esc" label="close" />
+          </div>
+        </Command>
       </DialogContent>
     </Dialog>
   )
 }
 
-function HighlightedPath({
-  path,
+function HighlightedText({
+  text,
   matchIndices,
-  active,
+  matchClassName,
+  offset = 0,
 }: {
-  path: string
+  text: string
   matchIndices: number[]
-  active: boolean
+  matchClassName: string
+  offset?: number
 }) {
-  if (matchIndices.length === 0) {
-    return path
+  if (text.length === 0) {
+    return null
   }
 
   const highlightedIndices = new Set(matchIndices)
 
-  return path.split('').map((character, index) => (
+  return text.split('').map((character, index) => (
     <span
-      key={`${path}-${index}`}
-      className={cn(
-        highlightedIndices.has(index)
-          ? active
-            ? 'text-accent-foreground font-medium'
-            : 'text-popover-foreground font-medium'
-          : undefined,
-      )}
+      key={`${text}-${offset + index}`}
+      className={highlightedIndices.has(offset + index) ? matchClassName : undefined}
     >
       {character}
     </span>
   ))
+}
+
+function ShortcutHint({ keys, label }: { keys: string; label: string }) {
+  return (
+    <span className="inline-flex items-center gap-2 rounded-full border border-border/60 bg-background/70 px-2 py-1">
+      <kbd className="font-sans text-[10px] font-semibold uppercase tracking-[0.14em] text-foreground">{keys}</kbd>
+      <span>{label}</span>
+    </span>
+  )
+}
+
+function splitDisplayPath(path: string): { basename: string; basenameOffset: number; directory: string | null } {
+  const normalizedPath = displayPath(path)
+  const basenameOffset = normalizedPath.lastIndexOf('/') + 1
+
+  return {
+    basename: normalizedPath.slice(basenameOffset),
+    basenameOffset,
+    directory: basenameOffset > 0 ? normalizedPath.slice(0, basenameOffset - 1) : null,
+  }
+}
+
+function summarizeResults(resultCount: number, noteCount: number, query: string): string {
+  if (query.trim().length === 0) {
+    const visibleCount = Math.min(noteCount, MAX_RESULTS)
+    return noteCount > MAX_RESULTS ? `Showing ${visibleCount} of ${noteCount} notes` : `${visibleCount} notes`
+  }
+
+  return resultCount === 1 ? '1 matching note' : `${resultCount} matching notes`
 }
 
 export function fuzzySearchNotes(notes: NoteSummary[], query: string): NoteSearchResult[] {
