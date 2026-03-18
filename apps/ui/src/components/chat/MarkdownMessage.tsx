@@ -270,21 +270,6 @@ export const MarkdownMessage = memo(function MarkdownMessage({
 
               const imageAlt = alt ?? title ?? 'Image preview'
 
-              if (!canExpandContent) {
-                return (
-                  <img
-                    src={imageSrc}
-                    alt={alt ?? ''}
-                    title={title}
-                    loading="lazy"
-                    className={cn(
-                      'h-auto max-w-full rounded-lg border border-border/50 bg-muted/20',
-                      isDocument ? 'my-5' : 'my-2',
-                    )}
-                  />
-                )
-              }
-
               return (
                 <Button
                   type="button"
@@ -297,10 +282,11 @@ export const MarkdownMessage = memo(function MarkdownMessage({
                     })
                   }
                   className={cn(
-                    'group/zoom relative my-5 inline-block h-auto w-full cursor-zoom-in overflow-hidden rounded-lg border border-border/55 p-0 text-left',
+                    'group/zoom relative inline-block h-auto w-full cursor-zoom-in overflow-hidden rounded-lg border border-border/55 p-0 text-left',
                     'bg-muted/15 text-left transition-all duration-150',
                     'hover:scale-[1.005] hover:border-primary/35',
                     'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/35',
+                    isDocument ? 'my-5' : 'my-2',
                   )}
                   aria-label={`Expand image: ${imageAlt}`}
                 >
@@ -438,35 +424,38 @@ export const MarkdownMessage = memo(function MarkdownMessage({
         </ReactMarkdown>
       </div>
 
-      <ContentZoomDialog
-        open={zoomTarget !== null}
-        onOpenChange={(open) => {
-          if (!open) {
-            setZoomTarget(null)
+      {zoomTarget ? (
+        <ContentZoomDialog
+          open
+          onOpenChange={(open) => {
+            if (!open) {
+              setZoomTarget(null)
+            }
+          }}
+          title={
+            zoomTarget.type === 'mermaid'
+              ? 'Expanded Mermaid diagram'
+              : 'Expanded image preview'
           }
-        }}
-        title={
-          zoomTarget?.type === 'mermaid'
-            ? 'Expanded Mermaid diagram'
-            : 'Expanded image preview'
-        }
-      >
-        {zoomTarget?.type === 'image' ? (
-          <img
-            src={zoomTarget.src}
-            alt={zoomTarget.alt}
-            className="h-auto max-h-full w-auto max-w-full rounded-md"
-          />
-        ) : zoomTarget?.type === 'mermaid' ? (
-          <div
-            className={cn(
-              'flex min-h-full min-w-full items-center justify-center',
-              '[&_svg]:h-auto [&_svg]:max-h-full [&_svg]:max-w-full',
-            )}
-            dangerouslySetInnerHTML={{ __html: zoomTarget.svg }}
-          />
-        ) : null}
-      </ContentZoomDialog>
+          contentClassName={zoomTarget.type === 'mermaid' ? 'w-full' : undefined}
+        >
+          {zoomTarget.type === 'image' ? (
+            <img
+              src={zoomTarget.src}
+              alt={zoomTarget.alt}
+              className="h-auto max-h-full w-auto max-w-full rounded-lg shadow-2xl"
+            />
+          ) : (
+            <div
+              className={cn(
+                'flex min-h-full min-w-full items-center justify-center',
+                '[&_svg]:h-auto [&_svg]:max-h-full [&_svg]:max-w-full',
+              )}
+              dangerouslySetInnerHTML={{ __html: zoomTarget.svg }}
+            />
+          )}
+        </ContentZoomDialog>
+      ) : null}
     </>
   )
 })
