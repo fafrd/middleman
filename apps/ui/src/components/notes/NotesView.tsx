@@ -13,6 +13,7 @@ import { FileText, FolderPlus, Loader2, PanelLeft, PanelRight, Plus, Search, Tra
 import { ViewHeader } from '@/components/ViewHeader'
 import { NoteSearchPalette } from '@/components/notes/NoteSearchPalette'
 import { NotesTree } from '@/components/notes/NotesTree'
+import { readStoredLastOpenNotePath, writeStoredLastOpenNotePath } from '@/components/notes/notes-storage'
 import {
   createFolder as createFolderRequest,
   deleteFolder as deleteFolderRequest,
@@ -53,7 +54,6 @@ const ROOT_FOLDER_VALUE = '__root__'
 const NOTES_DESKTOP_MEDIA_QUERY = '(min-width: 768px)'
 const NOTES_EXPLORER_COLLAPSED_STORAGE_KEY = 'middleman:notes:explorer-collapsed'
 const NOTES_EXPANDED_FOLDERS_STORAGE_KEY = 'middleman:notes:expanded-folders'
-const NOTES_LAST_OPEN_STORAGE_KEY = 'middleman:notes:last-open'
 const NOTE_SEARCH_SHORTCUT_LABEL = 'Cmd/Ctrl+P'
 const NotesMarkdownEditor = lazy(async () => {
   const module = await import('@/components/notes/NotesMarkdownEditor')
@@ -1365,36 +1365,6 @@ function readStoredExpandedFolderPaths(): {
     }
   } catch {
     return { paths: [], hasStoredValue: false }
-  }
-}
-
-function readStoredLastOpenNotePath(): string | null {
-  if (typeof window === 'undefined') {
-    return null
-  }
-
-  try {
-    const storedPath = window.localStorage.getItem(NOTES_LAST_OPEN_STORAGE_KEY)?.trim()
-    return storedPath ? storedPath : null
-  } catch {
-    return null
-  }
-}
-
-function writeStoredLastOpenNotePath(path: string | null): void {
-  if (typeof window === 'undefined') {
-    return
-  }
-
-  try {
-    if (path) {
-      window.localStorage.setItem(NOTES_LAST_OPEN_STORAGE_KEY, path)
-      return
-    }
-
-    window.localStorage.removeItem(NOTES_LAST_OPEN_STORAGE_KEY)
-  } catch {
-    // Ignore localStorage write failures in restricted environments.
   }
 }
 

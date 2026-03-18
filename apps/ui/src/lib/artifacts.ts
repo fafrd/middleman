@@ -5,6 +5,16 @@ export interface ArtifactReference {
   title?: string
 }
 
+export interface ArtifactObsidianTarget {
+  vault: string
+  file: string
+}
+
+export interface ArtifactEditorTargets {
+  notesPath?: string
+  obsidian?: ArtifactObsidianTarget
+}
+
 const ARTIFACT_SHORTCODE_PATTERN = /\[artifact:([^\]\n]+)\]/gi
 const SWARM_FILE_PREFIX = 'swarm-file://'
 const VSCODE_FILE_LINK_PATTERN = /^vscode(?:-insiders)?:\/\/file\/+/i
@@ -92,10 +102,32 @@ export function toSwarmFileHref(path: string): string {
   return `${SWARM_FILE_PREFIX}${encodeURI(normalizedPath)}`
 }
 
+export function toVscodeHref(path: string): string {
+  return toEditorProtocolHref('vscode', path)
+}
+
 export function toVscodeInsidersHref(path: string): string {
+  return toEditorProtocolHref('vscode-insiders', path)
+}
+
+export function toCursorHref(path: string): string {
+  return toEditorProtocolHref('cursor', path)
+}
+
+export function toObsidianHref(target: ArtifactObsidianTarget): string {
+  const vault = target.vault.trim()
+  const file = target.file.trim()
+  if (!vault || !file) {
+    return 'obsidian://open'
+  }
+
+  return `obsidian://open?vault=${encodeURIComponent(vault)}&file=${encodeURIComponent(file)}`
+}
+
+function toEditorProtocolHref(protocol: string, path: string): string {
   const normalizedPath = path.trim()
   if (!normalizedPath) {
-    return 'vscode-insiders://file'
+    return `${protocol}://file`
   }
 
   const prefixedPath =
@@ -103,7 +135,7 @@ export function toVscodeInsidersHref(path: string): string {
       ? normalizedPath
       : `/${normalizedPath}`
 
-  return `vscode-insiders://file${encodeURI(prefixedPath)}`
+  return `${protocol}://file${encodeURI(prefixedPath)}`
 }
 
 function createArtifactReference(path: string, href: string, title?: string): ArtifactReference {
