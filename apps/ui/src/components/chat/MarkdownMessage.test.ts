@@ -1,7 +1,14 @@
+// @vitest-environment jsdom
+
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { describe, expect, it } from 'vitest'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { afterEach, describe, expect, it } from 'vitest'
 import { MarkdownMessage } from './MarkdownMessage'
+
+afterEach(() => {
+  cleanup()
+})
 
 describe('MarkdownMessage', () => {
   it('renders common markdown formatting for speak_to_user content', () => {
@@ -112,5 +119,32 @@ describe('MarkdownMessage', () => {
     expect(html).not.toContain(
       'src="http://127.0.0.1:47187/api/read-file?path=%2Fagents%2Fcodex-logo.svg"',
     )
+  })
+
+  it('opens inline markdown images in a lightbox for chat messages', async () => {
+    render(
+      createElement(MarkdownMessage, {
+        content: '![Example](https://example.com/example.png)',
+      }),
+    )
+
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Expand image: Example' }),
+    )
+
+    await waitFor(() => {
+      expect(document.querySelector('[data-content-zoom-dialog="true"]')).not.toBeNull()
+    })
+
+    const popup = document.querySelector(
+      '[data-content-zoom-dialog="true"]',
+    ) as HTMLElement | null
+    expect(popup).not.toBeNull()
+
+    fireEvent.keyDown(popup as HTMLElement, { key: 'Escape' })
+
+    await waitFor(() => {
+      expect(document.querySelector('[data-content-zoom-dialog="true"]')).toBeNull()
+    })
   })
 })
