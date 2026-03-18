@@ -10,6 +10,10 @@ import { WorkerProtocolClient } from "../core/supervisor/worker-protocol.js";
 import type { AdapterCallbacks, BackendAdapter, HostRpcClient } from "./common/adapter.js";
 import { createClaudeBackendAdapter } from "./claude/index.js";
 import { createCodexBackendAdapter } from "./codex/index.js";
+import {
+  hasMockRuntimeConfig,
+  ScriptedBackendAdapter,
+} from "./common/scripted-backend-adapter.js";
 import { PiBackendAdapter } from "./pi/index.js";
 
 function toSessionErrorInfo(error: unknown): SessionErrorInfo {
@@ -232,6 +236,10 @@ function createBackendAdapter(
   callbacks: AdapterCallbacks,
   hostRpc: HostRpcClient,
 ): BackendAdapter {
+  if (hasMockRuntimeConfig(cmd.config.backendConfig)) {
+    return new ScriptedBackendAdapter(cmd.config.backend, callbacks, { hostRpc });
+  }
+
   switch (cmd.config.backend) {
     case "codex":
       return createCodexBackendAdapter(callbacks, { hostRpc });

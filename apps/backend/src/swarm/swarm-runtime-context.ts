@@ -198,6 +198,7 @@ export class SwarmRuntimeContextService {
             env: resources.runtimeEnv,
             approvalPolicy: "never",
             sandbox: "danger-full-access",
+            ...resolveMockRuntimeConfigFromEnv(),
           },
         };
       case "claude-code":
@@ -207,6 +208,7 @@ export class SwarmRuntimeContextService {
           backendConfig: {
             middleman: commonMiddleman,
             env: resources.runtimeEnv,
+            ...resolveMockRuntimeConfigFromEnv(),
           },
         };
       case "pi-opus":
@@ -226,6 +228,7 @@ export class SwarmRuntimeContextService {
             modelId: descriptor.model.modelId,
             agentDir: join(this.options.config.paths.runtimeScratchDir, descriptor.agentId, "agent"),
             sessionDir: join(this.options.config.paths.runtimeScratchDir, descriptor.agentId, "sessions"),
+            ...resolveMockRuntimeConfigFromEnv(),
           },
         };
     }
@@ -357,4 +360,19 @@ export class SwarmRuntimeContextService {
       PATH: prefixedPath,
     };
   }
+}
+
+function resolveMockRuntimeConfigFromEnv(): Record<string, unknown> {
+  const fixtureFile = process.env.MIDDLEMAN_E2E_RUNTIME_FIXTURE?.trim();
+  if (!fixtureFile) {
+    return {};
+  }
+
+  const scenarioId = process.env.MIDDLEMAN_E2E_RUNTIME_SCENARIO?.trim();
+  return {
+    mockRuntime: {
+      fixtureFile,
+      ...(scenarioId ? { scenarioId } : {}),
+    },
+  };
 }
