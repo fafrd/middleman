@@ -5,12 +5,12 @@ import { createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { flushSync } from 'react-dom'
 import { Provider as JotaiProvider } from 'jotai'
+import { CREATE_MANAGER_MODEL_PRESETS } from '@middleman/protocol'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { MESSAGE_DRAFTS_STORAGE_KEY } from '@/lib/message-drafts'
 import { IndexPage } from './index'
 
-const CREATE_MANAGER_MODEL_PRESETS = ['pi-codex', 'pi-opus'] as const
 const TEST_BUILD_HASH = import.meta.env.VITE_BUILD_HASH || 'test-build'
 
 type ListenerMap = Record<string, Array<(event?: any) => void>>
@@ -103,7 +103,7 @@ function buildManager(agentId: string, cwd: string) {
     cwd,
     model: {
       provider: 'openai-codex',
-      modelId: 'gpt-5.3-codex',
+      modelId: 'gpt-5.4',
       thinkingLevel: 'high',
     },
   }
@@ -121,7 +121,7 @@ function buildWorker(agentId: string, managerId: string, cwd: string) {
     cwd,
     model: {
       provider: 'openai-codex',
-      modelId: 'gpt-5.3-codex',
+      modelId: 'gpt-5.4',
       thinkingLevel: 'high',
     },
   }

@@ -1,3 +1,8 @@
+import {
+  MANAGER_MODEL_PRESETS,
+  type ManagerModelPreset,
+} from "@middleman/protocol";
+
 export type AgentRole = "manager" | "worker";
 
 export type AgentArchetypeId = string;
@@ -13,14 +18,9 @@ export type AgentStatus =
   | "errored"
   | "terminated";
 
-export const SWARM_MODEL_PRESETS = [
-  "pi-codex",
-  "pi-opus",
-  "codex-app",
-  "claude-code",
-] as const;
+export const SWARM_MODEL_PRESETS = MANAGER_MODEL_PRESETS;
 
-export type SwarmModelPreset = (typeof SWARM_MODEL_PRESETS)[number];
+export type SwarmModelPreset = ManagerModelPreset;
 
 export interface AgentModelDescriptor {
   provider: string;
@@ -122,9 +122,6 @@ export interface SettingsAuthProvider {
 export interface SwarmConfig {
   host: string;
   port: number;
-  debug: boolean;
-  allowNonManagerSubscriptions: boolean;
-  managerId?: string;
   defaultModel: AgentModelDescriptor;
   defaultCwd: string;
   cwdAllowlistRoots: string[];
