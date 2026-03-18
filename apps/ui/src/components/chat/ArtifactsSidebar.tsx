@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
+  CalendarClock,
   Clock3,
   Code2,
   Database,
@@ -7,9 +8,13 @@ import {
   FileText,
   Image,
   Loader2,
+  RefreshCw,
+  Repeat,
   X,
+  Zap,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import type { ArtifactReference } from '@/lib/artifacts'
@@ -181,6 +186,28 @@ function formatDateTime(value: string, timeZone?: string): string {
   }
 }
 
+function formatRelativeTime(value: string): string {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return ''
+
+  const now = Date.now()
+  const diffMs = date.getTime() - now
+  const absDiffMs = Math.abs(diffMs)
+  const isFuture = diffMs > 0
+
+  if (absDiffMs < 60_000) return isFuture ? 'in less than a minute' : 'just now'
+  if (absDiffMs < 3_600_000) {
+    const minutes = Math.round(absDiffMs / 60_000)
+    return isFuture ? `in ${minutes}m` : `${minutes}m ago`
+  }
+  if (absDiffMs < 86_400_000) {
+    const hours = Math.round(absDiffMs / 3_600_000)
+    return isFuture ? `in ${hours}h` : `${hours}h ago`
+  }
+  const days = Math.round(absDiffMs / 86_400_000)
+  return isFuture ? `in ${days}d` : `${days}d ago`
+}
+
 function format24HourTime(hour: string, minute: string): string | null {
   const numericHour = Number.parseInt(hour, 10)
   const numericMinute = Number.parseInt(minute, 10)
@@ -288,6 +315,11 @@ export function ArtifactsSidebar({
   const [isLoadingSchedules, setIsLoadingSchedules] = useState(false)
   const [schedulesError, setSchedulesError] = useState<string | null>(null)
   const [selectedScheduleId, setSelectedScheduleId] = useState<string | null>(null)
+  const [refreshKey, setRefreshKey] = useState(0)
+
+  const handleRefresh = useCallback(() => {
+    setRefreshKey((prev) => prev + 1)
+  }, [])
 
   const sortedSchedules = useMemo(
     () => [...schedules].sort(sortSchedules),
@@ -343,7 +375,7 @@ export function ArtifactsSidebar({
     return () => {
       abortController.abort()
     }
-  }, [activeTab, isOpen, managerId, wsUrl])
+  }, [activeTab, isOpen, managerId, wsUrl, refreshKey])
 
   return (
     <div
@@ -441,30 +473,54 @@ export function ArtifactsSidebar({
 
             {!isLoadingSchedules && schedulesError ? (
               <div className="flex h-full flex-col items-center justify-center px-4 py-12 text-center">
-                <Clock3 className="mb-2 size-8 text-muted-foreground/40" aria-hidden="true" />
-                <p className="text-xs text-muted-foreground">
+                <CalendarClock className="mb-3 size-8 text-muted-foreground/30" aria-hidden="true" />
+                <p className="text-xs font-medium text-muted-foreground">
                   Unable to load schedules
                 </p>
-                <p className="mt-1 text-[11px] text-muted-foreground/70">
+                <p className="mt-1 max-w-[200px] text-[11px] leading-relaxed text-muted-foreground/60">
                   {schedulesError}
                 </p>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="mt-3 h-7 gap-1.5 px-2.5 text-[11px] text-muted-foreground hover:text-foreground"
+                  onClick={handleRefresh}
+                >
+                  <RefreshCw className="size-3" aria-hidden="true" />
+                  Retry
+                </Button>
               </div>
             ) : null}
 
             {!isLoadingSchedules && !schedulesError && sortedSchedules.length === 0 ? (
               <div className="flex h-full flex-col items-center justify-center px-4 py-12 text-center">
-                <Clock3 className="mb-2 size-8 text-muted-foreground/40" aria-hidden="true" />
-                <p className="text-xs text-muted-foreground">
-                  No schedules yet
+                <CalendarClock className="mb-3 size-8 text-muted-foreground/30" aria-hidden="true" />
+                <p className="text-xs font-medium text-muted-foreground">
+                  No schedules
                 </p>
-                <p className="mt-1 text-[11px] text-muted-foreground/70">
-                  Cron jobs will appear here once scheduled.
+                <p className="mt-1 max-w-[200px] text-[11px] leading-relaxed text-muted-foreground/60">
+                  Scheduled tasks will appear here once created.
                 </p>
               </div>
             ) : null}
 
             {!isLoadingSchedules && !schedulesError && sortedSchedules.length > 0 ? (
               <>
+                <div className="flex items-center justify-between border-b border-border/40 px-3 py-1.5">
+                  <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground/60">
+                    {sortedSchedules.length} schedule{sortedSchedules.length !== 1 ? 's' : ''}
+                  </span>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="size-6 text-muted-foreground/60 hover:text-foreground"
+                    onClick={handleRefresh}
+                    aria-label="Refresh schedules"
+                  >
+                    <RefreshCw className="size-3" aria-hidden="true" />
+                  </Button>
+                </div>
+
                 <ScrollArea
                   className={cn(
                     'min-h-0 flex-1',
@@ -473,107 +529,122 @@ export function ArtifactsSidebar({
                     'hover:[&>[data-slot=scroll-area-scrollbar]>[data-slot=scroll-area-thumb]]:bg-border',
                   )}
                 >
-                  <div className="space-y-0.5 p-2">
-                    {sortedSchedules.map((schedule) => (
-                      <button
-                        key={schedule.id}
-                        type="button"
-                        className={cn(
-                          'group flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left',
-                          'transition-colors duration-100',
-                          'focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring/60',
-                          selectedSchedule?.id === schedule.id
-                            ? 'bg-accent/50 text-foreground'
-                            : 'text-foreground hover:bg-accent/70',
-                        )}
-                        onClick={() => setSelectedScheduleId(schedule.id)}
-                        title={schedule.name}
-                      >
-                        <span
+                  <div className="space-y-0.5 p-1.5">
+                    {sortedSchedules.map((schedule) => {
+                      const isSelected = selectedSchedule?.id === schedule.id
+                      const relativeNext = formatRelativeTime(schedule.nextFireAt)
+                      return (
+                        <button
+                          key={schedule.id}
+                          type="button"
                           className={cn(
-                            'inline-flex size-7 shrink-0 items-center justify-center rounded-md transition-colors',
-                            selectedSchedule?.id === schedule.id
-                              ? 'bg-primary/15 text-primary'
-                              : 'bg-muted/60 text-muted-foreground group-hover:bg-primary/10 group-hover:text-primary',
+                            'group flex w-full items-start gap-2.5 rounded-md px-2 py-2 text-left',
+                            'transition-colors duration-100',
+                            'focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring/60',
+                            isSelected
+                              ? 'bg-accent/60 text-foreground'
+                              : 'text-foreground hover:bg-accent/40',
                           )}
+                          onClick={() => setSelectedScheduleId(schedule.id)}
+                          title={schedule.name}
                         >
-                          <Clock3 className="size-3.5" aria-hidden="true" />
-                        </span>
-                        <span className="min-w-0 flex-1">
-                          <span className="block truncate text-xs font-medium">
-                            {schedule.name}
+                          <span
+                            className={cn(
+                              'mt-0.5 inline-flex size-7 shrink-0 items-center justify-center rounded-md transition-colors',
+                              isSelected
+                                ? 'bg-primary/15 text-primary'
+                                : 'bg-muted/60 text-muted-foreground group-hover:bg-primary/10 group-hover:text-primary',
+                            )}
+                          >
+                            {schedule.oneShot ? (
+                              <Zap className="size-3.5" aria-hidden="true" />
+                            ) : (
+                              <Repeat className="size-3.5" aria-hidden="true" />
+                            )}
                           </span>
-                          <span className="block truncate text-[10px] text-muted-foreground/70">
-                            {describeCronExpression(schedule.cron)}
+                          <span className="min-w-0 flex-1">
+                            <span className="block truncate text-xs font-medium leading-snug">
+                              {schedule.name}
+                            </span>
+                            <span className="block truncate text-[10px] leading-snug text-muted-foreground/70">
+                              {describeCronExpression(schedule.cron)}
+                            </span>
+                            {relativeNext ? (
+                              <span className="mt-0.5 block truncate text-[10px] leading-snug text-muted-foreground/50">
+                                Next {relativeNext}
+                              </span>
+                            ) : null}
                           </span>
-                        </span>
-                      </button>
-                    ))}
+                        </button>
+                      )
+                    })}
                   </div>
                 </ScrollArea>
 
                 {selectedSchedule ? (
-                  <div className="shrink-0 border-t border-border/80 p-3">
-                    <div className="flex items-start gap-2">
-                      <span className="mt-0.5 inline-flex size-6 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
-                        <Clock3 className="size-3" aria-hidden="true" />
-                      </span>
-                      <div className="min-w-0 flex-1">
-                        <h3 className="truncate text-xs font-semibold leading-snug text-foreground">
-                          {selectedSchedule.name}
-                        </h3>
-                        <span className="mt-0.5 inline-block rounded-full bg-muted/80 px-1.5 py-px text-[10px] font-medium text-muted-foreground">
-                          {selectedSchedule.oneShot ? 'One-time' : 'Recurring'}
+                  <div className="shrink-0 border-t border-border/60 bg-card">
+                    <div className="px-3 pt-3 pb-2">
+                      <div className="flex items-start gap-2">
+                        <span className="mt-0.5 inline-flex size-6 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
+                          {selectedSchedule.oneShot ? (
+                            <Zap className="size-3" aria-hidden="true" />
+                          ) : (
+                            <Repeat className="size-3" aria-hidden="true" />
+                          )}
                         </span>
+                        <div className="min-w-0 flex-1">
+                          <h3 className="truncate text-xs font-semibold leading-snug text-foreground">
+                            {selectedSchedule.name}
+                          </h3>
+                          <Badge
+                            variant="secondary"
+                            className="mt-1 h-4 px-1.5 text-[9px] font-medium"
+                          >
+                            {selectedSchedule.oneShot ? 'One-time' : 'Recurring'}
+                          </Badge>
+                        </div>
                       </div>
                     </div>
 
-                    <div className="mt-3 space-y-2 text-[11px]">
-                      <div className="flex items-baseline justify-between gap-2">
-                        <span className="shrink-0 text-muted-foreground">Schedule</span>
-                        <span className="truncate text-right font-medium text-foreground">
+                    <div className="space-y-px px-3 pb-2">
+                      <ScheduleDetailRow label="Schedule">
+                        <span className="font-medium">
                           {describeCronExpression(selectedSchedule.cron)}
                         </span>
-                      </div>
+                      </ScheduleDetailRow>
 
-                      <div className="flex items-baseline justify-between gap-2">
-                        <span className="shrink-0 text-muted-foreground">Expression</span>
-                        <code className="truncate rounded bg-muted/60 px-1 py-0.5 font-mono text-[10px] text-foreground">
+                      <ScheduleDetailRow label="Cron">
+                        <code className="rounded bg-muted/60 px-1 py-px font-mono text-[10px]">
                           {selectedSchedule.cron}
                         </code>
-                      </div>
+                      </ScheduleDetailRow>
 
-                      <div className="flex items-baseline justify-between gap-2">
-                        <span className="shrink-0 text-muted-foreground">Next fire</span>
-                        <span className="truncate text-right text-foreground">
+                      <ScheduleDetailRow label="Next fire">
+                        <span>
                           {formatDateTime(selectedSchedule.nextFireAt, selectedSchedule.timezone)}
                         </span>
-                      </div>
+                      </ScheduleDetailRow>
 
                       {selectedSchedule.lastFiredAt ? (
-                        <div className="flex items-baseline justify-between gap-2">
-                          <span className="shrink-0 text-muted-foreground">Last fired</span>
-                          <span className="truncate text-right text-foreground">
+                        <ScheduleDetailRow label="Last fired">
+                          <span>
                             {formatDateTime(selectedSchedule.lastFiredAt)}
                           </span>
-                        </div>
+                        </ScheduleDetailRow>
                       ) : null}
 
-                      <div className="flex items-baseline justify-between gap-2">
-                        <span className="shrink-0 text-muted-foreground">Timezone</span>
-                        <span className="truncate text-right text-foreground">
-                          {selectedSchedule.timezone}
-                        </span>
-                      </div>
+                      <ScheduleDetailRow label="Timezone">
+                        <span>{selectedSchedule.timezone}</span>
+                      </ScheduleDetailRow>
                     </div>
 
-                    <div className="mt-3">
-                      <p className="mb-1.5 text-[11px] font-medium text-muted-foreground">
+                    <div className="border-t border-border/40 px-3 pt-2 pb-3">
+                      <p className="mb-1.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground/60">
                         Message
                       </p>
-                      <div className="rounded-lg bg-muted/30 p-2.5 ring-1 ring-border/40">
-                        <ScrollArea className="max-h-24">
-                          <p className="whitespace-pre-wrap break-words text-xs leading-relaxed text-foreground">
+                      <div className="rounded-md bg-muted/20 p-2 ring-1 ring-border/30">
+                        <ScrollArea className="max-h-20">
+                          <p className="whitespace-pre-wrap break-words text-[11px] leading-relaxed text-foreground/90">
                             {selectedSchedule.message}
                           </p>
                         </ScrollArea>
@@ -586,6 +657,23 @@ export function ArtifactsSidebar({
           </div>
         </TabsContent>
       </Tabs>
+    </div>
+  )
+}
+
+function ScheduleDetailRow({
+  label,
+  children,
+}: {
+  label: string
+  children: React.ReactNode
+}) {
+  return (
+    <div className="flex items-baseline justify-between gap-2 py-1 text-[11px]">
+      <span className="shrink-0 text-muted-foreground/70">{label}</span>
+      <span className="min-w-0 truncate text-right text-foreground">
+        {children}
+      </span>
     </div>
   )
 }
