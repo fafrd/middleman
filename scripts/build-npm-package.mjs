@@ -9,6 +9,7 @@ const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(SCRIPT_DIR, "..");
 const ROOT_PACKAGE_JSON_PATH = resolve(REPO_ROOT, "package.json");
 const BACKEND_PACKAGE_JSON_PATH = resolve(REPO_ROOT, "apps", "backend", "package.json");
+const SWARMD_PACKAGE_JSON_PATH = resolve(REPO_ROOT, "packages", "swarmd", "package.json");
 const CLI_BIN_PATH = resolve(REPO_ROOT, "apps", "cli", "bin", "middleman");
 const CLI_DIST_DIR = resolve(REPO_ROOT, "apps", "cli", "dist");
 const BACKEND_DIST_DIR = resolve(REPO_ROOT, "apps", "backend", "dist");
@@ -30,6 +31,7 @@ const SOURCE_ARCHETYPES_DIR = resolve(
 const SOURCE_SKILLS_DIR = resolve(REPO_ROOT, "apps", "backend", "src", "swarm", "skills", "builtins");
 const NPM_DIST_DIR = resolve(REPO_ROOT, "dist", "npm");
 const PACKAGE_README_PATH = resolve(REPO_ROOT, "README.package.md");
+const STAGED_SWARM_MANAGER_PATH = resolve(NPM_DIST_DIR, "dist", "backend", "swarm", "swarm-manager.js");
 
 await main();
 
@@ -47,6 +49,7 @@ async function main() {
 
   const rootManifest = await readJson(ROOT_PACKAGE_JSON_PATH);
   const backendManifest = await readJson(BACKEND_PACKAGE_JSON_PATH);
+  const swarmdManifest = await readJson(SWARMD_PACKAGE_JSON_PATH);
 
   await rm(BACKEND_PUBLIC_DIR, { recursive: true, force: true });
   await rm(BACKEND_ASSETS_DIR, { recursive: true, force: true });
@@ -72,6 +75,7 @@ async function main() {
       return topLevelSegment !== "public" && topLevelSegment !== "assets";
     }
   });
+  await rewriteSwarmdImport(STAGED_SWARM_MANAGER_PATH);
 
   await mkdir(resolve(NPM_DIST_DIR, "bin"), { recursive: true });
   await cp(CLI_BIN_PATH, resolve(NPM_DIST_DIR, "bin", "middleman.js"));
@@ -83,8 +87,12 @@ async function main() {
     resolve(NPM_DIST_DIR, "README.md")
   );
 
-  const runtimeDependencies = { ...(backendManifest.dependencies ?? {}) };
+  const runtimeDependencies = {
+    ...(backendManifest.dependencies ?? {}),
+    ...(swarmdManifest.dependencies ?? {})
+  };
   delete runtimeDependencies["@middleman/protocol"];
+  delete runtimeDependencies.swarmd;
 
   const publishManifest = {
     name: "middleman-app",
@@ -127,4 +135,18 @@ function assertPathExists(path, label) {
 
 async function readJson(path) {
   return JSON.parse(await readFile(path, "utf8"));
+}
+
+async function rewriteSwarmdImport(path) {
+  if (!existsSync(path)) {
+    throw new Error(`Staged swarm manager entrypoint not found at ${path}`);
+  }
+
+  const source = await readFile(path, "utf8");
+  const rewritten = source.replace('from "swarmd";', 'from "../swarmd/index.js";');
+  if (rewritten === source) {
+    throw new Error(`Expected to rewrite the staged swarmd import in ${path}`);
+  }
+
+  await writeFile(path, rewritten, "utf8");
 }
