@@ -2,6 +2,7 @@ import {
   MANAGER_MODEL_PRESETS,
   type AcceptedDeliveryMode,
   type AgentMessageEvent,
+  type AgentThinkingLevel,
   type AgentToolCallEvent,
   type AgentToolCallKind,
   type ConversationAttachment,
@@ -42,7 +43,7 @@ export type SwarmModelPreset = ManagerModelPreset;
 export interface AgentModelDescriptor {
   provider: string;
   modelId: string;
-  thinkingLevel: string;
+  thinkingLevel: AgentThinkingLevel;
 }
 
 export interface AgentContextUsage {
@@ -70,6 +71,7 @@ export type RequestedDeliveryMode = DeliveryMode;
 export type {
   AcceptedDeliveryMode,
   AgentMessageEvent,
+  AgentThinkingLevel,
   AgentToolCallEvent,
   AgentToolCallKind,
   ConversationAttachment,
@@ -97,6 +99,7 @@ export interface SpawnAgentInput {
   archetypeId?: AgentArchetypeId;
   systemPrompt?: string;
   model?: SwarmModelPreset;
+  thinkingLevel?: AgentThinkingLevel;
   cwd?: string;
   initialMessage?: string;
 }

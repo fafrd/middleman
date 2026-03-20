@@ -35,6 +35,7 @@ import {
   DEFAULT_SWARM_MODEL_PRESET,
   inferSwarmModelPresetFromDescriptor,
   parseSwarmModelPreset,
+  parseSwarmThinkingLevel,
   resolveModelDescriptorFromPreset,
 } from "./model-presets.js";
 import { SecretsEnvService } from "./secrets-env-service.js";
@@ -338,9 +339,16 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     const cwd = input.cwd
       ? await this.runtimeContext.resolveAndValidateCwd(input.cwd)
       : manager.cwd;
-    const model = input.model
-      ? resolveModelDescriptorFromPreset(parseSwarmModelPreset(input.model, "spawn_agent.model")!)
-      : manager.model;
+    const thinkingLevel = parseSwarmThinkingLevel(input.thinkingLevel, "spawn_agent.thinkingLevel");
+    const modelPreset = parseSwarmModelPreset(input.model, "spawn_agent.model");
+    const model = modelPreset
+      ? resolveModelDescriptorFromPreset(modelPreset, thinkingLevel)
+      : thinkingLevel
+        ? {
+            ...manager.model,
+            thinkingLevel,
+          }
+        : manager.model;
     const archetypeId = this.lifecycle.resolveSpawnWorkerArchetypeId(input.archetypeId);
     const descriptor = await this.lifecycle.createAgentSessionAndRow({
       agentId,

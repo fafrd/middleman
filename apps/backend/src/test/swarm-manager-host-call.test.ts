@@ -145,6 +145,7 @@ describe("SwarmManager.handleHostCall", () => {
       toolCall("spawn_agent", {
         agentId: "reviewer",
         model: "pi-opus",
+        thinkingLevel: "high",
         initialMessage: "Review the migration",
       }),
     );
@@ -164,6 +165,7 @@ describe("SwarmManager.handleHostCall", () => {
     expect(spawnAgent).toHaveBeenCalledWith("manager-1", {
       agentId: "reviewer",
       model: "pi-opus",
+      thinkingLevel: "high",
       initialMessage: "Review the migration",
       archetypeId: undefined,
       systemPrompt: undefined,

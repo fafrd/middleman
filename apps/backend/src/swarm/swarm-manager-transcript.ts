@@ -1,9 +1,9 @@
 import type { SessionRecord, SwarmdCoreHandle, SwarmdMessage } from "swarmd";
 
+import { resolveAgentModelDescriptorFromSession } from "./session-model-descriptor.js";
 import type {
   AgentDescriptor,
   AgentMessageEvent,
-  AgentModelDescriptor,
   AgentStatus,
   AgentToolCallEvent,
   ConversationAttachment,
@@ -157,7 +157,7 @@ export class SwarmTranscriptService {
         kind: "message_end",
         text: this.options.resolveRuntimeErrorMessage(
           this.options.getAgent(resolvedAgentId) ??
-            fallbackDescriptorForErroredSession(resolvedAgentId, session),
+            fallbackDescriptorForErroredSession(resolvedAgentId, session, core),
           { error: session.lastError ?? null },
         ),
         isError: true,
@@ -225,6 +225,7 @@ function isManagerScopedAgentMessage(
 function fallbackDescriptorForErroredSession(
   sessionId: string,
   session: SessionRecord,
+  core: Pick<SwarmdCoreHandle, "sessionService">,
 ): AgentDescriptor {
   return {
     agentId: sessionId,
@@ -235,33 +236,8 @@ function fallbackDescriptorForErroredSession(
     createdAt: session.createdAt,
     updatedAt: session.updatedAt,
     cwd: session.cwd,
-    model: fromSwarmdModel(session),
+    model: resolveAgentModelDescriptorFromSession(core, session),
     contextUsage: session.contextUsage ?? undefined,
-  };
-}
-
-function fromSwarmdModel(session: SessionRecord): AgentModelDescriptor {
-  if (session.backend === "codex") {
-    return {
-      provider: "openai-codex-app-server",
-      modelId: session.model,
-      thinkingLevel: "xhigh",
-    };
-  }
-
-  if (session.backend === "claude") {
-    return {
-      provider: "anthropic-claude-code",
-      modelId: session.model,
-      thinkingLevel: "xhigh",
-    };
-  }
-
-  const parsedModel = /^([^/:]+)[/:](.+)$/.exec(session.model);
-  return {
-    provider: parsedModel?.[1] ?? "openai-codex",
-    modelId: parsedModel?.[2] ?? session.model,
-    thinkingLevel: "xhigh",
   };
 }
 

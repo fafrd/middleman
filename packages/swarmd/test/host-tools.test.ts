@@ -22,6 +22,20 @@ describe("host tool bridge", () => {
     ]);
   });
 
+  it("includes thinkingLevel in the spawn_agent tool schema", () => {
+    const spawnTool = buildHostToolDefinitions("manager").find(
+      (tool) => tool.name === "spawn_agent",
+    );
+
+    expect(spawnTool?.inputSchema).toMatchObject({
+      properties: {
+        thinkingLevel: {
+          enum: ["off", "low", "medium", "high", "xhigh"],
+        },
+      },
+    });
+  });
+
   it("formats codex host tool responses for replayable tool results", async () => {
     const hostRpc: HostRpcClient = {
       callTool: vi.fn(async () => ({

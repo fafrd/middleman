@@ -1,6 +1,7 @@
 import type { SessionRecord, SwarmdCoreHandle } from "swarmd";
 
 import { normalizeArchetypeId } from "./archetypes/archetype-prompt-registry.js";
+import { resolveAgentModelDescriptorFromSession } from "./session-model-descriptor.js";
 import type {
   MiddlemanAgentRepo,
   MiddlemanAgentRow,
@@ -210,10 +211,10 @@ export class SwarmLifecycleService {
   }
 
   getSortedDescriptors(options?: { includeArchived?: boolean }): AgentDescriptor[] {
+    const core = this.options.getCore();
     const sessionsById = new Map(
-      this.options
-        .getCore()
-        .sessionService.list({
+      core.sessionService
+        .list({
           includeArchived: options?.includeArchived === true,
         })
         .map((session) => [session.id, session]),
@@ -223,7 +224,7 @@ export class SwarmLifecycleService {
       .list()
       .map((row) => {
         const session = sessionsById.get(row.sessionId);
-        return session ? buildDescriptor(row, session) : null;
+        return session ? buildDescriptor(core, row, session) : null;
       })
       .filter((descriptor): descriptor is AgentDescriptor => descriptor !== null);
 
@@ -309,7 +310,11 @@ export class SwarmLifecycleService {
   }
 }
 
-function buildDescriptor(agentRow: MiddlemanAgentRow, session: SessionRecord): AgentDescriptor {
+function buildDescriptor(
+  core: Pick<SwarmdCoreHandle, "sessionService">,
+  agentRow: MiddlemanAgentRow,
+  session: SessionRecord,
+): AgentDescriptor {
   return {
     agentId: agentRow.sessionId,
     displayName: session.displayName,
@@ -320,32 +325,7 @@ function buildDescriptor(agentRow: MiddlemanAgentRow, session: SessionRecord): A
     createdAt: session.createdAt,
     updatedAt: session.updatedAt,
     cwd: session.cwd,
-    model: fromSwarmdModel(session),
+    model: resolveAgentModelDescriptorFromSession(core, session),
     contextUsage: session.contextUsage ?? undefined,
-  };
-}
-
-function fromSwarmdModel(session: SessionRecord): AgentModelDescriptor {
-  if (session.backend === "codex") {
-    return {
-      provider: "openai-codex-app-server",
-      modelId: session.model,
-      thinkingLevel: "xhigh",
-    };
-  }
-
-  if (session.backend === "claude") {
-    return {
-      provider: "anthropic-claude-code",
-      modelId: session.model,
-      thinkingLevel: "xhigh",
-    };
-  }
-
-  const parsedModel = /^([^/:]+)[/:](.+)$/.exec(session.model);
-  return {
-    provider: parsedModel?.[1] ?? "openai-codex",
-    modelId: parsedModel?.[2] ?? session.model,
-    thinkingLevel: "xhigh",
   };
 }

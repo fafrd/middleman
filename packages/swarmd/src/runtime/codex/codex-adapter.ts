@@ -56,6 +56,7 @@ interface ResolvedCodexConfig {
   experimentalRawEvents: boolean;
   persistExtendedHistory: boolean;
   ephemeralThreads: boolean;
+  reasoningEffort?: "none" | "low" | "medium" | "high" | "xhigh";
   hostToolsRole?: MiddlemanRole;
 }
 
@@ -257,7 +258,10 @@ export class CodexBackendAdapter implements BackendAdapter {
       cwd: this.#config?.cwd,
       approvalPolicy: this.#resolvedConfig?.approvalPolicy,
       sandbox: this.#resolvedConfig?.sandbox,
-      config: sandboxThreadConfig(this.#resolvedConfig?.sandbox),
+      config: sandboxThreadConfig(
+        this.#resolvedConfig?.sandbox,
+        this.#resolvedConfig?.reasoningEffort,
+      ),
       developerInstructions: this.#config?.systemPrompt,
       ephemeral: this.#resolvedConfig?.ephemeralThreads,
       persistExtendedHistory: this.#resolvedConfig?.persistExtendedHistory ?? true,
@@ -279,7 +283,10 @@ export class CodexBackendAdapter implements BackendAdapter {
       cwd: this.#config?.cwd,
       approvalPolicy: this.#resolvedConfig?.approvalPolicy,
       sandbox: this.#resolvedConfig?.sandbox,
-      config: sandboxThreadConfig(this.#resolvedConfig?.sandbox),
+      config: sandboxThreadConfig(
+        this.#resolvedConfig?.sandbox,
+        this.#resolvedConfig?.reasoningEffort,
+      ),
       developerInstructions: this.#config?.systemPrompt,
       persistExtendedHistory: this.#resolvedConfig?.persistExtendedHistory ?? true,
     });
@@ -394,7 +401,10 @@ export class CodexBackendAdapter implements BackendAdapter {
       cwd: this.#config?.cwd,
       approvalPolicy: this.#resolvedConfig?.approvalPolicy,
       sandbox: this.#resolvedConfig?.sandbox,
-      config: sandboxThreadConfig(this.#resolvedConfig?.sandbox),
+      config: sandboxThreadConfig(
+        this.#resolvedConfig?.sandbox,
+        this.#resolvedConfig?.reasoningEffort,
+      ),
       developerInstructions: this.#config?.systemPrompt,
       ephemeral: this.#resolvedConfig?.ephemeralThreads,
       experimentalRawEvents: this.#resolvedConfig?.experimentalRawEvents ?? false,
@@ -415,6 +425,9 @@ export class CodexBackendAdapter implements BackendAdapter {
         threadId: this.#currentThreadId,
         cwd: this.#config?.cwd,
         input: toCodexInputItems(input),
+        ...(this.#resolvedConfig?.reasoningEffort
+          ? { effort: this.#resolvedConfig.reasoningEffort }
+          : {}),
       });
 
       const turnId = readTurnId(response.turn);
@@ -785,6 +798,7 @@ function resolveCodexConfig(config: SessionRuntimeConfig): ResolvedCodexConfig {
     experimentalRawEvents: readBoolean(backendConfig.experimentalRawEvents) ?? false,
     persistExtendedHistory: readBoolean(backendConfig.persistExtendedHistory) ?? true,
     ephemeralThreads: readBoolean(backendConfig.ephemeralThreads) ?? false,
+    reasoningEffort: readCodexReasoningEffort(backendConfig.thinkingLevel),
     hostToolsRole: readMiddlemanRole(readObject(backendConfig.middleman)?.role),
   };
 }
@@ -848,9 +862,11 @@ function toCodexInputItems(input: UserInput): Array<Record<string, unknown>> {
 
 function sandboxThreadConfig(
   sandbox: ResolvedCodexConfig["sandbox"] | undefined,
+  reasoningEffort?: ResolvedCodexConfig["reasoningEffort"],
 ): Record<string, string> {
   return {
     sandbox_mode: sandbox ?? "danger-full-access",
+    ...(reasoningEffort ? { model_reasoning_effort: reasoningEffort } : {}),
   };
 }
 
@@ -1041,6 +1057,22 @@ function readSandboxMode(value: unknown): ResolvedCodexConfig["sandbox"] | undef
     case "danger-full-access":
     case "workspace-write":
     case "read-only":
+      return value;
+    default:
+      return undefined;
+  }
+}
+
+function readCodexReasoningEffort(
+  value: unknown,
+): ResolvedCodexConfig["reasoningEffort"] | undefined {
+  switch (value) {
+    case "off":
+      return "none";
+    case "low":
+    case "medium":
+    case "high":
+    case "xhigh":
       return value;
     default:
       return undefined;

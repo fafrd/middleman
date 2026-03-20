@@ -196,30 +196,15 @@ function RuntimeIcon({ agent, className }: { agent: AgentDescriptor; className?:
   );
 }
 
-function getModelLabel(agent: AgentDescriptor, preset: ManagerModelPreset | undefined): string {
-  if (preset === "pi-opus") {
-    return "opus";
+function getModelTooltipLabel(
+  agent: AgentDescriptor,
+  preset: ManagerModelPreset | undefined,
+): string {
+  if (preset) {
+    return preset;
   }
 
-  if (preset === "pi-codex" || preset === "codex-app") {
-    return "codex";
-  }
-
-  if (preset === "claude-code") {
-    return "claude-code";
-  }
-
-  const modelId = agent.model.modelId.trim().toLowerCase();
-
-  if (modelId.startsWith("claude-opus")) {
-    return "opus";
-  }
-
-  if (modelId.includes("codex")) {
-    return "codex";
-  }
-
-  return agent.model.modelId;
+  return `${agent.model.provider}/${agent.model.modelId}`;
 }
 
 function AgentActivitySlot({
@@ -303,8 +288,9 @@ function AgentRow({
   const title = agent.displayName || agent.agentId;
   const isActive = isWorkingAgentStatus(liveStatus.status);
   const preset = inferModelPreset(agent);
-  const modelLabel = getModelLabel(agent, preset);
+  const modelLabel = getModelTooltipLabel(agent, preset);
   const modelDescription = `${agent.model.provider}/${agent.model.modelId}`;
+  const modelSummary = `${modelLabel} - thinking: ${agent.model.thinkingLevel}`;
 
   return (
     <ContextMenu>
@@ -345,8 +331,10 @@ function AgentRow({
                 <RuntimeIcon agent={agent} className="size-3 shrink-0 object-contain opacity-90" />
               </TooltipTrigger>
               <TooltipContent side="top" sideOffset={6} className="px-2 py-1 text-[10px]">
-                <p className="font-medium">{modelLabel}</p>
-                <p className="opacity-80">{modelDescription}</p>
+                <p className="font-medium">{modelSummary}</p>
+                {modelDescription !== modelLabel ? (
+                  <p className="opacity-80">{modelDescription}</p>
+                ) : null}
               </TooltipContent>
             </Tooltip>
           </TooltipProvider>

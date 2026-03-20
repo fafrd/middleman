@@ -26,6 +26,7 @@ import {
 } from "./pi-mapper.js";
 
 type PiCheckpoint = Extract<BackendCheckpoint, { backend: "pi" }>;
+type PiThinkingLevel = "off" | "low" | "medium" | "high" | "xhigh";
 
 export interface PiModelLike {
   provider: string;
@@ -85,6 +86,7 @@ export interface PiCreateAgentSessionOptions {
   authStorage?: unknown;
   modelRegistry?: unknown;
   model?: PiModelLike;
+  thinkingLevel?: PiThinkingLevel;
   tools?: unknown[];
   resourceLoader?: unknown;
   sessionManager?: PiSessionManagerLike;
@@ -174,6 +176,7 @@ interface PiBackendConfig {
   }>;
   modelProvider?: string;
   modelId?: string;
+  thinkingLevel?: PiThinkingLevel;
   middleman?: {
     role?: MiddlemanRole;
   };
@@ -220,6 +223,19 @@ async function loadPiAiModule(): Promise<PiGetModelModule | null> {
 
 function getPiBackendConfig(config: SessionRuntimeConfig): PiBackendConfig {
   return config.backendConfig as PiBackendConfig;
+}
+
+function readPiThinkingLevel(value: unknown): PiThinkingLevel | undefined {
+  switch (value) {
+    case "off":
+    case "low":
+    case "medium":
+    case "high":
+    case "xhigh":
+      return value;
+    default:
+      return undefined;
+  }
 }
 
 function readObject(value: unknown): Record<string, unknown> | undefined {
@@ -311,6 +327,10 @@ async function resolveModel(config: SessionRuntimeConfig): Promise<PiModelLike |
 
   const aiModule = await loadPiAiModule();
   return aiModule?.getModel(parsed.provider, parsed.modelId);
+}
+
+function resolveConfiguredThinkingLevel(config: SessionRuntimeConfig): PiThinkingLevel | undefined {
+  return readPiThinkingLevel(getPiBackendConfig(config).thinkingLevel);
 }
 
 function convertUserInputToPiInput(input: UserInput): NormalizedUserInput {
@@ -627,6 +647,7 @@ export class PiSessionHost implements PiSessionHostLike {
         : undefined;
     const modelRegistry =
       authStorage && piModule.ModelRegistry ? new piModule.ModelRegistry(authStorage) : undefined;
+    const thinkingLevel = resolveConfiguredThinkingLevel(config);
     const tools = piModule.createCodingTools
       ? piModule.createCodingTools(config.cwd, {
           bash: {
@@ -692,6 +713,7 @@ export class PiSessionHost implements PiSessionHostLike {
       ...(authStorage ? { authStorage } : {}),
       ...(modelRegistry ? { modelRegistry } : {}),
       model,
+      ...(thinkingLevel ? { thinkingLevel } : {}),
       ...(tools ? { tools } : {}),
       ...(resourceLoader ? { resourceLoader } : {}),
       sessionManager,

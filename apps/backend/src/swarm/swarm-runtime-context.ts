@@ -196,6 +196,7 @@ export class SwarmRuntimeContextService {
           model: descriptor.model.modelId,
           backendConfig: {
             middleman: commonMiddleman,
+            thinkingLevel: descriptor.model.thinkingLevel,
             env: resources.runtimeEnv,
             approvalPolicy: "never",
             sandbox: "danger-full-access",
@@ -208,6 +209,7 @@ export class SwarmRuntimeContextService {
           model: descriptor.model.modelId,
           backendConfig: {
             middleman: commonMiddleman,
+            thinkingLevel: descriptor.model.thinkingLevel,
             env: resources.runtimeEnv,
             ...resolveMockRuntimeConfigFromEnv(),
           },
@@ -220,6 +222,7 @@ export class SwarmRuntimeContextService {
           model: `${descriptor.model.provider}/${descriptor.model.modelId}`,
           backendConfig: {
             middleman: commonMiddleman,
+            thinkingLevel: descriptor.model.thinkingLevel,
             env: resources.runtimeEnv,
             authFile: this.options.config.paths.authFile,
             memoryContextFile: resources.memoryContextFile,
