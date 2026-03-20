@@ -3,6 +3,8 @@ import { PassThrough } from "node:stream";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import type { SessionRuntimeConfig, UserInput } from "../src/index.js";
+import { createCodexBackendAdapter } from "../src/index.js";
 import {
   CodexJsonRpcClient,
   decodeJsonRpcMessage,
@@ -61,6 +63,141 @@ async function waitForCondition(predicate: () => boolean, timeoutMs = 1_000): Pr
   }
 
   throw new Error(`Timed out after ${timeoutMs}ms waiting for condition.`);
+}
+
+function createAdapterCallbacks() {
+  const statuses: string[] = [];
+  return {
+    statuses,
+    callbacks: {
+      emitEvent: vi.fn(),
+      emitStatusChange(status: string) {
+        statuses.push(status);
+      },
+      emitCheckpoint: vi.fn(),
+      log: vi.fn(),
+    },
+  };
+}
+
+function createAdapterConfig(serverScript: string): SessionRuntimeConfig {
+  return {
+    backend: "codex",
+    cwd: process.cwd(),
+    model: "gpt-5.4",
+    systemPrompt: "You are Codex inside swarmd.",
+    backendConfig: {
+      sessionId: "ses_codex_adapter_test",
+      command: "node",
+      args: ["-e", serverScript],
+      requestTimeoutMs: 1_000,
+    },
+  };
+}
+
+function createUserInput(text: string): UserInput {
+  return {
+    id: "input-1",
+    role: "user",
+    parts: [
+      {
+        type: "text",
+        text,
+      },
+    ],
+  };
+}
+
+function createPendingTurnInterruptServerScript(): string {
+  return String.raw`
+const readline = require("node:readline");
+
+const threadId = "thr_interrupt_edge";
+let turnId = null;
+
+const reader = readline.createInterface({
+  input: process.stdin,
+  crlfDelay: Infinity,
+});
+
+function send(message) {
+  process.stdout.write(JSON.stringify(message) + "\n");
+}
+
+function sendResult(id, result) {
+  send({ id, result });
+}
+
+function notify(method, params) {
+  send({ method, params });
+}
+
+reader.on("line", (line) => {
+  const trimmed = line.trim();
+  if (!trimmed) {
+    return;
+  }
+
+  const message = JSON.parse(trimmed);
+  const { id, method } = message;
+
+  switch (method) {
+    case "initialize":
+      sendResult(id, {});
+      return;
+    case "initialized":
+      return;
+    case "thread/start":
+      sendResult(id, {
+        thread: {
+          id: threadId,
+          status: { type: "idle" },
+          turns: [],
+        },
+      });
+      notify("thread/started", {
+        thread: {
+          id: threadId,
+          status: { type: "idle" },
+        },
+      });
+      return;
+    case "turn/start":
+      turnId = "turn-edge-1";
+      sendResult(id, {
+        turn: {},
+      });
+      setTimeout(() => {
+        notify("turn/started", {
+          threadId,
+          turn: { id: turnId, status: "inProgress" },
+        });
+      }, 20);
+      return;
+    case "turn/interrupt":
+      sendResult(id, {});
+      setTimeout(() => {
+        notify("turn/completed", {
+          threadId,
+          turn: { id: turnId, status: "completed" },
+        });
+      }, 5);
+      setTimeout(() => {
+        notify("thread/status/changed", {
+          threadId,
+          status: { type: "idle" },
+        });
+      }, 10);
+      return;
+    default:
+      sendResult(id, {});
+  }
+});
+
+process.stdin.on("end", () => {
+  process.exit(0);
+});
+`;
 }
 
 describe("codex mapper", () => {
@@ -425,5 +562,28 @@ describe("codex JSON-RPC client", () => {
     });
 
     client.dispose();
+  });
+});
+
+describe("CodexBackendAdapter", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("interrupts a turn that has been requested but has not reported turn/started yet", async () => {
+    const callbacks = createAdapterCallbacks();
+    const adapter = createCodexBackendAdapter(callbacks.callbacks);
+
+    await adapter.bootstrap(createAdapterConfig(createPendingTurnInterruptServerScript()));
+    await adapter.sendInput(createUserInput("Please stop this turn."), "auto");
+    await adapter.interrupt();
+
+    await waitForCondition(() => callbacks.statuses.includes("interrupting"));
+    await waitForCondition(() => callbacks.statuses.at(-1) === "idle");
+
+    expect(callbacks.statuses).toContain("busy");
+    expect(callbacks.statuses).toContain("interrupting");
+
+    await adapter.stop();
   });
 });

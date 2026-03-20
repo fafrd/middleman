@@ -61,6 +61,10 @@ type WsRequestResultMap = {
   create_manager: AgentDescriptor;
   delete_manager: { managerId: string };
   reorder_managers: string[];
+  interrupt_agent: {
+    agentId: string;
+    interrupted: boolean;
+  };
   stop_all_agents: {
     managerId: string;
     stoppedWorkerIds: string[];
@@ -76,6 +80,7 @@ const WS_REQUEST_TYPES: WsRequestType[] = [
   "create_manager",
   "delete_manager",
   "reorder_managers",
+  "interrupt_agent",
   "stop_all_agents",
   "list_directories",
   "validate_directory",
@@ -89,6 +94,7 @@ const WS_REQUEST_ERROR_HINTS: Array<{
   { requestType: "create_manager", codeFragment: "create_manager" },
   { requestType: "delete_manager", codeFragment: "delete_manager" },
   { requestType: "reorder_managers", codeFragment: "reorder_managers" },
+  { requestType: "interrupt_agent", codeFragment: "interrupt_agent" },
   { requestType: "stop_all_agents", codeFragment: "stop_all_agents" },
   { requestType: "list_directories", codeFragment: "list_directories" },
   { requestType: "validate_directory", codeFragment: "validate_directory" },
@@ -366,6 +372,26 @@ export class ManagerWsClient {
       type: "kill_agent",
       agentId: trimmed,
     });
+  }
+
+  async interruptAgent(agentId: string): Promise<{
+    agentId: string;
+    interrupted: boolean;
+  }> {
+    const trimmed = agentId.trim();
+    if (!trimmed) {
+      throw new Error("Agent id is required.");
+    }
+
+    if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
+      throw new Error("WebSocket is disconnected. Reconnecting...");
+    }
+
+    return this.enqueueRequest("interrupt_agent", (requestId) => ({
+      type: "interrupt_agent",
+      agentId: trimmed,
+      requestId,
+    }));
   }
 
   async stopAllAgents(managerId: string): Promise<{
@@ -798,6 +824,14 @@ export class ManagerWsClient {
       case "manager_order_updated": {
         this.applyManagerOrderUpdate(event.managerIds);
         this.requestTracker.resolve("reorder_managers", event.requestId, event.managerIds);
+        break;
+      }
+
+      case "interrupt_agent_result": {
+        this.requestTracker.resolve("interrupt_agent", event.requestId, {
+          agentId: event.agentId,
+          interrupted: event.interrupted,
+        });
         break;
       }
 

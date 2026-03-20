@@ -429,8 +429,13 @@ export const isLoadingAtom = atom((get) => {
 
 export const canStopAllAgentsAtom = atom((get) => {
   const activeAgentStatus = get(activeAgentStatusAtom);
+  const activeManagerId = get(activeManagerIdAtom);
+  const activeWorkerCount = activeManagerId
+    ? get(activeWorkerCountByManagerAtomFamily(activeManagerId))
+    : 0;
   return (
-    get(isActiveManagerAtom) && (activeAgentStatus ? isActiveAgentStatus(activeAgentStatus) : false)
+    get(isActiveManagerAtom) &&
+    ((activeAgentStatus ? isActiveAgentStatus(activeAgentStatus) : false) || activeWorkerCount > 0)
   );
 });
 

@@ -11,7 +11,7 @@ import {
   type KeyboardEvent,
 } from "react";
 import { useAtom, useAtomValue } from "jotai";
-import { ArrowUp, Paperclip } from "lucide-react";
+import { ArrowUp, Loader2, Paperclip, Square } from "lucide-react";
 import { AttachedFiles } from "@/components/chat/AttachedFiles";
 import { Button } from "@/components/ui/button";
 import { fileToPendingAttachment, type PendingAttachment } from "@/lib/file-attachments";
@@ -37,6 +37,10 @@ interface MessageInputProps {
   disabled?: boolean;
   agentLabel?: string;
   allowWhileLoading?: boolean;
+  canStop?: boolean;
+  stopInProgress?: boolean;
+  onStop?: () => void;
+  stopLabel?: string;
 }
 
 export interface MessageInputHandle {
@@ -64,7 +68,19 @@ function scrollLayoutViewportToTop(): void {
 }
 
 export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(function MessageInput(
-  { agentId, onSend, onSubmitted, isLoading, disabled, agentLabel, allowWhileLoading = false },
+  {
+    agentId,
+    onSend,
+    onSubmitted,
+    isLoading,
+    disabled,
+    agentLabel,
+    allowWhileLoading = false,
+    canStop = false,
+    stopInProgress = false,
+    onStop,
+    stopLabel = "Stop agent",
+  },
   ref,
 ) {
   const activeAgentId = useAtomValue(activeAgentIdAtom);
@@ -336,6 +352,7 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
 
   const hasContent = input.trim().length > 0 || attachedFiles.length > 0;
   const canSubmit = hasContent && !resolvedDisabled && !blockedByLoading;
+  const showStop = !hasContent && canStop && !resolvedDisabled && typeof onStop === "function";
   const placeholder = resolvedDisabled
     ? "Waiting for connection..."
     : allowWhileLoading && resolvedIsLoading
@@ -397,20 +414,42 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
               </Button>
             </div>
 
-            <Button
-              type="submit"
-              disabled={!canSubmit}
-              size="icon"
-              className={cn(
-                "size-7 rounded-full transition-all",
-                canSubmit
-                  ? "bg-primary text-primary-foreground hover:bg-primary/90 active:scale-95"
-                  : "cursor-default bg-muted text-muted-foreground/40",
-              )}
-              aria-label="Send message"
-            >
-              <ArrowUp className="size-3.5" strokeWidth={2.5} />
-            </Button>
+            {showStop ? (
+              <Button
+                type="button"
+                disabled={stopInProgress}
+                size="icon"
+                className={cn(
+                  "size-7 rounded-full transition-all",
+                  stopInProgress
+                    ? "cursor-default bg-destructive/70 text-destructive-foreground"
+                    : "bg-destructive text-destructive-foreground hover:bg-destructive/90 active:scale-95",
+                )}
+                onClick={() => onStop?.()}
+                aria-label={stopLabel}
+              >
+                {stopInProgress ? (
+                  <Loader2 className="size-3.5 animate-spin" />
+                ) : (
+                  <Square className="size-3.5 fill-current" strokeWidth={2.2} />
+                )}
+              </Button>
+            ) : (
+              <Button
+                type="submit"
+                disabled={!canSubmit}
+                size="icon"
+                className={cn(
+                  "size-7 rounded-full transition-all",
+                  canSubmit
+                    ? "bg-primary text-primary-foreground hover:bg-primary/90 active:scale-95"
+                    : "cursor-default bg-muted text-muted-foreground/40",
+                )}
+                aria-label="Send message"
+              >
+                <ArrowUp className="size-3.5" strokeWidth={2.5} />
+              </Button>
+            )}
           </div>
         </div>
       </div>

@@ -102,6 +102,13 @@ export interface StopAllAgentsResultEvent {
   requestId?: string;
 }
 
+export interface InterruptAgentResultEvent {
+  type: "interrupt_agent_result";
+  agentId: string;
+  interrupted: boolean;
+  requestId?: string;
+}
+
 export interface DirectoriesListedEvent {
   type: "directories_listed";
   path: string;
@@ -180,6 +187,7 @@ export type ServerEvent =
   | ManagerDeletedEvent
   | ManagerOrderUpdatedEvent
   | StopAllAgentsResultEvent
+  | InterruptAgentResultEvent
   | DirectoriesListedEvent
   | DirectoryValidatedEvent
   | DirectoryPickedEvent
