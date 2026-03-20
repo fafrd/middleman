@@ -18,6 +18,18 @@ import {
 } from "./claude-mapper.js";
 
 type ClaudeCheckpoint = Extract<BackendCheckpoint, { backend: "claude" }>;
+type ClaudeThinkingConfig =
+  | {
+      type: "adaptive";
+    }
+  | {
+      type: "enabled";
+      budgetTokens?: number;
+    }
+  | {
+      type: "disabled";
+    };
+type ClaudeEffort = "low" | "medium" | "high" | "max";
 
 type Deferred<T> = {
   promise: Promise<T>;
@@ -65,6 +77,8 @@ export interface ClaudeSdkQueryOptions {
   forkSession?: boolean;
   persistSession?: boolean;
   includePartialMessages?: boolean;
+  thinking?: ClaudeThinkingConfig;
+  effort?: ClaudeEffort;
   mcpServers?: Record<string, unknown>;
   allowedTools?: string[];
   abortController?: AbortController;
@@ -153,6 +167,7 @@ export class ClaudeQuerySession {
         cwd: this.options.config.cwd,
         model: this.options.config.model,
         systemPrompt: this.options.config.systemPrompt,
+        ...resolveClaudeThinkingOptions(this.options.config),
         ...this.options.queryOptions,
         persistSession: true,
         includePartialMessages: true,
@@ -632,6 +647,57 @@ export class ClaudeQuerySession {
 
     this.lastContextUsage = nextUsage;
     this.options.callbacks.emitStatusChange(this.state, undefined, nextUsage);
+  }
+}
+
+function resolveClaudeThinkingOptions(
+  config: SessionRuntimeConfig,
+): Pick<ClaudeSdkQueryOptions, "effort" | "thinking"> {
+  const thinkingLevel = readClaudeThinkingLevel(
+    (config.backendConfig as Record<string, unknown> | undefined)?.thinkingLevel,
+  );
+
+  switch (thinkingLevel) {
+    case "off":
+      return {
+        thinking: { type: "disabled" },
+      };
+    case "low":
+      return {
+        thinking: { type: "adaptive" },
+        effort: "low",
+      };
+    case "medium":
+      return {
+        thinking: { type: "adaptive" },
+        effort: "medium",
+      };
+    case "xhigh":
+      return {
+        thinking: { type: "adaptive" },
+        effort: "max",
+      };
+    case "high":
+    default:
+      return {
+        thinking: { type: "adaptive" },
+        effort: "high",
+      };
+  }
+}
+
+function readClaudeThinkingLevel(
+  value: unknown,
+): "off" | "low" | "medium" | "high" | "xhigh" | undefined {
+  switch (value) {
+    case "off":
+    case "low":
+    case "medium":
+    case "high":
+    case "xhigh":
+      return value;
+    default:
+      return undefined;
   }
 }
 

@@ -19,6 +19,7 @@ import {
   runMigrations,
   SessionRepo,
   type SessionRecord,
+  type SessionRuntimeConfig,
   type SwarmdCoreHandle,
 } from "swarmd";
 
@@ -55,6 +56,10 @@ async function createHarness(): Promise<Harness> {
   const settingsRepo = new MiddlemanSettingsRepo(db);
   const sessionRepo = new SessionRepo(db);
   const sessions = new Map<string, SessionRecord>();
+  const runtimeConfigBySessionId = new Map<
+    string,
+    Pick<SessionRuntimeConfig, "deliveryDefaults" | "backendConfig">
+  >();
   const createdMessages: Array<{ sessionId: string; text: string }> = [];
   const interruptCalls: string[] = [];
   const resetCalls: Array<{ sessionId: string; systemPrompt: string }> = [];
@@ -68,6 +73,8 @@ async function createHarness(): Promise<Harness> {
       model?: string;
       displayName?: string;
       systemPrompt?: string;
+      backendConfig?: Record<string, unknown>;
+      autoStart?: boolean;
     }) {
       const timestamp = new Date().toISOString();
       const session: SessionRecord = {
@@ -85,8 +92,12 @@ async function createHarness(): Promise<Harness> {
         lastError: null,
         contextUsage: null,
       };
-      sessionRepo.create(session, { backendConfig: {} });
+      const runtimeConfig = {
+        backendConfig: { ...(input.backendConfig ?? {}) },
+      };
+      sessionRepo.create(session, runtimeConfig);
       sessions.set(session.id, session);
+      runtimeConfigBySessionId.set(session.id, runtimeConfig);
       return session;
     },
     async start(sessionId: string) {
@@ -117,7 +128,14 @@ async function createHarness(): Promise<Harness> {
       session.updatedAt = new Date().toISOString();
       sessionRepo.updateStatus(sessionId, "terminated", null, session.contextUsage);
     },
-    reset(sessionId: string, input: { systemPrompt: string; updatedAt?: string }) {
+    reset(
+      sessionId: string,
+      input: {
+        systemPrompt: string;
+        runtimeConfig?: Pick<SessionRuntimeConfig, "deliveryDefaults" | "backendConfig">;
+        updatedAt?: string;
+      },
+    ) {
       const session = sessions.get(sessionId);
       if (!session) {
         throw new Error(`Missing session ${sessionId}`);
@@ -129,18 +147,23 @@ async function createHarness(): Promise<Harness> {
       session.updatedAt = input.updatedAt ?? new Date().toISOString();
       sessionRepo.resetState(sessionId, {
         systemPrompt: input.systemPrompt,
-        runtimeConfig: { backendConfig: {} },
+        runtimeConfig: input.runtimeConfig ?? { backendConfig: {} },
         updatedAt: session.updatedAt,
       });
+      runtimeConfigBySessionId.set(sessionId, input.runtimeConfig ?? { backendConfig: {} });
       resetCalls.push({ sessionId, systemPrompt: input.systemPrompt });
       return session;
     },
     delete(sessionId: string) {
       sessionRepo.delete(sessionId);
       sessions.delete(sessionId);
+      runtimeConfigBySessionId.delete(sessionId);
     },
     getById(sessionId: string) {
       return sessionRepo.getById(sessionId);
+    },
+    getRuntimeConfig(sessionId: string) {
+      return runtimeConfigBySessionId.get(sessionId) ?? { backendConfig: {} };
     },
     list(filter?: { status?: SessionRecord["status"][]; includeArchived?: boolean }) {
       return sessionRepo.list(filter);
@@ -382,6 +405,34 @@ describe("SwarmManager lifecycle", () => {
       sessionId: workerDescriptor.agentId,
       text: "resume work",
     });
+  });
+
+  it("persists worker thinking level overrides in runtime config and descriptors", async () => {
+    const harness = await createHarness();
+    harnesses.push(harness);
+
+    const managerDescriptor = await harness.manager.createManager("__bootstrap_manager__", {
+      name: "Manager",
+      cwd: REPO_ROOT,
+      model: "pi-codex",
+    });
+    const workerDescriptor = await harness.manager.spawnAgent(managerDescriptor.agentId, {
+      agentId: "worker",
+      model: "codex-app",
+      thinkingLevel: "low",
+    });
+
+    expect(workerDescriptor.model).toEqual({
+      provider: "openai-codex-app-server",
+      modelId: "gpt-5.4",
+      thinkingLevel: "low",
+    });
+    expect(harness.sessionService.getRuntimeConfig(workerDescriptor.agentId)).toMatchObject({
+      backendConfig: {
+        thinkingLevel: "low",
+      },
+    });
+    expect(harness.manager.getAgent(workerDescriptor.agentId)?.model.thinkingLevel).toBe("low");
   });
 
   it("emits manager-to-manager agent messages for both the sender and recipient manager views", async () => {

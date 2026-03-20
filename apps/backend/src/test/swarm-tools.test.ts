@@ -435,6 +435,7 @@ describe("buildSwarmTools", () => {
       {
         agentId: "Worker Opus",
         model: "pi-opus",
+        thinkingLevel: "low",
       },
       undefined,
       undefined,
@@ -442,6 +443,7 @@ describe("buildSwarmTools", () => {
     );
 
     expect(receivedInput?.model).toBe("pi-opus");
+    expect(receivedInput?.thinkingLevel).toBe("low");
     expect(result.details).toMatchObject({
       agentId: "worker-opus",
       model: {
@@ -471,6 +473,27 @@ describe("buildSwarmTools", () => {
         undefined as any,
       ),
     ).rejects.toThrow("spawn_agent.model must be one of pi-codex|pi-opus|codex-app|claude-code");
+  });
+
+  it("rejects invalid spawn_agent thinking levels with a clear error", async () => {
+    const host = makeHost(async () => makeWorkerDescriptor("worker"));
+
+    const tools = buildSwarmTools(host, makeManagerDescriptor());
+    const spawnTool = tools.find((tool) => tool.name === "spawn_agent");
+    expect(spawnTool).toBeDefined();
+
+    await expect(
+      spawnTool!.execute(
+        "tool-call",
+        {
+          agentId: "Worker Invalid Thinking",
+          thinkingLevel: "max",
+        } as any,
+        undefined,
+        undefined,
+        undefined as any,
+      ),
+    ).rejects.toThrow("spawn_agent.thinkingLevel must be one of off|low|medium|high|xhigh");
   });
 
   it("does not inject task management tools for managers", () => {

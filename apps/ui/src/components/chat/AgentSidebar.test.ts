@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
 
-import { getByText, queryByText, within } from "@testing-library/dom";
+import { fireEvent, getByText, queryByText, waitFor, within } from "@testing-library/dom";
 import { createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { flushSync } from "react-dom";
@@ -327,5 +327,22 @@ describe("AgentSidebar", () => {
 
     click(within(sidebar).getByRole("button", { name: "Notes" }));
     expect(onOpenNotes).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows thinking level in the model badge tooltip", async () => {
+    renderSidebar({ agents: [manager("manager-alpha")] });
+    const sidebar = getPrimarySidebar();
+    const managerRowButton = within(sidebar).getByRole("button", { name: "manager-alpha" });
+    const modelTrigger = managerRowButton.querySelector('[data-slot="tooltip-trigger"]');
+
+    expect(modelTrigger).toBeTruthy();
+
+    fireEvent.mouseEnter(modelTrigger as Element);
+    fireEvent.mouseMove(modelTrigger as Element);
+
+    await waitFor(() => {
+      expect(getByText(document.body, "pi-codex - thinking: high")).toBeTruthy();
+    });
+    expect(getByText(document.body, "openai-codex/gpt-5.4")).toBeTruthy();
   });
 });

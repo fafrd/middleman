@@ -9,6 +9,9 @@ export type AgentStatus =
   | "errored"
   | "terminated";
 
+export const AGENT_THINKING_LEVELS = ["off", "low", "medium", "high", "xhigh"] as const;
+export type AgentThinkingLevel = (typeof AGENT_THINKING_LEVELS)[number];
+
 export const MANAGER_MODEL_PRESETS = ["pi-codex", "pi-opus", "codex-app", "claude-code"] as const;
 export type ManagerModelPreset = (typeof MANAGER_MODEL_PRESETS)[number];
 export const CREATE_MANAGER_MODEL_PRESETS = [
@@ -20,7 +23,7 @@ export type CreateManagerModelPreset = (typeof CREATE_MANAGER_MODEL_PRESETS)[num
 export interface AgentModelDescriptor {
   provider: string;
   modelId: string;
-  thinkingLevel: string;
+  thinkingLevel: AgentThinkingLevel;
 }
 
 export interface AgentContextUsage {

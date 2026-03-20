@@ -1,9 +1,11 @@
+import { AGENT_THINKING_LEVELS } from "@middleman/protocol";
 import { Type } from "@sinclair/typebox";
 import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
-import { parseSwarmModelPreset } from "./model-presets.js";
+import { parseSwarmModelPreset, parseSwarmThinkingLevel } from "./model-presets.js";
 import {
   type AgentDescriptor,
   type AgentStatus,
+  type AgentThinkingLevel,
   type MessageSourceContext,
   type MessageTargetContext,
   type RequestedDeliveryMode,
@@ -44,6 +46,11 @@ const deliveryModeSchema = Type.Union([
 const spawnModelPresetSchema = Type.Unsafe<SwarmModelPreset>({
   type: "string",
   enum: [...SWARM_MODEL_PRESETS],
+});
+
+const spawnThinkingLevelSchema = Type.Unsafe<AgentThinkingLevel>({
+  type: "string",
+  enum: [...AGENT_THINKING_LEVELS],
 });
 
 type ListAgentsEntry = Pick<
@@ -222,7 +229,7 @@ export function buildSwarmTools(
       name: "spawn_agent",
       label: "Spawn Agent",
       description:
-        "Create and start a new worker agent. agentId is required and normalized to lowercase kebab-case; if taken, a numeric suffix (-2, -3, …) is appended. archetypeId, systemPrompt, model, cwd, and initialMessage are optional. model accepts pi-codex|pi-opus|codex-app|claude-code.",
+        "Create and start a new worker agent. agentId is required and normalized to lowercase kebab-case; if taken, a numeric suffix (-2, -3, …) is appended. archetypeId, systemPrompt, model, thinkingLevel, cwd, and initialMessage are optional. model accepts pi-codex|pi-opus|codex-app|claude-code. thinkingLevel accepts off|low|medium|high|xhigh.",
       parameters: Type.Object({
         agentId: Type.String({
           description:
@@ -237,6 +244,7 @@ export function buildSwarmTools(
           Type.String({ description: "Optional system prompt override." }),
         ),
         model: Type.Optional(spawnModelPresetSchema),
+        thinkingLevel: Type.Optional(spawnThinkingLevelSchema),
         cwd: Type.Optional(Type.String({ description: "Optional working directory override." })),
         initialMessage: Type.Optional(
           Type.String({ description: "Optional first message to send after spawn." }),
@@ -248,6 +256,7 @@ export function buildSwarmTools(
           archetypeId?: string;
           systemPrompt?: string;
           model?: unknown;
+          thinkingLevel?: unknown;
           cwd?: string;
           initialMessage?: string;
         };
@@ -257,6 +266,7 @@ export function buildSwarmTools(
           archetypeId: parsed.archetypeId,
           systemPrompt: parsed.systemPrompt,
           model: parseSwarmModelPreset(parsed.model, "spawn_agent.model"),
+          thinkingLevel: parseSwarmThinkingLevel(parsed.thinkingLevel, "spawn_agent.thinkingLevel"),
           cwd: parsed.cwd,
           initialMessage: parsed.initialMessage,
         });

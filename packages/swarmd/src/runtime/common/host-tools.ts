@@ -50,6 +50,7 @@ export interface PiHostToolDefinition {
 
 const DELIVERY_MODE_VALUES = ["auto", "followUp", "steer"] as const;
 const SPAWN_MODEL_PRESET_VALUES = ["pi-codex", "pi-opus", "codex-app", "claude-code"] as const;
+const THINKING_LEVEL_VALUES = ["off", "low", "medium", "high", "xhigh"] as const;
 const CLAUDE_SERVER_NAME = "middleman-swarm";
 
 function toolSchemaForName(name: string): Record<string, unknown> {
@@ -76,6 +77,7 @@ function toolSchemaForName(name: string): Record<string, unknown> {
           archetypeId: { type: "string" },
           systemPrompt: { type: "string" },
           model: { enum: [...SPAWN_MODEL_PRESET_VALUES] },
+          thinkingLevel: { enum: [...THINKING_LEVEL_VALUES] },
           cwd: { type: "string" },
           initialMessage: { type: "string" },
         },
@@ -132,6 +134,7 @@ function zodShapeForToolName(name: string): z.ZodRawShape {
         archetypeId: z.string().optional(),
         systemPrompt: z.string().optional(),
         model: z.enum(SPAWN_MODEL_PRESET_VALUES).optional(),
+        thinkingLevel: z.enum(THINKING_LEVEL_VALUES).optional(),
         cwd: z.string().optional(),
         initialMessage: z.string().optional(),
       };
