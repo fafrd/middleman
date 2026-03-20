@@ -145,6 +145,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   private unsubscribeCoreEvents: (() => void) | null = null;
   private readonly lastWorkerCompletionReportTimestampByAgentId = new Map<string, string>();
   private readonly pendingWorkerCompletionReportAgentIds = new Set<string>();
+  private readonly suppressNextWorkerCompletionReportAgentIds = new Set<string>();
 
   private readonly runtimeContext: SwarmRuntimeContextService;
   private readonly lifecycle: SwarmLifecycleService;
@@ -380,6 +381,32 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     this.emitAgentsSnapshot();
   }
 
+  async interruptAgentForUser(
+    callerAgentId: string,
+    targetAgentId: string,
+  ): Promise<{ agentId: string; interrupted: boolean }> {
+    const manager = this.lifecycle.assertManager(callerAgentId, "interrupt agents");
+    const target = this.lifecycle.requireDescriptor(targetAgentId);
+
+    if (target.role === "manager") {
+      if (target.agentId !== manager.agentId) {
+        throw new Error(`Only ${target.agentId} can interrupt itself.`);
+      }
+    } else if (target.managerId !== manager.agentId) {
+      throw new Error(`Only the owning manager can interrupt ${targetAgentId}.`);
+    }
+
+    const interrupted = await this.interruptSessionIfActive(target.agentId);
+    if (interrupted && target.role === "worker") {
+      this.suppressNextWorkerCompletionReportAgentIds.add(target.agentId);
+    }
+
+    return {
+      agentId: target.agentId,
+      interrupted,
+    };
+  }
+
   async stopAllAgents(
     callerAgentId: string,
     targetManagerId: string,
@@ -399,12 +426,13 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     const stoppedWorkerIds: string[] = [];
 
     for (const workerId of workerIds) {
-      if (await this.interruptAgent(workerId)) {
+      if (await this.interruptSessionIfActive(workerId)) {
+        this.suppressNextWorkerCompletionReportAgentIds.add(workerId);
         stoppedWorkerIds.push(workerId);
       }
     }
 
-    const managerStopped = await this.interruptAgent(targetManagerId);
+    const managerStopped = await this.interruptSessionIfActive(targetManagerId);
 
     return {
       managerId: targetManagerId,
@@ -808,8 +836,15 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         // Live status/context usage changes do not require rebuilding the full
         // agent snapshot for every subscribed client.
         this.emitStatus(descriptor.agentId, status, 0, contextUsage);
-        if (descriptor.role === "worker" && status === "idle") {
-          void this.maybeEmitWorkerCompletionSummary(descriptor.agentId);
+        if (descriptor.role === "worker") {
+          if (status === "idle") {
+            void this.maybeEmitWorkerCompletionSummary(descriptor.agentId);
+          } else if (
+            (status === "starting" || status === "busy") &&
+            this.suppressNextWorkerCompletionReportAgentIds.has(descriptor.agentId)
+          ) {
+            this.suppressNextWorkerCompletionReportAgentIds.delete(descriptor.agentId);
+          }
         }
       }
       return;
@@ -819,6 +854,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       case "session.errored": {
         if (descriptor.role === "worker") {
           this.pendingWorkerCompletionReportAgentIds.delete(descriptor.agentId);
+          this.suppressNextWorkerCompletionReportAgentIds.delete(descriptor.agentId);
         }
         const runtimeErrorMessage = this.resolveRuntimeErrorMessage(descriptor, event.payload);
         const runtimeErrorEvent: ConversationLogEvent = {
@@ -1106,6 +1142,12 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       return;
     }
 
+    if (this.suppressNextWorkerCompletionReportAgentIds.has(agentId)) {
+      this.pendingWorkerCompletionReportAgentIds.delete(agentId);
+      this.suppressNextWorkerCompletionReportAgentIds.delete(agentId);
+      return;
+    }
+
     const report = buildWorkerCompletionReport(
       descriptor,
       this.getConversationHistory(agentId),
@@ -1152,9 +1194,10 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   private clearWorkerCompletionReportTracking(agentId: string): void {
     this.pendingWorkerCompletionReportAgentIds.delete(agentId);
     this.lastWorkerCompletionReportTimestampByAgentId.delete(agentId);
+    this.suppressNextWorkerCompletionReportAgentIds.delete(agentId);
   }
 
-  private async interruptAgent(agentId: string): Promise<boolean> {
+  private async interruptSessionIfActive(agentId: string): Promise<boolean> {
     const core = this.coreOrThrow();
     const session = core.sessionService.getById(agentId);
     if (

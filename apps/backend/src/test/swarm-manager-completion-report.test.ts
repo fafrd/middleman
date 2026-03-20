@@ -455,6 +455,56 @@ describe("SwarmManager worker completion reports", () => {
     ]);
   });
 
+  it("suppresses the next completion summary after an explicit worker interrupt", async () => {
+    const harness = await createHarness();
+    harnesses.push(harness);
+
+    await harness.addAgent({
+      agentId: "manager-1",
+      managerId: "manager-1",
+      role: "manager",
+      status: "idle",
+    });
+    await harness.addAgent({
+      agentId: "worker-1",
+      managerId: "manager-1",
+      role: "worker",
+      status: "busy",
+    });
+
+    await harness.manager.interruptAgentForUser("manager-1", "worker-1");
+
+    publishAssistantCompletion(harness, "worker-1", {
+      messageId: "msg-1",
+      text: "Partial output before the interrupt landed.",
+      includeStarted: true,
+    });
+    harness.sessionService.applyRuntimeStatus("worker-1", "idle");
+
+    await flushAsyncWork();
+
+    expect(managerReportTexts(harness.manager, "manager-1")).toEqual([]);
+
+    harness.sessionService.applyRuntimeStatus("worker-1", "busy");
+    publishAssistantCompletion(harness, "worker-1", {
+      messageId: "msg-2",
+      text: "Fresh output after the next real turn.",
+      includeStarted: true,
+    });
+    harness.sessionService.applyRuntimeStatus("worker-1", "idle");
+
+    await waitForCondition(() => managerReportTexts(harness.manager, "manager-1").length === 1);
+
+    expect(managerReportTexts(harness.manager, "manager-1")).toEqual([
+      [
+        "SYSTEM: Worker worker-1 completed its turn.",
+        "",
+        "Last assistant message:",
+        "Fresh output after the next real turn.",
+      ].join("\n"),
+    ]);
+  });
+
   it("starts a stopped manager and persists the completion report message", async () => {
     const harness = await createHarness();
     harnesses.push(harness);

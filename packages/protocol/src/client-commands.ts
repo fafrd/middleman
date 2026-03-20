@@ -15,6 +15,7 @@ export type ClientCommand =
       delivery?: DeliveryMode;
     }
   | { type: "kill_agent"; agentId: string }
+  | { type: "interrupt_agent"; agentId: string; requestId?: string }
   | { type: "stop_all_agents"; managerId: string; requestId?: string }
   | {
       type: "create_manager";

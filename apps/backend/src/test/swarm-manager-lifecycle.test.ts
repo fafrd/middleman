@@ -509,6 +509,12 @@ describe("SwarmManager lifecycle", () => {
       model: "codex-app",
     });
     (harness.sessionService as any).applyRuntimeStatus(
+      managerDescriptor.agentId,
+      "busy",
+      null,
+      null,
+    );
+    (harness.sessionService as any).applyRuntimeStatus(
       workerDescriptor.agentId,
       "busy",
       null,
@@ -523,10 +529,102 @@ describe("SwarmManager lifecycle", () => {
     expect(stopped).toEqual({
       managerId: managerDescriptor.agentId,
       stoppedWorkerIds: [workerDescriptor.agentId],
-      managerStopped: false,
+      managerStopped: true,
+    });
+    expect(harness.interruptCalls).toEqual([workerDescriptor.agentId, managerDescriptor.agentId]);
+    expect(harness.manager.listAgents().map((agent) => agent.agentId)).toEqual([
+      managerDescriptor.agentId,
+      workerDescriptor.agentId,
+    ]);
+    expect(harness.sessions.get(managerDescriptor.agentId)?.status).toBe("idle");
+    expect(harness.sessions.get(workerDescriptor.agentId)?.status).toBe("idle");
+  });
+
+  it("interrupts a single worker without deleting it", async () => {
+    const harness = await createHarness();
+    harnesses.push(harness);
+
+    const managerDescriptor = await harness.manager.createManager("__bootstrap_manager__", {
+      name: "Manager",
+      cwd: REPO_ROOT,
+      model: "pi-codex",
+    });
+    const workerDescriptor = await harness.manager.spawnAgent(managerDescriptor.agentId, {
+      agentId: "worker",
+      model: "codex-app",
+    });
+    (harness.sessionService as any).applyRuntimeStatus(
+      workerDescriptor.agentId,
+      "busy",
+      null,
+      null,
+    );
+
+    const interrupted = await harness.manager.interruptAgentForUser(
+      managerDescriptor.agentId,
+      workerDescriptor.agentId,
+    );
+
+    expect(interrupted).toEqual({
+      agentId: workerDescriptor.agentId,
+      interrupted: true,
     });
     expect(harness.interruptCalls).toEqual([workerDescriptor.agentId]);
-    expect(harness.sessions.get(managerDescriptor.agentId)?.status).toBe("idle");
+    expect(harness.sessions.get(workerDescriptor.agentId)?.status).toBe("idle");
+    expect(harness.manager.listAgents().map((agent) => agent.agentId)).toEqual([
+      managerDescriptor.agentId,
+      workerDescriptor.agentId,
+    ]);
+  });
+
+  it("rejects interrupting a worker owned by another manager", async () => {
+    const harness = await createHarness();
+    harnesses.push(harness);
+
+    const firstManager = await harness.manager.createManager("__bootstrap_manager__", {
+      name: "Manager One",
+      cwd: REPO_ROOT,
+      model: "pi-codex",
+    });
+    const secondManager = await harness.manager.createManager(firstManager.agentId, {
+      name: "Manager Two",
+      cwd: REPO_ROOT,
+      model: "pi-codex",
+    });
+    const workerDescriptor = await harness.manager.spawnAgent(firstManager.agentId, {
+      agentId: "worker",
+      model: "codex-app",
+    });
+
+    await expect(
+      harness.manager.interruptAgentForUser(secondManager.agentId, workerDescriptor.agentId),
+    ).rejects.toThrow(`Only the owning manager can interrupt ${workerDescriptor.agentId}.`);
+  });
+
+  it("treats interrupting an idle worker as a no-op", async () => {
+    const harness = await createHarness();
+    harnesses.push(harness);
+
+    const managerDescriptor = await harness.manager.createManager("__bootstrap_manager__", {
+      name: "Manager",
+      cwd: REPO_ROOT,
+      model: "pi-codex",
+    });
+    const workerDescriptor = await harness.manager.spawnAgent(managerDescriptor.agentId, {
+      agentId: "worker",
+      model: "codex-app",
+    });
+
+    const interrupted = await harness.manager.interruptAgentForUser(
+      managerDescriptor.agentId,
+      workerDescriptor.agentId,
+    );
+
+    expect(interrupted).toEqual({
+      agentId: workerDescriptor.agentId,
+      interrupted: false,
+    });
+    expect(harness.interruptCalls).toEqual([]);
     expect(harness.sessions.get(workerDescriptor.agentId)?.status).toBe("idle");
   });
 

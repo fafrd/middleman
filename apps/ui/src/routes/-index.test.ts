@@ -5,6 +5,7 @@ import {
   getAllByRole,
   getByLabelText,
   getByRole,
+  queryByRole,
   queryByText,
   within,
 } from "@testing-library/dom";
@@ -758,6 +759,138 @@ describe("IndexPage create manager model selection", () => {
 
     expect(queryByText(container, "Loading conversation")).toBeNull();
     expect(queryByText(container, "What can I do for you?")).toBeTruthy();
+  });
+
+  it("shows a worker stop button when the worker is busy and the composer is empty", async () => {
+    const socket = await renderPage();
+
+    emitServerEvent(socket, {
+      type: "agents_snapshot",
+      agents: [
+        buildManager("manager", "/tmp/manager"),
+        buildWorker("worker-1", "manager", "/tmp/manager"),
+      ],
+    });
+
+    await flushWsUiUpdates();
+
+    const sidebar = getSidebar();
+    click(within(sidebar).getByRole("button", { name: "Expand manager manager" }));
+    click(within(sidebar).getByRole("button", { name: "worker-1" }));
+
+    await flushWsUiUpdates();
+
+    emitServerEvent(socket, {
+      type: "agent_status",
+      agentId: "worker-1",
+      status: "busy",
+      pendingCount: 1,
+    });
+
+    await flushWsUiUpdates();
+
+    expect(queryByRole(container, "button", { name: "Send message" })).toBeNull();
+
+    click(getByRole(container, "button", { name: "Stop agent" }));
+
+    const stopPayload = JSON.parse(socket.sentPayloads.at(-1) ?? "{}");
+    expect(stopPayload).toMatchObject({
+      type: "interrupt_agent",
+      agentId: "worker-1",
+    });
+    expect(typeof stopPayload.requestId).toBe("string");
+  });
+
+  it("keeps the send button visible for a busy worker when the composer has text", async () => {
+    const socket = await renderPage();
+
+    emitServerEvent(socket, {
+      type: "agents_snapshot",
+      agents: [
+        buildManager("manager", "/tmp/manager"),
+        buildWorker("worker-1", "manager", "/tmp/manager"),
+      ],
+    });
+
+    await flushWsUiUpdates();
+
+    const sidebar = getSidebar();
+    click(within(sidebar).getByRole("button", { name: "Expand manager manager" }));
+    click(within(sidebar).getByRole("button", { name: "worker-1" }));
+
+    await flushWsUiUpdates();
+
+    emitServerEvent(socket, {
+      type: "agent_status",
+      agentId: "worker-1",
+      status: "busy",
+      pendingCount: 1,
+    });
+
+    await flushWsUiUpdates();
+
+    changeValue(getByRole(container, "textbox") as HTMLTextAreaElement, "queued update");
+
+    expect(queryByRole(container, "button", { name: "Stop agent" })).toBeNull();
+
+    click(getByRole(container, "button", { name: "Send message" }));
+
+    const sendPayload = JSON.parse(socket.sentPayloads.at(-1) ?? "{}");
+    expect(sendPayload).toMatchObject({
+      type: "user_message",
+      agentId: "worker-1",
+      text: "queued update",
+      delivery: "steer",
+    });
+  });
+
+  it("shows a manager stop button when workers are busy even if the manager is idle", async () => {
+    const socket = await renderPage();
+
+    emitServerEvent(socket, {
+      type: "agents_snapshot",
+      agents: [
+        buildManager("manager", "/tmp/manager"),
+        buildWorker("worker-1", "manager", "/tmp/manager"),
+      ],
+    });
+
+    await flushWsUiUpdates();
+
+    emitServerEvent(socket, {
+      type: "agent_status",
+      agentId: "worker-1",
+      status: "busy",
+      pendingCount: 1,
+    });
+
+    await flushWsUiUpdates();
+
+    expect(queryByRole(container, "button", { name: "Send message" })).toBeNull();
+
+    click(getByRole(container, "button", { name: "Stop manager and workers" }));
+
+    const stopPayload = JSON.parse(socket.sentPayloads.at(-1) ?? "{}");
+    expect(stopPayload).toMatchObject({
+      type: "stop_all_agents",
+      managerId: "manager",
+    });
+    expect(typeof stopPayload.requestId).toBe("string");
+  });
+
+  it("shows the send button while idle", async () => {
+    const socket = await renderPage();
+
+    emitServerEvent(socket, {
+      type: "agents_snapshot",
+      agents: [buildManager("manager", "/tmp/manager")],
+    });
+
+    await flushWsUiUpdates();
+
+    expect(getByRole(container, "button", { name: "Send message" })).toBeTruthy();
+    expect(queryByRole(container, "button", { name: "Stop manager and workers" })).toBeNull();
+    expect(queryByRole(container, "button", { name: "Stop agent" })).toBeNull();
   });
 
   it("persists drafts per agent across selection changes and refresh, clears sent drafts, and prunes deleted agents", async () => {

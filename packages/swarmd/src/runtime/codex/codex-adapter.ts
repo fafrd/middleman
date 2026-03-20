@@ -311,10 +311,21 @@ export class CodexBackendAdapter implements BackendAdapter {
   async interrupt(): Promise<void> {
     this.#ensureReady();
 
-    if (!this.#currentThreadId || !this.#activeTurnId) {
+    if (!this.#currentThreadId) {
       return;
     }
 
+    if (!this.#activeTurnId) {
+      if (!this.#isBusy()) {
+        return;
+      }
+
+      this.#interruptOnTurnStart = true;
+      this.#updateStatus("interrupting");
+      return;
+    }
+
+    this.#interruptOnTurnStart = false;
     this.#updateStatus("interrupting");
     await this.#clientRequest("turn/interrupt", {
       threadId: this.#currentThreadId,

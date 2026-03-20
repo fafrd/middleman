@@ -44,3 +44,42 @@ describe("parseClientCommand create_manager", () => {
     });
   });
 });
+
+describe("parseClientCommand interrupt_agent", () => {
+  it("parses a valid interrupt_agent command", () => {
+    expect(
+      parseClientCommand(
+        Buffer.from(
+          JSON.stringify({
+            type: "interrupt_agent",
+            agentId: "worker-1",
+            requestId: "req-1",
+          }),
+        ),
+      ),
+    ).toEqual({
+      ok: true,
+      command: {
+        type: "interrupt_agent",
+        agentId: "worker-1",
+        requestId: "req-1",
+      },
+    });
+  });
+
+  it("rejects interrupt_agent without a non-empty agent id", () => {
+    expect(
+      parseClientCommand(
+        Buffer.from(
+          JSON.stringify({
+            type: "interrupt_agent",
+            agentId: "   ",
+          }),
+        ),
+      ),
+    ).toEqual({
+      ok: false,
+      error: "interrupt_agent.agentId must be a non-empty string",
+    });
+  });
+});

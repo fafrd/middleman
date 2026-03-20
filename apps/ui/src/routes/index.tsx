@@ -23,6 +23,7 @@ import type { ArtifactReference } from "@/lib/artifacts";
 import { pruneMessageDraftsAtom } from "@/lib/message-drafts";
 import {
   activeAgentIdAtom,
+  activeWorkerCountByManagerAtomFamily,
   activeManagerIdAtom,
   agentsAtom,
   artifactsAtom,
@@ -30,6 +31,7 @@ import {
   isActiveManagerAtom,
   isLoadingAtom,
   isWorkerDetailViewAtom,
+  lastErrorAtom,
   managerOrderAtom,
   statusBannerTextAtom,
   subscribedAgentIdAtom,
@@ -191,8 +193,12 @@ export function IndexPage() {
   const isWorkerDetailView = useAtomValue(isWorkerDetailViewAtom);
   const activeManagerId = useAtomValue(activeManagerIdAtom);
   const isLoading = useAtomValue(isLoadingAtom);
+  const activeWorkerCount = useAtomValue(
+    activeWorkerCountByManagerAtomFamily(activeManagerId ?? DEFAULT_MANAGER_AGENT_ID),
+  );
   const collectedArtifacts = useAtomValue(artifactsAtom);
   const statusBannerText = useAtomValue(statusBannerTextAtom);
+  const setLastError = useSetAtom(lastErrorAtom);
 
   const { clientRef } = useWsConnection(wsUrl);
   const { routeState, activeView, hasExplicitAgentSelection, navigateToRoute } = useRouteState({
@@ -204,9 +210,10 @@ export function IndexPage() {
   const [panelSelection, setPanelSelection] = useState<ArtifactPanelSelection | null>(null);
   const [isArtifactsPanelOpen, setIsArtifactsPanelOpen] = useState(false);
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
+  const [isStoppingCurrentSelection, setIsStoppingCurrentSelection] = useState(false);
   useDynamicFavicon();
 
-  const { markPendingResponse } = usePendingResponse();
+  const { clearPendingResponseForAgent, markPendingResponse } = usePendingResponse();
 
   const {
     isCreateManagerDialogOpen,
@@ -231,8 +238,6 @@ export function IndexPage() {
     handleRequestDeleteManager,
     handleConfirmDeleteManager,
     handleCloseDeleteManagerDialog,
-    isStoppingAllAgents,
-    handleStopAllAgents,
   } = useManagerActions({
     clientRef,
     defaultManagerModel: DEFAULT_MANAGER_MODEL,
@@ -402,6 +407,45 @@ export function IndexPage() {
     });
   };
 
+  const canStopCurrentSelection = isActiveManager ? isLoading || activeWorkerCount > 0 : isLoading;
+  const stopLabel = isActiveManager ? "Stop manager and workers" : "Stop agent";
+
+  const handleStopCurrentSelection = useCallback(async () => {
+    const client = clientRef.current;
+    if (!client || !activeAgentId || isStoppingCurrentSelection) {
+      return;
+    }
+
+    setIsStoppingCurrentSelection(true);
+
+    try {
+      if (isActiveManager) {
+        await client.stopAllAgents(activeAgentId);
+      } else {
+        await client.interruptAgent(activeAgentId);
+      }
+
+      clearPendingResponseForAgent(activeAgentId);
+      setLastError(null);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "An unexpected error occurred.";
+      setLastError(
+        isActiveManager
+          ? `Failed to stop manager and workers: ${message}`
+          : `Failed to stop agent: ${message}`,
+      );
+    } finally {
+      setIsStoppingCurrentSelection(false);
+    }
+  }, [
+    activeAgentId,
+    clearPendingResponseForAgent,
+    clientRef,
+    isActiveManager,
+    isStoppingCurrentSelection,
+    setLastError,
+  ]);
+
   const handleMessageInputSubmitted = useCallback(() => {
     messageListRef.current?.scrollToBottom("smooth");
   }, []);
@@ -538,8 +582,8 @@ export function IndexPage() {
         ) : (
           <>
             <ChatHeader
-              stopAllInProgress={isStoppingAllAgents}
-              onStopAll={() => void handleStopAllAgents()}
+              stopAllInProgress={isStoppingCurrentSelection}
+              onStopAll={() => void handleStopCurrentSelection()}
               onNewChat={handleNewChat}
               isArtifactsPanelOpen={isArtifactsPanelOpen}
               onToggleArtifactsPanel={handleToggleArtifactsPanel}
@@ -560,6 +604,10 @@ export function IndexPage() {
               onSend={handleSend}
               onSubmitted={handleMessageInputSubmitted}
               allowWhileLoading
+              canStop={canStopCurrentSelection}
+              stopInProgress={isStoppingCurrentSelection}
+              onStop={() => void handleStopCurrentSelection()}
+              stopLabel={stopLabel}
             />
           </>
         )}
