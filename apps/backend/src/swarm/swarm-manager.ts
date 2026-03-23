@@ -1077,17 +1077,9 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
     // Codex and Claude completed-message events omit role; recover it from the
     // stored message captured earlier in the same event dispatch.
-    const messages = this.coreOrThrow().messageStore.list(agentId);
-    for (let index = messages.length - 1; index >= 0; index -= 1) {
-      const message = messages[index];
-      if (message.sourceMessageId !== sourceMessageId) {
-        continue;
-      }
-
-      return readRole(message.role);
-    }
-
-    return undefined;
+    return readRole(
+      this.coreOrThrow().messageStore.getLatestBySourceMessageId(agentId, sourceMessageId)?.role,
+    );
   }
 
   private persistConversationLog(event: ConversationLogEvent): void {
@@ -1110,6 +1102,17 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   }
 
   private persistAgentToolCall(event: AgentToolCallEvent): void {
+    const persistedEvent: Omit<AgentToolCallEvent, "text"> = {
+      type: event.type,
+      agentId: event.agentId,
+      actorAgentId: event.actorAgentId,
+      timestamp: event.timestamp,
+      kind: event.kind,
+      ...(event.toolName === undefined ? {} : { toolName: event.toolName }),
+      ...(event.toolCallId === undefined ? {} : { toolCallId: event.toolCallId }),
+      ...(event.isError === undefined ? {} : { isError: event.isError }),
+    };
+
     this.coreOrThrow().messageStore.append(event.actorAgentId, {
       source: "system",
       kind: "middleman_event",
@@ -1122,7 +1125,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         middleman: {
           version: 1,
           renderAs: "agent_tool_call",
-          event,
+          event: persistedEvent,
         },
       },
     });

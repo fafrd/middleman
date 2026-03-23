@@ -110,6 +110,34 @@ export class MessageRepo {
     return row ? mapMessageRow(row) : null;
   }
 
+  getLatestBySourceMessageId(sessionId: string, sourceMessageId: string): SwarmdMessage | null {
+    const row = this.db
+      .prepare<{ session_id: string; source_msg_id: string }, MessageRow>(
+        `SELECT
+          id,
+          session_id,
+          source,
+          source_msg_id,
+          kind,
+          role,
+          content_json,
+          order_key,
+          created_at,
+          metadata_json
+        FROM messages
+        WHERE session_id = @session_id
+          AND source_msg_id = @source_msg_id
+        ORDER BY order_key DESC
+        LIMIT 1`,
+      )
+      .get({
+        session_id: sessionId,
+        source_msg_id: sourceMessageId,
+      });
+
+    return row ? mapMessageRow(row) : null;
+  }
+
   listBySession(
     sessionId: string,
     options?: {

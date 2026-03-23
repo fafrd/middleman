@@ -35,6 +35,19 @@ interface ProjectStoredMessageOptions {
   includeSendMessageToolResults?: boolean;
 }
 
+interface StoredMessageRow {
+  id: string;
+  session_id: string;
+  source: SwarmdMessage["source"];
+  source_msg_id: string | null;
+  kind: string;
+  role: SwarmdMessage["role"];
+  content_json: string;
+  order_key: string;
+  created_at: string;
+  metadata_json: string;
+}
+
 export class SwarmTranscriptService {
   constructor(private readonly options: SwarmTranscriptServiceOptions) {}
 
@@ -62,13 +75,79 @@ export class SwarmTranscriptService {
   ): ConversationHistoryPageResult<
     ConversationMessageEvent | ConversationLogEvent | AgentMessageEvent
   > {
-    const visibleEntries = this.collectConversationEntries(agentId).filter(
-      (entry): entry is ConversationMessageEvent | ConversationLogEvent | AgentMessageEvent =>
-        entry.type === "conversation_message" ||
-        entry.type === "agent_message" ||
-        (entry.type === "conversation_log" && entry.isError === true),
-    );
+    const resolvedAgentId = agentId?.trim() || this.options.resolvePreferredManagerId();
+    if (!resolvedAgentId) {
+      return {
+        entries: [],
+        hasMore: false,
+      };
+    }
 
+    const core = this.options.getCore();
+    const session = core.sessionService.getById(resolvedAgentId);
+    const resolvedDescriptor = this.options.getAgent(resolvedAgentId);
+    if (!session) {
+      return {
+        entries: [],
+        hasMore: false,
+      };
+    }
+
+    const visibleEntries: Array<
+      ConversationMessageEvent | ConversationLogEvent | AgentMessageEvent
+    > = [];
+    let hasPersistedRuntimeError = false;
+    const projectionOptions: ProjectStoredMessageOptions =
+      resolvedDescriptor?.role === "worker"
+        ? {
+            agentIdOverride: resolvedDescriptor.agentId,
+            includeSendMessageToolResults: true,
+          }
+        : {};
+
+    for (const message of this.listVisibleMessagesForSession(
+      core,
+      resolvedAgentId,
+      projectionOptions.includeSendMessageToolResults === true,
+    )) {
+      const projected = projectStoredMessage(message, projectionOptions);
+      if (!isVisibleTranscriptEntry(projected)) {
+        continue;
+      }
+
+      visibleEntries.push(projected);
+      if (projected.type === "conversation_log" && projected.isError === true) {
+        hasPersistedRuntimeError = true;
+      }
+    }
+
+    if (resolvedDescriptor?.role === "manager") {
+      visibleEntries.push(
+        ...this.collectManagerScopedVisibleAgentMessages(core, resolvedDescriptor.agentId),
+      );
+    }
+
+    if (session.status === "errored" && !hasPersistedRuntimeError) {
+      visibleEntries.push({
+        type: "conversation_log",
+        agentId: resolvedAgentId,
+        timestamp: session.updatedAt,
+        historyCursor: buildSyntheticHistoryCursor(
+          session.updatedAt,
+          resolvedAgentId,
+          "runtime-error",
+        ),
+        source: "runtime_log",
+        kind: "message_end",
+        text: this.options.resolveRuntimeErrorMessage(
+          resolvedDescriptor ?? fallbackDescriptorForErroredSession(resolvedAgentId, session, core),
+          { error: session.lastError ?? null },
+        ),
+        isError: true,
+      });
+    }
+
+    visibleEntries.sort(compareConversationEntries);
     return this.pageEntries(visibleEntries, options);
   }
 
@@ -168,6 +247,93 @@ export class SwarmTranscriptService {
     return entries;
   }
 
+  private collectManagerScopedVisibleAgentMessages(
+    core: SwarmdCoreHandle,
+    managerId: string,
+  ): AgentMessageEvent[] {
+    const entries: AgentMessageEvent[] = [];
+
+    for (const message of listManagerScopedHiddenMessages(core, managerId)) {
+      const projected = projectStoredMessage(message);
+      if (!isManagerScopedAgentMessage(projected, managerId)) {
+        continue;
+      }
+
+      entries.push({
+        ...projected,
+        agentId: managerId,
+      });
+    }
+
+    return entries;
+  }
+
+  private listVisibleMessagesForSession(
+    core: SwarmdCoreHandle,
+    sessionId: string,
+    includeSendMessageToolResults: boolean,
+  ): SwarmdMessage[] {
+    if (!hasQueryableDb(core)) {
+      return core.messageStore
+        .list(sessionId)
+        .filter((message) =>
+          isVisibleTranscriptCandidateMessage(message, includeSendMessageToolResults),
+        );
+    }
+
+    const rows = core.db
+      .prepare<{ session_id: string; include_send_message_tool_results: number }, StoredMessageRow>(
+        `SELECT
+          id,
+          session_id,
+          source,
+          source_msg_id,
+          kind,
+          role,
+          content_json,
+          order_key,
+          created_at,
+          metadata_json
+        FROM messages
+        WHERE session_id = @session_id
+          AND (
+            role = 'assistant'
+            OR (role = 'system' AND json_extract(metadata_json, '$.middleman.renderAs') IS NULL)
+            OR (
+              role IN ('user', 'system')
+              AND json_extract(metadata_json, '$.middleman.renderAs') = 'conversation_message'
+            )
+            OR (
+              role = 'system'
+              AND json_extract(metadata_json, '$.middleman.renderAs') = 'conversation_log'
+              AND json_extract(metadata_json, '$.middleman.event.isError') = 1
+            )
+            OR (
+              role = 'system'
+              AND json_extract(metadata_json, '$.middleman.renderAs') = 'hidden'
+              AND json_extract(metadata_json, '$.middleman.visibility') = 'internal'
+            )
+            OR (
+              role = 'tool'
+              AND (
+                json_extract(content_json, '$.toolName') = 'speak_to_user'
+                OR (
+                  @include_send_message_tool_results = 1
+                  AND json_extract(content_json, '$.toolName') = 'send_message_to_agent'
+                )
+              )
+            )
+          )
+        ORDER BY order_key ASC`,
+      )
+      .all({
+        session_id: sessionId,
+        include_send_message_tool_results: includeSendMessageToolResults ? 1 : 0,
+      });
+
+    return rows.map(mapStoredMessageRow);
+  }
+
   private pageEntries<Entry extends ConversationEntryEvent>(
     entries: Entry[],
     options?: { before?: string; limit?: number },
@@ -220,6 +386,16 @@ function isManagerScopedAgentMessage(
   }
 
   return entry.fromAgentId === managerId || entry.toAgentId === managerId;
+}
+
+function isVisibleTranscriptEntry(
+  entry: ConversationEntryEvent | null,
+): entry is ConversationMessageEvent | ConversationLogEvent | AgentMessageEvent {
+  return (
+    entry?.type === "conversation_message" ||
+    entry?.type === "agent_message" ||
+    (entry?.type === "conversation_log" && entry.isError === true)
+  );
 }
 
 function fallbackDescriptorForErroredSession(
@@ -280,7 +456,7 @@ export function projectStoredMessage(
   if (renderAs === "agent_tool_call") {
     const event = readObject(middleman?.event);
     const kind = readAgentToolCallKind(event?.kind);
-    const text = readString(event?.text);
+    const text = extractStoredMessageText(message.content) || readString(event?.text);
     if (!kind || text === undefined) {
       return null;
     }
@@ -564,6 +740,162 @@ export function safeJson(value: unknown): string {
   } catch {
     return String(value);
   }
+}
+
+function listManagerScopedHiddenMessages(
+  core: SwarmdCoreHandle,
+  managerId: string,
+): SwarmdMessage[] {
+  if (!hasQueryableDb(core)) {
+    const messages: SwarmdMessage[] = [];
+    for (const session of core.sessionService.list()) {
+      if (session.id === managerId) {
+        continue;
+      }
+
+      for (const message of core.messageStore.list(session.id)) {
+        if (isManagerScopedHiddenMessageCandidate(message, managerId)) {
+          messages.push(message);
+        }
+      }
+    }
+
+    return messages;
+  }
+
+  const rows = core.db
+    .prepare<{ manager_id: string }, StoredMessageRow>(
+      `SELECT
+        id,
+        session_id,
+        source,
+        source_msg_id,
+        kind,
+        role,
+        content_json,
+        order_key,
+        created_at,
+        metadata_json
+      FROM messages
+      WHERE session_id <> @manager_id
+        AND role = 'system'
+        AND json_extract(metadata_json, '$.middleman.renderAs') = 'hidden'
+        AND json_extract(metadata_json, '$.middleman.visibility') = 'internal'
+        AND (
+          json_extract(metadata_json, '$.middleman.routing.fromAgentId') = @manager_id
+          OR json_extract(metadata_json, '$.middleman.routing.toAgentId') = @manager_id
+        )
+      ORDER BY order_key ASC`,
+    )
+    .all({ manager_id: managerId });
+
+  return rows.map(mapStoredMessageRow);
+}
+
+function mapStoredMessageRow(row: StoredMessageRow): SwarmdMessage {
+  return {
+    id: row.id,
+    sessionId: row.session_id,
+    source: row.source,
+    sourceMessageId: row.source_msg_id,
+    kind: row.kind,
+    role: row.role,
+    content: parseStoredJson(row.content_json, "content_json"),
+    orderKey: row.order_key,
+    createdAt: row.created_at,
+    metadata: parseStoredJsonObject(row.metadata_json, "metadata_json"),
+  };
+}
+
+function parseStoredJson(value: string, fieldName: string): unknown {
+  try {
+    return JSON.parse(value);
+  } catch (error) {
+    throw new Error(
+      `Failed to parse ${fieldName}: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+}
+
+function parseStoredJsonObject(value: string, fieldName: string): Record<string, unknown> {
+  const parsed = parseStoredJson(value, fieldName);
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error(`Expected ${fieldName} to contain a JSON object`);
+  }
+
+  return parsed as Record<string, unknown>;
+}
+
+function hasQueryableDb(core: unknown): boolean {
+  return typeof (core as { db?: { prepare?: unknown } } | null)?.db?.prepare === "function";
+}
+
+function isVisibleTranscriptCandidateMessage(
+  message: SwarmdMessage,
+  includeSendMessageToolResults: boolean,
+): boolean {
+  const middleman = readObject(readObject(message.metadata)?.middleman);
+  const renderAs = readString(middleman?.renderAs);
+
+  if (message.role === "assistant") {
+    return true;
+  }
+
+  if (message.role === "system" && renderAs === undefined) {
+    return true;
+  }
+
+  if (
+    (message.role === "user" || message.role === "system") &&
+    renderAs === "conversation_message"
+  ) {
+    return true;
+  }
+
+  if (
+    message.role === "system" &&
+    renderAs === "conversation_log" &&
+    readBoolean(readObject(middleman?.event)?.isError) === true
+  ) {
+    return true;
+  }
+
+  if (
+    message.role === "system" &&
+    renderAs === "hidden" &&
+    readString(middleman?.visibility) === "internal"
+  ) {
+    return true;
+  }
+
+  if (message.role !== "tool") {
+    return false;
+  }
+
+  const toolName = readString(readObject(message.content)?.toolName);
+  return (
+    toolName === "speak_to_user" ||
+    (includeSendMessageToolResults && toolName === "send_message_to_agent")
+  );
+}
+
+function isManagerScopedHiddenMessageCandidate(message: SwarmdMessage, managerId: string): boolean {
+  if (message.role !== "system") {
+    return false;
+  }
+
+  const middleman = readObject(readObject(message.metadata)?.middleman);
+  if (
+    readString(middleman?.renderAs) !== "hidden" ||
+    readString(middleman?.visibility) !== "internal"
+  ) {
+    return false;
+  }
+
+  const routing = readObject(middleman?.routing);
+  return (
+    readString(routing?.fromAgentId) === managerId || readString(routing?.toAgentId) === managerId
+  );
 }
 
 export function extractEventText(payload: unknown): string | undefined {

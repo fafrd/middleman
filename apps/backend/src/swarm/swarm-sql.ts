@@ -95,6 +95,41 @@ export const MIDDLEMAN_STORE_MIGRATIONS: readonly MigrationDefinition[] = [
       ALTER TABLE middleman_settings_next RENAME TO middleman_settings;
     `,
   },
+  {
+    id: "middleman_003_compact_agent_tool_call_storage",
+    sql: `
+      UPDATE messages
+      SET metadata_json = json_remove(metadata_json, '$.middleman.event.text')
+      WHERE json_extract(metadata_json, '$.middleman.renderAs') = 'agent_tool_call'
+        AND json_type(metadata_json, '$.middleman.event.text') IS NOT NULL;
+
+      CREATE INDEX IF NOT EXISTS idx_messages_middleman_visible_session
+        ON messages(
+          session_id,
+          role,
+          json_extract(metadata_json, '$.middleman.renderAs'),
+          json_extract(metadata_json, '$.middleman.visibility'),
+          order_key
+        );
+
+      CREATE INDEX IF NOT EXISTS idx_messages_middleman_hidden_routing
+        ON messages(
+          json_extract(metadata_json, '$.middleman.renderAs'),
+          json_extract(metadata_json, '$.middleman.visibility'),
+          json_extract(metadata_json, '$.middleman.routing.fromAgentId'),
+          json_extract(metadata_json, '$.middleman.routing.toAgentId'),
+          order_key
+        );
+
+      CREATE INDEX IF NOT EXISTS idx_messages_tool_name_session_role
+        ON messages(
+          session_id,
+          role,
+          json_extract(content_json, '$.toolName'),
+          order_key
+        );
+    `,
+  },
 ];
 
 export interface MiddlemanAgentRow {

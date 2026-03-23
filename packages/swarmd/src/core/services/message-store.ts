@@ -82,6 +82,11 @@ export class MessageStore {
     return this.messageRepo.getById(messageId);
   }
 
+  getLatestBySourceMessageId(sessionId: string, sourceMessageId: string): SwarmdMessage | null {
+    this.assertSessionExists(sessionId);
+    return this.messageRepo.getLatestBySourceMessageId(sessionId, sourceMessageId);
+  }
+
   annotate(messageId: string, patch: Record<string, unknown>): SwarmdMessage {
     const existing = this.messageRepo.getById(messageId);
     if (!existing) {

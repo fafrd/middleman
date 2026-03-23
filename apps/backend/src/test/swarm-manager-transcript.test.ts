@@ -330,6 +330,47 @@ describe("projectStoredMessage", () => {
     });
   });
 
+  it("projects compact agent tool call rows without duplicated metadata text", () => {
+    const toolCall = projectStoredMessage(
+      makeMessage({
+        id: "tool-call-compact-1",
+        sessionId: "worker-1",
+        source: "system",
+        kind: "middleman_event",
+        role: "system",
+        createdAt: "2026-03-15T00:00:07.000Z",
+        content: { text: '{"ok":true}' },
+        metadata: {
+          middleman: {
+            renderAs: "agent_tool_call",
+            event: {
+              agentId: "worker-1",
+              actorAgentId: "worker-1",
+              timestamp: "2026-03-15T00:00:07.000Z",
+              kind: "tool_execution_end",
+              toolName: "spawn_agent",
+              toolCallId: "call-1",
+            },
+          },
+        },
+      }),
+    );
+
+    expect(toolCall).toEqual({
+      type: "agent_tool_call",
+      agentId: "worker-1",
+      actorAgentId: "worker-1",
+      timestamp: "2026-03-15T00:00:07.000Z",
+      historyCursor:
+        "2026-03-15T00:00:07.000Z|worker-1|2026-03-15T00:00:07.000Z:tool-call-compact-1|tool-call-compact-1",
+      kind: "tool_execution_end",
+      toolName: "spawn_agent",
+      toolCallId: "call-1",
+      text: '{"ok":true}',
+      isError: undefined,
+    });
+  });
+
   it("projects worker send_message_to_agent tool results into visible agent messages", () => {
     const projected = projectStoredMessage(
       makeMessage({
