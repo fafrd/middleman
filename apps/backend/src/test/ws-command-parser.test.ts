@@ -126,7 +126,6 @@ describe("parseClientCommand compact_agent", () => {
           JSON.stringify({
             type: "compact_agent",
             agentId: "worker-1",
-            customInstructions: "Keep recent findings only",
             requestId: "req-compact-1",
           }),
         ),
@@ -136,7 +135,6 @@ describe("parseClientCommand compact_agent", () => {
       command: {
         type: "compact_agent",
         agentId: "worker-1",
-        customInstructions: "Keep recent findings only",
         requestId: "req-compact-1",
       },
     });
@@ -158,20 +156,20 @@ describe("parseClientCommand compact_agent", () => {
     });
   });
 
-  it("rejects compact_agent when customInstructions is not a string", () => {
+  it("rejects compact_agent when customInstructions is provided", () => {
     expect(
       parseClientCommand(
         Buffer.from(
           JSON.stringify({
             type: "compact_agent",
             agentId: "worker-1",
-            customInstructions: 42,
+            customInstructions: "Keep recent findings only",
           }),
         ),
       ),
     ).toEqual({
       ok: false,
-      error: "compact_agent.customInstructions must be a string when provided",
+      error: "compact_agent.customInstructions is no longer supported",
     });
   });
 });

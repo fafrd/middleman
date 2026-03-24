@@ -154,7 +154,7 @@ const CODEX_MOCK_CAPABILITIES: BackendCapabilities = {
   canForkThread: true,
   canInterrupt: true,
   canQueueInput: true,
-  canManualCompact: true,
+  canManualCompact: false,
   canReadHistory: true,
   emitsToolProgress: true,
   exposesRawEvents: true,
@@ -471,15 +471,12 @@ export class ScriptedBackendAdapter implements BackendAdapter {
     this.currentAbortController.abort();
   }
 
-  async compact(customInstructions?: string): Promise<unknown> {
+  async compact(): Promise<unknown> {
     if (!this.capabilities.canManualCompact) {
       throw new Error(`Manual compaction is not supported for the ${this.kind} backend.`);
     }
 
-    return {
-      compacted: true,
-      ...(customInstructions === undefined ? {} : { customInstructions }),
-    };
+    return { compacted: true };
   }
 
   async stop(): Promise<void> {

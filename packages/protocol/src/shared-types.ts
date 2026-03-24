@@ -3,6 +3,7 @@ export type AgentStatus =
   | "starting"
   | "idle"
   | "busy"
+  | "compacting"
   | "interrupting"
   | "stopping"
   | "stopped"
@@ -29,6 +30,7 @@ export const MANAGER_MODEL_PRESET_REGISTRY = {
     telemetryBacked: true,
     availableForManagerCreation: true,
     iconFamily: "pi-codex",
+    supportsManualCompaction: true,
   },
   "pi-codex-mini": {
     provider: "openai-codex",
@@ -38,6 +40,7 @@ export const MANAGER_MODEL_PRESET_REGISTRY = {
     telemetryBacked: true,
     availableForManagerCreation: true,
     iconFamily: "pi-codex",
+    supportsManualCompaction: true,
   },
   "pi-opus": {
     provider: "anthropic",
@@ -47,6 +50,7 @@ export const MANAGER_MODEL_PRESET_REGISTRY = {
     telemetryBacked: true,
     availableForManagerCreation: true,
     iconFamily: "pi-claude",
+    supportsManualCompaction: true,
   },
   "pi-sonnet": {
     provider: "anthropic",
@@ -56,6 +60,7 @@ export const MANAGER_MODEL_PRESET_REGISTRY = {
     telemetryBacked: true,
     availableForManagerCreation: true,
     iconFamily: "pi-claude",
+    supportsManualCompaction: true,
   },
   "pi-haiku": {
     provider: "anthropic",
@@ -65,6 +70,7 @@ export const MANAGER_MODEL_PRESET_REGISTRY = {
     telemetryBacked: true,
     availableForManagerCreation: true,
     iconFamily: "pi-claude",
+    supportsManualCompaction: true,
   },
   "codex-app": {
     provider: "openai-codex-app-server",
@@ -74,6 +80,7 @@ export const MANAGER_MODEL_PRESET_REGISTRY = {
     telemetryBacked: true,
     availableForManagerCreation: false,
     iconFamily: "codex-app",
+    supportsManualCompaction: false,
   },
   "codex-app-mini": {
     provider: "openai-codex-app-server",
@@ -83,6 +90,7 @@ export const MANAGER_MODEL_PRESET_REGISTRY = {
     telemetryBacked: true,
     availableForManagerCreation: false,
     iconFamily: "codex-app",
+    supportsManualCompaction: false,
   },
   "claude-code": {
     provider: "anthropic-claude-code",
@@ -92,6 +100,7 @@ export const MANAGER_MODEL_PRESET_REGISTRY = {
     telemetryBacked: true,
     availableForManagerCreation: false,
     iconFamily: "claude-code",
+    supportsManualCompaction: false,
   },
   "claude-code-sonnet": {
     provider: "anthropic-claude-code",
@@ -101,6 +110,7 @@ export const MANAGER_MODEL_PRESET_REGISTRY = {
     telemetryBacked: true,
     availableForManagerCreation: false,
     iconFamily: "claude-code",
+    supportsManualCompaction: false,
   },
   "claude-code-haiku": {
     provider: "anthropic-claude-code",
@@ -110,6 +120,7 @@ export const MANAGER_MODEL_PRESET_REGISTRY = {
     telemetryBacked: true,
     availableForManagerCreation: false,
     iconFamily: "claude-code",
+    supportsManualCompaction: false,
   },
 } as const satisfies Record<
   string,
@@ -121,6 +132,7 @@ export const MANAGER_MODEL_PRESET_REGISTRY = {
     telemetryBacked: boolean;
     availableForManagerCreation: boolean;
     iconFamily: ModelPresetIconFamily;
+    supportsManualCompaction: boolean;
   }
 >;
 
@@ -167,6 +179,13 @@ export function inferManagerModelPresetFromDescriptor(
   return MODEL_PRESET_BY_DESCRIPTOR_KEY.get(
     buildManagerModelPresetDescriptorKey(descriptor.provider, descriptor.modelId),
   );
+}
+
+export function supportsManualCompactionForDescriptor(
+  descriptor: Pick<AgentModelDescriptor, "provider" | "modelId"> | undefined,
+): boolean {
+  const preset = inferManagerModelPresetFromDescriptor(descriptor);
+  return preset ? MANAGER_MODEL_PRESET_REGISTRY[preset].supportsManualCompaction : false;
 }
 
 function buildManagerModelPresetDescriptorKey(provider: string, modelId: string): string {

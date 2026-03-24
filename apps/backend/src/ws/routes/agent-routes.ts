@@ -120,11 +120,7 @@ export async function handleAgentCommand(context: AgentCommandRouteContext): Pro
     }
 
     try {
-      const compacted = await swarmManager.compactAgentForUser(
-        managerContextId,
-        command.agentId,
-        command.customInstructions,
-      );
+      const compacted = await swarmManager.compactAgentForUser(managerContextId, command.agentId);
       send(socket, {
         type: "compact_agent_result",
         agentId: compacted.agentId,

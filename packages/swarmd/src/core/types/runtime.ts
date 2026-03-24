@@ -96,7 +96,7 @@ export type WorkerCommand =
       operationId: string;
     }
   | { type: "interrupt"; operationId: string }
-  | { type: "compact"; operationId: string; customInstructions?: string }
+  | { type: "compact"; operationId: string }
   | { type: "stop"; operationId: string }
   | { type: "terminate"; operationId: string }
   | {
@@ -126,7 +126,6 @@ export const workerCommandSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("compact"),
     operationId: z.string(),
-    customInstructions: z.string().optional(),
   }),
   z.object({
     type: z.literal("stop"),

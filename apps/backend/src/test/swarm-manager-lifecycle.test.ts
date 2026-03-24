@@ -30,7 +30,7 @@ const REPO_ROOT = fileURLToPath(new URL("../../../../", import.meta.url));
 interface Harness {
   agentRepo: MiddlemanAgentRepo;
   close(): Promise<void>;
-  compactCalls: Array<{ sessionId: string; customInstructions?: string }>;
+  compactCalls: Array<{ sessionId: string }>;
   createdMessages: Array<{ sessionId: string; text: string }>;
   interruptCalls: string[];
   manager: SwarmManager;
@@ -77,7 +77,7 @@ async function createHarness(): Promise<Harness> {
     }
   >();
   const coreEventHandlers = new Set<(event: EventEnvelope) => void>();
-  const compactCalls: Array<{ sessionId: string; customInstructions?: string }> = [];
+  const compactCalls: Array<{ sessionId: string }> = [];
   const createdMessages: Array<{ sessionId: string; text: string }> = [];
   const interruptCalls: string[] = [];
   const resetCalls: Array<{ sessionId: string; systemPrompt: string }> = [];
@@ -247,8 +247,8 @@ async function createHarness(): Promise<Harness> {
         }
         return `interrupt-${interruptCalls.length}`;
       },
-      compact(sessionId: string, customInstructions?: string) {
-        compactCalls.push({ sessionId, customInstructions });
+      compact(sessionId: string) {
+        compactCalls.push({ sessionId });
         const operationId = `compact-${compactCalls.length}`;
         const now = new Date().toISOString();
         operationRecords.set(operationId, {
@@ -741,19 +741,13 @@ describe("SwarmManager lifecycle", () => {
     const compacted = await harness.manager.compactAgentForUser(
       managerDescriptor.agentId,
       managerDescriptor.agentId,
-      "  Keep the current plan and latest findings only.  ",
     );
 
     expect(compacted).toEqual({
       agentId: managerDescriptor.agentId,
       compacted: true,
     });
-    expect(harness.compactCalls).toEqual([
-      {
-        sessionId: managerDescriptor.agentId,
-        customInstructions: "Keep the current plan and latest findings only.",
-      },
-    ]);
+    expect(harness.compactCalls).toEqual([{ sessionId: managerDescriptor.agentId }]);
   });
 
   it("waits for Pi worker compaction to complete before resolving", async () => {
@@ -774,8 +768,8 @@ describe("SwarmManager lifecycle", () => {
     const operationId = "compact-async-1";
     let status: "pending" | "completed" = "pending";
 
-    core.messageService.compact = vi.fn((sessionId: string, customInstructions?: string) => {
-      harness.compactCalls.push({ sessionId, customInstructions });
+    core.messageService.compact = vi.fn((sessionId: string) => {
+      harness.compactCalls.push({ sessionId });
       return operationId;
     }) as SwarmdCoreHandle["messageService"]["compact"];
     core.operationService.getById = vi.fn((requestedOperationId: string) => {
@@ -797,11 +791,7 @@ describe("SwarmManager lifecycle", () => {
 
     let settled = false;
     const compactPromise = harness.manager
-      .compactAgentForUser(
-        managerDescriptor.agentId,
-        workerDescriptor.agentId,
-        "Compress stale notes",
-      )
+      .compactAgentForUser(managerDescriptor.agentId, workerDescriptor.agentId)
       .then((result) => {
         settled = true;
         return result;
@@ -830,12 +820,7 @@ describe("SwarmManager lifecycle", () => {
       agentId: workerDescriptor.agentId,
       compacted: true,
     });
-    expect(harness.compactCalls).toEqual([
-      {
-        sessionId: workerDescriptor.agentId,
-        customInstructions: "Compress stale notes",
-      },
-    ]);
+    expect(harness.compactCalls).toEqual([{ sessionId: workerDescriptor.agentId }]);
   });
 
   it("rejects compacting a worker owned by another manager", async () => {

@@ -70,6 +70,7 @@ const DEFAULT_VISIBLE_AGENT_STATUSES = new Set<AgentStatus>([
   "starting",
   "idle",
   "busy",
+  "compacting",
   "interrupting",
   "stopping",
   "stopped",

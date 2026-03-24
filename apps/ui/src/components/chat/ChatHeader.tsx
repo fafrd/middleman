@@ -73,6 +73,8 @@ function formatAgentStatus(status: AgentStatus | null): string {
       return "Idle";
     case "busy":
       return "Busy";
+    case "compacting":
+      return "Compacting";
     case "interrupting":
       return "Interrupting";
     case "stopping":

@@ -5,6 +5,7 @@ export const ACTIVE_AGENT_STATUSES = new Set<AgentStatus>([
   "starting",
   "idle",
   "busy",
+  "compacting",
   "interrupting",
 ]);
 
@@ -13,5 +14,10 @@ export function isActiveAgentStatus(status: AgentStatus): boolean {
 }
 
 export function isWorkingAgentStatus(status: AgentStatus): boolean {
-  return status === "starting" || status === "busy" || status === "interrupting";
+  return (
+    status === "starting" ||
+    status === "busy" ||
+    status === "compacting" ||
+    status === "interrupting"
+  );
 }

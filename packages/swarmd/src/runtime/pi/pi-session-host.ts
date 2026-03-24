@@ -67,7 +67,7 @@ export interface PiAgentSessionLike {
   steer(message: string, images?: PiImageContent[]): Promise<void> | void;
   followUp(message: string, images?: PiImageContent[]): Promise<void> | void;
   abort(): Promise<void>;
-  compact(customInstructions?: string): Promise<unknown>;
+  compact(): Promise<unknown>;
   getContextUsage?():
     | {
         tokens: number | null;
@@ -156,7 +156,7 @@ export interface PiSessionHostLike {
   sendSteer(input: UserInput): Promise<void>;
   sendFollowUp(input: UserInput): Promise<void>;
   interrupt(): Promise<void>;
-  compact(customInstructions?: string): Promise<unknown>;
+  compact(): Promise<unknown>;
   stop(): Promise<void>;
   terminate(): Promise<void>;
 }
@@ -455,7 +455,6 @@ export class PiSessionHost implements PiSessionHostLike {
     this.contextWindow = null;
     this.manualCompacting = false;
     this.autoCompacting = false;
-    this.emitCompactionState();
     this.setStatus("starting");
 
     const targetCheckpoint = checkpoint ?? (await this.createThread());
@@ -604,21 +603,19 @@ export class PiSessionHost implements PiSessionHostLike {
     }
   }
 
-  async compact(customInstructions?: string): Promise<unknown> {
+  async compact(): Promise<unknown> {
     const session = this.requireSession();
     if (this.isCompacting()) {
       throw new Error(`Manual compaction is already in progress for ${this.sessionId}.`);
     }
 
     this.manualCompacting = true;
-    this.emitCompactionState();
-    this.setStatus("busy");
+    this.setStatus("compacting");
 
     try {
-      return await session.compact(customInstructions);
+      return await session.compact();
     } finally {
       this.manualCompacting = false;
-      this.emitCompactionState();
       this.restoreIdleStatusAfterCompaction();
     }
   }
@@ -770,13 +767,11 @@ export class PiSessionHost implements PiSessionHostLike {
       this.restoreIdleStatusAfterCompaction();
     } else if (event.type === "auto_compaction_start") {
       this.autoCompacting = true;
-      this.emitCompactionState();
       if (this.status !== "stopped" && this.status !== "terminated") {
         this.setStatus("busy");
       }
     } else if (event.type === "auto_compaction_end") {
       this.autoCompacting = false;
-      this.emitCompactionState();
       this.restoreIdleStatusAfterCompaction();
     }
 
@@ -802,7 +797,6 @@ export class PiSessionHost implements PiSessionHostLike {
     this.dispatchPending = false;
     this.manualCompacting = false;
     this.autoCompacting = false;
-    this.emitCompactionState();
 
     try {
       if (options.abort) {
@@ -835,10 +829,6 @@ export class PiSessionHost implements PiSessionHostLike {
     return this.manualCompacting || this.autoCompacting;
   }
 
-  private emitCompactionState(): void {
-    this.callbacks.emitBackendState?.(this.isCompacting() ? { lifecycle: "compacting" } : {});
-  }
-
   private restoreIdleStatusAfterCompaction(): void {
     if (
       this.status !== "stopped" &&
@@ -847,7 +837,7 @@ export class PiSessionHost implements PiSessionHostLike {
       !this.dispatchPending &&
       this.session?.isStreaming !== true &&
       !this.isCompacting() &&
-      this.status === "busy"
+      (this.status === "busy" || this.status === "compacting")
     ) {
       this.setStatus("idle");
     }

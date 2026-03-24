@@ -198,10 +198,10 @@ export function parseClientCommand(raw: RawData): ParsedClientCommand {
         error: "compact_agent.requestId must be a string when provided",
       };
     }
-    if (customInstructions !== undefined && typeof customInstructions !== "string") {
+    if (customInstructions !== undefined) {
       return {
         ok: false,
-        error: "compact_agent.customInstructions must be a string when provided",
+        error: "compact_agent.customInstructions is no longer supported",
       };
     }
 
@@ -211,7 +211,6 @@ export function parseClientCommand(raw: RawData): ParsedClientCommand {
         type: "compact_agent",
         agentId: agentId.trim(),
         requestId,
-        ...(customInstructions === undefined ? {} : { customInstructions }),
       },
     };
   }

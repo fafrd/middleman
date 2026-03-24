@@ -817,6 +817,7 @@ export function isAgentStatus(value: unknown): value is AgentStatus {
     value === "starting" ||
     value === "idle" ||
     value === "busy" ||
+    value === "compacting" ||
     value === "interrupting" ||
     value === "stopping" ||
     value === "stopped" ||

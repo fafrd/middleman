@@ -196,7 +196,7 @@ async function main(): Promise<void> {
         break;
       case "compact":
         await withAdapter(cmd, async (activeAdapter) => {
-          return await activeAdapter.compact(cmd.customInstructions);
+          return await activeAdapter.compact();
         });
         break;
       case "host_call_result": {

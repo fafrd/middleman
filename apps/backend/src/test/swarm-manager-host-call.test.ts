@@ -237,6 +237,11 @@ describe("SwarmManager.handleHostCall", () => {
     };
     (manager as any).core = {
       sessionService: {
+        getById: vi.fn(() => ({
+          id: "worker-1",
+          status: "errored",
+          contextUsage: null,
+        })),
         stop,
         start,
       },
@@ -270,7 +275,11 @@ describe("SwarmManager.handleHostCall", () => {
     };
     (manager as any).core = {
       sessionService: {
-        getBackendState: vi.fn(() => ({ lifecycle: "compacting" })),
+        getById: vi.fn(() => ({
+          id: "worker-1",
+          status: "compacting",
+          contextUsage: null,
+        })),
       },
     };
 

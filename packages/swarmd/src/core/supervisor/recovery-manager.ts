@@ -20,7 +20,13 @@ export interface RecoverySessionResult {
   error?: string;
 }
 
-const RECOVERABLE_STATUSES: SessionStatus[] = ["starting", "idle", "busy", "interrupting"];
+const RECOVERABLE_STATUSES: SessionStatus[] = [
+  "starting",
+  "idle",
+  "busy",
+  "compacting",
+  "interrupting",
+];
 
 export class RecoveryManager {
   constructor(private deps: RecoveryManagerDeps) {}
