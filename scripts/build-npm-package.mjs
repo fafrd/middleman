@@ -122,6 +122,10 @@ async function main() {
       middleman: "./bin/middleman.js",
     },
     files: ["bin", "dist", "ui", "assets", "README.md", "LICENSE"],
+    repository: {
+      type: "git",
+      url: "https://github.com/SawyerHood/middleman",
+    },
     engines: {
       node: ">=22",
     },
