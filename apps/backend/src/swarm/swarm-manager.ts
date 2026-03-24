@@ -1035,6 +1035,24 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     const core = this.coreOrThrow();
 
     if (descriptor.status === "terminated") {
+      if (descriptor.role === "manager") {
+        const session = core.sessionService.getById(descriptor.agentId);
+        if (!session) {
+          throw new Error(
+            `Agent ${descriptor.agentId} has been terminated and cannot be restored.`,
+          );
+        }
+
+        core.sessionService.applyRuntimeStatus(
+          descriptor.agentId,
+          "stopped",
+          null,
+          session.contextUsage,
+        );
+        await core.sessionService.start(descriptor.agentId);
+        return this.lifecycle.requireDescriptor(descriptor.agentId);
+      }
+
       throw new Error(
         `Agent ${descriptor.agentId} has been terminated and cannot receive messages.`,
       );

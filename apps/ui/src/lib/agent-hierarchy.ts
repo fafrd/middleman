@@ -59,8 +59,29 @@ export function chooseFallbackAgentId(
     return null;
   }
 
-  if (preferredAgentId && agents.some((agent) => agent.agentId === preferredAgentId)) {
-    return preferredAgentId;
+  const preferredAgent = preferredAgentId
+    ? agents.find((agent) => agent.agentId === preferredAgentId)
+    : undefined;
+  const preferredManagers = agents.filter(
+    (agent) => agent.role === "manager" && agent.status !== "terminated",
+  );
+
+  if (preferredAgent) {
+    if (preferredAgent.role !== "manager" || preferredAgent.status !== "terminated") {
+      return preferredAgent.agentId;
+    }
+
+    const preferredManagerId = getPrimaryManagerId(preferredManagers, managerOrder);
+    if (preferredManagerId) {
+      return preferredManagerId;
+    }
+
+    return preferredAgent.agentId;
+  }
+
+  const preferredManagerId = getPrimaryManagerId(preferredManagers, managerOrder);
+  if (preferredManagerId) {
+    return preferredManagerId;
   }
 
   const primaryManagerId = getPrimaryManagerId(agents, managerOrder);

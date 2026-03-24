@@ -4,7 +4,7 @@ import { createRequire } from "node:module";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { RuntimeSupervisor } from "../src/core/supervisor/runtime-supervisor.js";
 import { WorkerProtocolHost } from "../src/core/supervisor/worker-protocol.js";
@@ -465,5 +465,34 @@ describe("RuntimeSupervisor", () => {
         },
       },
     });
+  });
+
+  it("treats heartbeat timeouts as crashes instead of intentional termination", async () => {
+    const workerErrors: Error[] = [];
+    const supervisor = new RuntimeSupervisor({
+      onWorkerEvent: () => undefined,
+      onWorkerExit: () => undefined,
+      onWorkerError: (_sessionId, error) => {
+        workerErrors.push(error);
+      },
+    });
+
+    const abortWorker = vi.fn(async () => undefined);
+    const terminateWorker = vi.fn(async () => undefined);
+
+    (supervisor as any).abortWorker = abortWorker;
+    (supervisor as any).terminateWorker = terminateWorker;
+    (supervisor as any).workers.set("session-heartbeat-timeout", {
+      sessionId: "session-heartbeat-timeout",
+    });
+
+    (supervisor as any).handleHeartbeatTimeout("session-heartbeat-timeout");
+
+    expect(workerErrors).toHaveLength(1);
+    expect(workerErrors[0]?.message).toBe(
+      "Heartbeat timed out for worker session-heartbeat-timeout.",
+    );
+    expect(abortWorker).toHaveBeenCalledWith("session-heartbeat-timeout");
+    expect(terminateWorker).not.toHaveBeenCalled();
   });
 });

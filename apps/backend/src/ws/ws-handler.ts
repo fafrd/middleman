@@ -14,6 +14,12 @@ const AGENT_DETAIL_HISTORY_TRUNCATED_CODE = "AGENT_DETAIL_HISTORY_TRUNCATED";
 const MAX_WS_EVENT_BYTES = 5 * 1024 * 1024;
 const MAX_WS_BUFFERED_AMOUNT_BYTES = 5 * 1024 * 1024;
 
+function isPreferredManagerSubscriptionCandidate(
+  agent: ReturnType<SwarmManager["listAgents"]>[number],
+): boolean {
+  return agent.role === "manager" && agent.status !== "terminated";
+}
+
 export class WsHandler {
   private readonly swarmManager: SwarmManager;
 
@@ -472,7 +478,13 @@ export class WsHandler {
   }
 
   private resolvePreferredManagerSubscriptionId(): string | undefined {
-    const firstManager = this.swarmManager.listAgents().find((agent) => agent.role === "manager");
+    const agents = this.swarmManager.listAgents();
+    const preferredManager = agents.find(isPreferredManagerSubscriptionCandidate);
+    if (preferredManager) {
+      return preferredManager.agentId;
+    }
+
+    const firstManager = agents.find((agent) => agent.role === "manager");
 
     return firstManager?.agentId;
   }

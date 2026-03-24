@@ -103,4 +103,16 @@ describe("agent-hierarchy", () => {
       "manager-stopped",
     );
   });
+
+  it("prefers a non-terminated manager when a terminated manager is selected", () => {
+    const terminatedManager = { ...manager("manager-dead"), status: "terminated" as const };
+    const liveManager = manager("manager-live");
+
+    expect(
+      chooseFallbackAgentId([terminatedManager, liveManager], [], terminatedManager.agentId),
+    ).toBe(liveManager.agentId);
+    expect(chooseFallbackAgentId([terminatedManager], [], terminatedManager.agentId)).toBe(
+      terminatedManager.agentId,
+    );
+  });
 });

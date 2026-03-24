@@ -248,6 +248,94 @@ function createRichManagerStub() {
   };
 }
 
+function createManagerFallbackStub() {
+  const terminatedManager: AgentDescriptor = {
+    agentId: "manager-dead",
+    managerId: "manager-dead",
+    displayName: "manager-dead",
+    role: "manager",
+    status: "terminated",
+    createdAt: "2026-03-14T00:00:00.000Z",
+    updatedAt: "2026-03-14T00:00:00.000Z",
+    cwd: "/tmp/project",
+    model: {
+      provider: "openai-codex-app-server",
+      modelId: "gpt-5.4",
+      thinkingLevel: "xhigh",
+    },
+  };
+  const liveManager: AgentDescriptor = {
+    agentId: "manager-live",
+    managerId: "manager-live",
+    displayName: "manager-live",
+    role: "manager",
+    status: "idle",
+    createdAt: "2026-03-14T00:01:00.000Z",
+    updatedAt: "2026-03-14T00:01:00.000Z",
+    cwd: "/tmp/live",
+    model: {
+      provider: "openai-codex-app-server",
+      modelId: "gpt-5.4",
+      thinkingLevel: "xhigh",
+    },
+  };
+
+  return {
+    getAgent(agentId: string) {
+      return [terminatedManager, liveManager].find((agent) => agent.agentId === agentId);
+    },
+    listAgents() {
+      return [terminatedManager, liveManager];
+    },
+    getVisibleTranscriptPage(agentId?: string, options = { limit: 200 }) {
+      return pageEntries(
+        agentId
+          ? [
+              {
+                type: "conversation_message" as const,
+                agentId,
+                role: "assistant" as const,
+                text: `hello from ${agentId}`,
+                timestamp: "2026-03-14T00:00:01.000Z",
+                historyCursor: `2026-03-14T00:00:01.000Z|${agentId}|message-1`,
+                source: "speak_to_user" as const,
+              },
+            ]
+          : [],
+        options,
+      );
+    },
+    getVisibleTranscript(agentId?: string) {
+      return agentId
+        ? [
+            {
+              type: "conversation_message" as const,
+              agentId,
+              role: "assistant" as const,
+              text: `hello from ${agentId}`,
+              timestamp: "2026-03-14T00:00:01.000Z",
+              historyCursor: `2026-03-14T00:00:01.000Z|${agentId}|message-1`,
+              source: "speak_to_user" as const,
+            },
+          ]
+        : [];
+    },
+    getConversationHistoryPage(_agentId?: string, options = { limit: 200 }) {
+      return pageEntries([], options);
+    },
+    getConversationHistory() {
+      return [];
+    },
+    getConfig() {
+      return createConfig({
+        installDir: process.cwd(),
+        projectRoot: process.cwd(),
+        dataDir: "/tmp/middleman-test",
+      });
+    },
+  };
+}
+
 function createEmptyManagerStub() {
   return {
     getAgent() {
@@ -359,6 +447,26 @@ describe("WsHandler", () => {
     expect(events[2]).toMatchObject({
       type: "conversation_history",
       agentId: "manager-1",
+      mode: "replace",
+      hasMore: false,
+    });
+  });
+
+  it("prefers a non-terminated manager when bootstrapping subscriptions", async () => {
+    const handler = new WsHandler({
+      swarmManager: createManagerFallbackStub() as never,
+    });
+    const { events, socket } = createSocket();
+
+    await (handler as any).handleSubscribe(socket);
+
+    expect(events[0]).toMatchObject({
+      type: "ready",
+      subscribedAgentId: "manager-live",
+    });
+    expect(events[2]).toMatchObject({
+      type: "conversation_history",
+      agentId: "manager-live",
       mode: "replace",
       hasMore: false,
     });

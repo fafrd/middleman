@@ -1055,7 +1055,33 @@ export class ManagerWsClient {
       patch.lastError = null;
     }
 
+    const nextAgents = patch.agents ?? this.state.agents;
+    const fallbackTarget = chooseFallbackAgentId(
+      nextAgents,
+      this.state.managerOrder,
+      this.state.targetAgentId,
+    );
+    const targetChanged = fallbackTarget !== this.state.targetAgentId;
+
+    if (targetChanged) {
+      patch.targetAgentId = fallbackTarget;
+      patch.messages = [];
+      patch.activityMessages = [];
+      patch.oldestHistoryCursor = null;
+      patch.hasOlderHistory = false;
+      patch.isLoadingOlderHistory = false;
+      patch.isLoadingHistory = fallbackTarget !== null;
+      this.desiredAgentId = fallbackTarget ?? null;
+    }
+
     this.updateState(patch);
+
+    if (targetChanged && fallbackTarget && this.socket?.readyState === WebSocket.OPEN) {
+      this.send({
+        type: "subscribe",
+        agentId: fallbackTarget,
+      });
+    }
   }
 
   private updateState(patch: Partial<ManagerWsState>): void {

@@ -330,6 +330,31 @@ export class RuntimeSupervisor {
     await exitPromise;
   }
 
+  private async abortWorker(sessionId: string): Promise<void> {
+    const handle = this.workers.get(sessionId);
+    if (!handle) {
+      return;
+    }
+
+    this.stopHeartbeat(sessionId);
+    const exitPromise = waitForExit(handle.process);
+
+    if (!hasExited(handle.process)) {
+      handle.process.kill("SIGTERM");
+    }
+
+    const terminated = await Promise.race([
+      exitPromise.then(() => true),
+      delay(DEFAULT_TERMINATE_TIMEOUT_MS).then(() => false),
+    ]);
+
+    if (!terminated && !hasExited(handle.process)) {
+      handle.process.kill("SIGKILL");
+    }
+
+    await exitPromise;
+  }
+
   getWorker(sessionId: string): WorkerHandle | undefined {
     return this.workers.get(sessionId);
   }
@@ -376,11 +401,9 @@ export class RuntimeSupervisor {
         handle.protocol.send({ type: "ping" });
       } catch (error) {
         this.callbacks.onWorkerError(sessionId, toError(error));
-        void this.terminateWorker(sessionId, `heartbeat-send-${Date.now()}`).catch(
-          (terminateError) => {
-            this.callbacks.onWorkerError(sessionId, toError(terminateError));
-          },
-        );
+        void this.abortWorker(sessionId).catch((terminateError) => {
+          this.callbacks.onWorkerError(sessionId, toError(terminateError));
+        });
         return;
       }
 
@@ -423,7 +446,7 @@ export class RuntimeSupervisor {
       sessionId,
       new Error(`Heartbeat timed out for worker ${sessionId}.`),
     );
-    void this.terminateWorker(sessionId, `heartbeat-timeout-${Date.now()}`).catch((error) => {
+    void this.abortWorker(sessionId).catch((error) => {
       this.callbacks.onWorkerError(sessionId, toError(error));
     });
   }

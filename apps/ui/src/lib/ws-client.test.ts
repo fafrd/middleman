@@ -1749,6 +1749,76 @@ describe("ManagerWsClient", () => {
     client.destroy();
   });
 
+  it("switches to another manager when the selected manager becomes terminated", () => {
+    const client = new ManagerWsClient("ws://127.0.0.1:8787", "manager-dead");
+
+    client.start();
+    vi.advanceTimersByTime(60);
+
+    const socket = FakeWebSocket.instances[0];
+    socket.emit("open");
+
+    emitServerEvent(socket, {
+      type: "ready",
+      serverTime: new Date().toISOString(),
+      buildHash: TEST_BUILD_HASH,
+      subscribedAgentId: "manager-dead",
+    });
+
+    emitServerEvent(socket, {
+      type: "agents_snapshot",
+      agents: [
+        {
+          agentId: "manager-dead",
+          managerId: "manager-dead",
+          displayName: "Manager Dead",
+          role: "manager",
+          status: "idle",
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+          cwd: "/tmp",
+          model: {
+            provider: "openai-codex",
+            modelId: "gpt-5.4",
+            thinkingLevel: "medium",
+          },
+        },
+        {
+          agentId: "manager-live",
+          managerId: "manager-live",
+          displayName: "Manager Live",
+          role: "manager",
+          status: "idle",
+          createdAt: "2026-01-01T00:01:00.000Z",
+          updatedAt: "2026-01-01T00:01:00.000Z",
+          cwd: "/tmp/live",
+          model: {
+            provider: "openai-codex",
+            modelId: "gpt-5.4",
+            thinkingLevel: "medium",
+          },
+        },
+      ],
+    });
+
+    emitServerEvent(socket, {
+      type: "agent_status",
+      agentId: "manager-dead",
+      status: "terminated",
+      pendingCount: 0,
+    });
+
+    expect(client.getState().targetAgentId).toBe("manager-live");
+
+    const subscribePayload = JSON.parse(socket.sentPayloads.at(-1) ?? "{}");
+    expect(subscribePayload).toMatchObject({
+      type: "subscribe",
+      agentId: "manager-live",
+    });
+
+    client.destroy();
+  });
+
   it("keeps an explicitly selected errored manager thread active so its error remains visible", () => {
     const client = new ManagerWsClient("ws://127.0.0.1:8787", "manager");
 

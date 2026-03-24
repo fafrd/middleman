@@ -250,4 +250,48 @@ describe("SwarmManager.handleHostCall", () => {
     expect(start).toHaveBeenCalledWith("worker-1");
     expect(stop.mock.invocationCallOrder[0]).toBeLessThan(start.mock.invocationCallOrder[0]);
   });
+
+  it("revives terminated manager sessions before accepting new input", async () => {
+    const terminatedDescriptor = makeDescriptor({
+      agentId: "manager-1",
+      managerId: "manager-1",
+      role: "manager",
+      status: "terminated",
+    });
+    const restartedDescriptor = {
+      ...terminatedDescriptor,
+      status: "idle" as const,
+    };
+    const manager = createManager();
+    const requireDescriptor = vi
+      .fn()
+      .mockReturnValueOnce(terminatedDescriptor)
+      .mockReturnValueOnce(restartedDescriptor);
+    const applyRuntimeStatus = vi.fn(() => undefined);
+    const start = vi.fn(async () => undefined);
+
+    (manager as any).lifecycle = {
+      requireDescriptor,
+    };
+    (manager as any).core = {
+      sessionService: {
+        getById: vi.fn(() => ({
+          id: "manager-1",
+          contextUsage: null,
+        })),
+        applyRuntimeStatus,
+        start,
+      },
+    };
+
+    await expect((manager as any).ensureAgentReadyForInput("manager-1")).resolves.toEqual(
+      restartedDescriptor,
+    );
+
+    expect(applyRuntimeStatus).toHaveBeenCalledWith("manager-1", "stopped", null, null);
+    expect(start).toHaveBeenCalledWith("manager-1");
+    expect(applyRuntimeStatus.mock.invocationCallOrder[0]).toBeLessThan(
+      start.mock.invocationCallOrder[0],
+    );
+  });
 });

@@ -44,6 +44,10 @@ This is just one example — ask the user how they'd like to work and adapt to t
 Close by asking if they want you to save their preferences to memory for future sessions.
 If they agree, summarize the choices and persist them using the memory workflow.`;
 
+function isPreferredManagerCandidate(descriptor: AgentDescriptor): boolean {
+  return descriptor.role === "manager" && descriptor.status !== "terminated";
+}
+
 interface SwarmLifecycleServiceOptions {
   config: SwarmConfig;
   now: () => string;
@@ -198,11 +202,24 @@ export class SwarmLifecycleService {
   resolvePreferredManagerId(): string | undefined {
     const managers = this.listManagers();
     const orderedManagerIds = this.options.getManagerOrderRepo().list();
+    const preferredManagers = managers.filter(isPreferredManagerCandidate);
+
+    for (const managerId of orderedManagerIds) {
+      if (preferredManagers.some((manager) => manager.agentId === managerId)) {
+        return managerId;
+      }
+    }
+
+    if (preferredManagers.length > 0) {
+      return preferredManagers[0]?.agentId;
+    }
+
     for (const managerId of orderedManagerIds) {
       if (managers.some((manager) => manager.agentId === managerId)) {
         return managerId;
       }
     }
+
     return managers[0]?.agentId;
   }
 
