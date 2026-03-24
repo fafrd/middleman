@@ -13,7 +13,6 @@ const workerCommandTypes = new Set<WorkerCommand["type"]>([
   "stop",
   "terminate",
   "host_call_result",
-  "ping",
 ]);
 
 function isWorkerCommand(message: WorkerCommand | WorkerEvent): message is WorkerCommand {

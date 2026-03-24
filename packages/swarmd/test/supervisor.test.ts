@@ -4,7 +4,7 @@ import { createRequire } from "node:module";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, describe, expect, it } from "vitest";
 
 import { RuntimeSupervisor } from "../src/core/supervisor/runtime-supervisor.js";
 import { WorkerProtocolHost } from "../src/core/supervisor/worker-protocol.js";
@@ -278,14 +278,11 @@ describe("RuntimeSupervisor", () => {
     );
   });
 
-  it("speaks ping/pong and bootstraps a compiled Codex worker over the JSONL protocol", async () => {
+  it("bootstraps a compiled Codex worker over the JSONL protocol", async () => {
     const session = createSessionRecord("session-protocol-test");
     const config = createRuntimeConfig();
     const { child, protocol, waitForEvent } = spawnCompiledWorker();
     childProcesses.push(child);
-
-    protocol.send({ type: "ping" });
-    await expect(waitForEvent((event) => event.type === "pong")).resolves.toEqual({ type: "pong" });
 
     protocol.send({ type: "bootstrap", session, config });
     await expect(waitForEvent((event) => event.type === "ready")).resolves.toMatchObject({
@@ -305,23 +302,17 @@ describe("RuntimeSupervisor", () => {
     const workerExits: Array<{ sessionId: string; code: number | null; signal: string | null }> =
       [];
     const workerErrors: Error[] = [];
-    const supervisor = new RuntimeSupervisor(
-      {
-        onWorkerEvent: (_sessionId, event) => {
-          workerEvents.push(event);
-        },
-        onWorkerExit: (sessionId, code, signal) => {
-          workerExits.push({ sessionId, code, signal });
-        },
-        onWorkerError: (_sessionId, error) => {
-          workerErrors.push(error);
-        },
+    const supervisor = new RuntimeSupervisor({
+      onWorkerEvent: (_sessionId, event) => {
+        workerEvents.push(event);
       },
-      {
-        heartbeatIntervalMs: 1_000,
-        heartbeatTimeoutMs: 1_000,
+      onWorkerExit: (sessionId, code, signal) => {
+        workerExits.push({ sessionId, code, signal });
       },
-    );
+      onWorkerError: (_sessionId, error) => {
+        workerErrors.push(error);
+      },
+    });
     supervisors.push(supervisor);
 
     const handle = await supervisor.spawnWorker(session, config);
@@ -465,34 +456,5 @@ describe("RuntimeSupervisor", () => {
         },
       },
     });
-  });
-
-  it("treats heartbeat timeouts as crashes instead of intentional termination", async () => {
-    const workerErrors: Error[] = [];
-    const supervisor = new RuntimeSupervisor({
-      onWorkerEvent: () => undefined,
-      onWorkerExit: () => undefined,
-      onWorkerError: (_sessionId, error) => {
-        workerErrors.push(error);
-      },
-    });
-
-    const abortWorker = vi.fn(async () => undefined);
-    const terminateWorker = vi.fn(async () => undefined);
-
-    (supervisor as any).abortWorker = abortWorker;
-    (supervisor as any).terminateWorker = terminateWorker;
-    (supervisor as any).workers.set("session-heartbeat-timeout", {
-      sessionId: "session-heartbeat-timeout",
-    });
-
-    (supervisor as any).handleHeartbeatTimeout("session-heartbeat-timeout");
-
-    expect(workerErrors).toHaveLength(1);
-    expect(workerErrors[0]?.message).toBe(
-      "Heartbeat timed out for worker session-heartbeat-timeout.",
-    );
-    expect(abortWorker).toHaveBeenCalledWith("session-heartbeat-timeout");
-    expect(terminateWorker).not.toHaveBeenCalled();
   });
 });
