@@ -420,7 +420,6 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   async compactAgentForUser(
     callerAgentId: string,
     targetAgentId: string,
-    customInstructions?: string,
   ): Promise<{ agentId: string; compacted: true }> {
     const manager = this.lifecycle.assertManager(callerAgentId, "compact agents");
     const target = this.lifecycle.requireDescriptor(targetAgentId);
@@ -453,15 +452,10 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       );
     }
 
-    const trimmedInstructions = customInstructions?.trim();
-
     this.compactingAgentIds.add(target.agentId);
 
     try {
-      const operationId = core.messageService.compact(
-        target.agentId,
-        trimmedInstructions && trimmedInstructions.length > 0 ? trimmedInstructions : undefined,
-      );
+      const operationId = core.messageService.compact(target.agentId);
       await this.waitForOperationCompletion(target.agentId, operationId);
       return {
         agentId: target.agentId,
@@ -1319,18 +1313,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       return true;
     }
 
-    const sessionService = this.core?.sessionService as
-      | {
-          getBackendState?: (sessionId: string) => Record<string, unknown> | null;
-        }
-      | undefined;
-    if (typeof sessionService?.getBackendState !== "function") {
-      return false;
-    }
-
-    return (
-      readString(readObject(sessionService.getBackendState(agentId))?.lifecycle) === "compacting"
-    );
+    return this.core?.sessionService.getById(agentId)?.status === "compacting";
   }
 
   private async waitForOperationCompletion(

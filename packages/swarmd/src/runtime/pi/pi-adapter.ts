@@ -178,8 +178,8 @@ export class PiBackendAdapter implements BackendAdapter {
     await this.host.interrupt();
   }
 
-  async compact(customInstructions?: string): Promise<unknown> {
-    return await this.host.compact(customInstructions);
+  async compact(): Promise<unknown> {
+    return await this.host.compact();
   }
 
   async stop(): Promise<void> {

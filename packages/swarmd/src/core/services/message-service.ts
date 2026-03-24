@@ -118,7 +118,7 @@ export class MessageService {
     return operation.id;
   }
 
-  compact(sessionId: string, customInstructions?: string): string {
+  compact(sessionId: string): string {
     const session = this.sessionRepo.getById(sessionId);
     if (!session) {
       throw new Error(`Session ${sessionId} not found`);
@@ -132,7 +132,6 @@ export class MessageService {
     this.supervisor.sendCommand(sessionId, {
       type: "compact",
       operationId: operation.id,
-      ...(customInstructions === undefined ? {} : { customInstructions }),
     });
 
     return operation.id;

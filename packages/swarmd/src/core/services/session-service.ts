@@ -24,6 +24,7 @@ const PERSISTED_ACTIVE_SESSION_STATUSES: SessionStatus[] = [
   "starting",
   "idle",
   "busy",
+  "compacting",
   "interrupting",
   "stopping",
 ];

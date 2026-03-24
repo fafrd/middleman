@@ -36,6 +36,7 @@ export const sessionStatuses = [
   "starting",
   "idle",
   "busy",
+  "compacting",
   "interrupting",
   "stopping",
   "stopped",

@@ -590,17 +590,16 @@ describe("PiSessionHost", () => {
       },
     });
 
-    const pendingCompaction = host.compact("Keep the latest plan");
+    const pendingCompaction = host.compact();
 
     expect(host.isBusy()).toBe(true);
-    expect(session.compact).toHaveBeenCalledWith("Keep the latest plan");
-    expect(callbacks.emitBackendState).toHaveBeenCalledWith({ lifecycle: "compacting" });
+    expect(session.compact).toHaveBeenCalledWith();
+    expect(callbacks.emitStatusChange).toHaveBeenCalledWith("compacting", undefined, null);
 
     resolveCompact?.({ compacted: true });
 
     await expect(pendingCompaction).resolves.toEqual({ compacted: true });
     expect(host.isBusy()).toBe(false);
-    expect(callbacks.emitBackendState).toHaveBeenLastCalledWith({});
     expect(callbacks.emitStatusChange).toHaveBeenLastCalledWith("idle", undefined, null);
   });
 

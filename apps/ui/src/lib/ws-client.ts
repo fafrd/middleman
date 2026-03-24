@@ -400,10 +400,7 @@ export class ManagerWsClient {
     }));
   }
 
-  async compactAgent(
-    agentId: string,
-    customInstructions?: string,
-  ): Promise<{
+  async compactAgent(agentId: string): Promise<{
     agentId: string;
     compacted: true;
   }> {
@@ -416,13 +413,10 @@ export class ManagerWsClient {
       throw new Error("WebSocket is disconnected. Reconnecting...");
     }
 
-    const normalizedInstructions = customInstructions?.trim();
-
     return this.enqueueRequest("compact_agent", (requestId) => ({
       type: "compact_agent",
       agentId: trimmed,
       requestId,
-      ...(normalizedInstructions ? { customInstructions: normalizedInstructions } : {}),
     }));
   }
 

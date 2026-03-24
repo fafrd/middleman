@@ -25,7 +25,7 @@ const expectedCapabilities: BackendCapabilities = {
   canForkThread: true,
   canInterrupt: true,
   canQueueInput: true,
-  canManualCompact: true,
+  canManualCompact: false,
   canReadHistory: true,
   emitsToolProgress: true,
   exposesRawEvents: true,

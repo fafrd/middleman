@@ -229,13 +229,12 @@ describe("MessageService", () => {
     const { messageService, operationService, session, supervisor } =
       createTestContext(openDatabases);
 
-    const operationId = messageService.compact(session.id, "Keep recent tasks only");
+    const operationId = messageService.compact(session.id);
 
     expect(operationId).toMatch(/^[A-Za-z0-9_-]+$/);
     expect(supervisor.sendCommand).toHaveBeenCalledWith(session.id, {
       type: "compact",
       operationId,
-      customInstructions: "Keep recent tasks only",
     });
     expect(operationService.getById(operationId)).toMatchObject({
       id: operationId,

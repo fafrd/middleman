@@ -45,6 +45,7 @@ import { useManagerActions } from "@/hooks/index-page/use-manager-actions";
 import { usePendingResponse } from "@/hooks/index-page/use-pending-response";
 import { useFileDrop } from "@/hooks/index-page/use-file-drop";
 import { useDynamicFavicon } from "@/hooks/index-page/use-dynamic-favicon";
+import { supportsManualCompaction } from "@/lib/model-preset";
 import type { ConversationAttachment, CreateManagerModelPreset } from "@middleman/protocol";
 
 export const Route = createFileRoute("/")({
@@ -120,10 +121,6 @@ function writeStoredSidebarWidth(width: number): void {
   } catch {
     // Ignore localStorage write failures in restricted environments.
   }
-}
-
-function isPiModelProvider(provider: string | null | undefined): boolean {
-  return provider === "openai-codex" || provider === "anthropic";
 }
 
 function useDesktopSidebarLayout(): boolean {
@@ -219,7 +216,6 @@ export function IndexPage() {
   const [isArtifactsPanelOpen, setIsArtifactsPanelOpen] = useState(false);
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
   const [isStoppingCurrentSelection, setIsStoppingCurrentSelection] = useState(false);
-  const [compactingAgentId, setCompactingAgentId] = useState<string | null>(null);
   useDynamicFavicon();
 
   const { clearPendingResponseForAgent, markPendingResponse } = usePendingResponse();
@@ -417,10 +413,8 @@ export function IndexPage() {
   };
 
   const canStopCurrentSelection = isActiveManager ? isLoading || activeWorkerCount > 0 : isLoading;
-  const isCompactingCurrentSelection =
-    activeAgentId !== null && compactingAgentId === activeAgentId;
-  const showCompactCurrentSelection =
-    activeAgent !== null && isPiModelProvider(activeAgent.model.provider);
+  const isCompactingCurrentSelection = activeAgentStatus === "compacting";
+  const showCompactCurrentSelection = activeAgent !== null && supportsManualCompaction(activeAgent);
   const canCompactCurrentSelection =
     showCompactCurrentSelection &&
     activeAgentStatus === "idle" &&
@@ -471,12 +465,11 @@ export function IndexPage() {
       !activeAgentId ||
       !activeAgent ||
       isCompactingCurrentSelection ||
-      !isPiModelProvider(activeAgent.model.provider)
+      activeAgentStatus !== "idle" ||
+      !supportsManualCompaction(activeAgent)
     ) {
       return;
     }
-
-    setCompactingAgentId(activeAgentId);
 
     try {
       await client.compactAgent(activeAgentId);
@@ -484,10 +477,15 @@ export function IndexPage() {
     } catch (error) {
       const message = error instanceof Error ? error.message : "An unexpected error occurred.";
       setLastError(`Failed to compact context: ${message}`);
-    } finally {
-      setCompactingAgentId((current) => (current === activeAgentId ? null : current));
     }
-  }, [activeAgent, activeAgentId, clientRef, isCompactingCurrentSelection, setLastError]);
+  }, [
+    activeAgent,
+    activeAgentId,
+    activeAgentStatus,
+    clientRef,
+    isCompactingCurrentSelection,
+    setLastError,
+  ]);
 
   const handleMessageInputSubmitted = useCallback(() => {
     messageListRef.current?.scrollToBottom("smooth");

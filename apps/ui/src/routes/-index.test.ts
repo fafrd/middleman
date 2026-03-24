@@ -874,7 +874,40 @@ describe("IndexPage create manager model selection", () => {
     expect(typeof compactPayload.requestId).toBe("string");
   });
 
-  it("hides Compact context for non-Pi agents", async () => {
+  it("shows compaction progress from agent status instead of route-local state", async () => {
+    const socket = await renderPage();
+
+    emitServerEvent(socket, {
+      type: "agents_snapshot",
+      agents: [
+        buildManager("manager", "/tmp/manager"),
+        buildWorker("worker-1", "manager", "/tmp/manager"),
+      ],
+    });
+
+    await flushWsUiUpdates();
+
+    const sidebar = getSidebar();
+    click(within(sidebar).getByRole("button", { name: "Expand manager manager" }));
+    click(within(sidebar).getByRole("button", { name: "worker-1" }));
+
+    await flushWsUiUpdates();
+
+    emitServerEvent(socket, {
+      type: "agent_status",
+      agentId: "worker-1",
+      status: "compacting",
+      pendingCount: 0,
+    });
+
+    await flushWsUiUpdates();
+
+    click(getByRole(document.body, "button", { name: "More actions" }));
+
+    expect(queryByText(document.body, "Compacting…")).toBeTruthy();
+  });
+
+  it("hides Compact context for unknown descriptors even when the provider string looks Pi-like", async () => {
     const socket = await renderPage();
 
     emitServerEvent(socket, {
@@ -884,8 +917,8 @@ describe("IndexPage create manager model selection", () => {
         {
           ...buildWorker("worker-1", "manager", "/tmp/manager"),
           model: {
-            provider: "anthropic-claude-code",
-            modelId: "claude-opus-4-6",
+            provider: "openai-codex",
+            modelId: "gpt-5.4-unknown",
             thinkingLevel: "high" as const,
           },
         },

@@ -1282,13 +1282,12 @@ describe("ManagerWsClient", () => {
       subscribedAgentId: "manager",
     });
 
-    const compactPromise = client.compactAgent("worker-1", "Keep recent findings only");
+    const compactPromise = client.compactAgent("worker-1");
     const compactPayload = JSON.parse(socket.sentPayloads.at(-1) ?? "{}");
 
     expect(compactPayload).toMatchObject({
       type: "compact_agent",
       agentId: "worker-1",
-      customInstructions: "Keep recent findings only",
     });
     expect(typeof compactPayload.requestId).toBe("string");
 
