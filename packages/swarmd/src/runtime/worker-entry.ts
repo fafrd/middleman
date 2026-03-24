@@ -154,9 +154,6 @@ async function main(): Promise<void> {
 
   client.onCommand(async (cmd) => {
     switch (cmd.type) {
-      case "ping":
-        client.send({ type: "pong" });
-        break;
       case "bootstrap": {
         let nextAdapter: BackendAdapter | null = null;
 

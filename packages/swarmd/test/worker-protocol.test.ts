@@ -29,7 +29,7 @@ class BrokenPipeStream extends EventEmitter {
 
 describe("worker protocol", () => {
   it("round-trips commands and events through the JSONL codec", () => {
-    const command: WorkerCommand = { type: "ping" };
+    const command: WorkerCommand = { type: "stop", operationId: "operation-stop" };
     const event: WorkerEvent = {
       type: "session_status",
       status: "errored",
@@ -71,13 +71,13 @@ describe("worker protocol", () => {
       return lines;
     })();
 
-    stream.write('{"type":"ping"}\n{"type":"pong');
-    stream.end('"}\r\n{"type":"ping"}');
+    stream.write('{"type":"stop","operationId":"operation-stop"}\n{"type":"session_status"');
+    stream.end(',"status":"idle"}\r\n{"type":"terminate","operationId":"operation-terminate"}');
 
     await expect(linesPromise).resolves.toEqual([
-      '{"type":"ping"}',
-      '{"type":"pong"}',
-      '{"type":"ping"}',
+      '{"type":"stop","operationId":"operation-stop"}',
+      '{"type":"session_status","status":"idle"}',
+      '{"type":"terminate","operationId":"operation-terminate"}',
     ]);
   });
 
@@ -89,18 +89,22 @@ describe("worker protocol", () => {
     });
 
     const writer = new LineWriter(stream);
-    writer.send({ type: "ping" });
-    writer.send({ type: "pong" });
+    writer.send({ type: "interrupt", operationId: "operation-interrupt" });
+    writer.send({ type: "session_status", status: "idle" });
 
-    expect(chunks.join("")).toBe('{"type":"ping"}\n{"type":"pong"}\n');
+    expect(chunks.join("")).toBe(
+      '{"type":"interrupt","operationId":"operation-interrupt"}\n{"type":"session_status","status":"idle"}\n',
+    );
   });
 
   it("swallows broken-pipe writes after the other end closes", () => {
     const stream = new BrokenPipeStream();
     const writer = new LineWriter(stream as unknown as NodeJS.WritableStream);
 
-    expect(() => writer.send({ type: "ping" })).not.toThrow();
-    expect(() => writer.send({ type: "pong" })).not.toThrow();
+    expect(() =>
+      writer.send({ type: "terminate", operationId: "operation-terminate" }),
+    ).not.toThrow();
+    expect(() => writer.send({ type: "session_status", status: "idle" })).not.toThrow();
 
     expect(stream.writes).toBe(1);
   });

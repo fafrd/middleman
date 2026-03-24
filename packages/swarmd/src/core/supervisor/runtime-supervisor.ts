@@ -14,8 +14,6 @@ import type {
 import { LineReader, WorkerProtocolHost } from "./worker-protocol.js";
 
 const DEFAULT_BOOTSTRAP_TIMEOUT_MS = 10_000;
-const DEFAULT_HEARTBEAT_INTERVAL_MS = 30_000;
-const DEFAULT_HEARTBEAT_TIMEOUT_MS = 10_000;
 const DEFAULT_STOP_TIMEOUT_MS = 5_000;
 const DEFAULT_TERMINATE_TIMEOUT_MS = 5_000;
 
@@ -108,22 +106,9 @@ export interface SupervisorCallbacks {
 export class RuntimeSupervisor {
   private workers = new Map<string, WorkerHandle>();
   private callbacks: SupervisorCallbacks;
-  private heartbeatIntervalMs: number;
-  private heartbeatTimeoutMs: number;
-  private heartbeatTimers = new Map<string, NodeJS.Timeout>();
-  private heartbeatTimeouts = new Map<string, NodeJS.Timeout>();
-  private awaitingHeartbeat = new Set<string>();
 
-  constructor(
-    callbacks: SupervisorCallbacks,
-    options?: {
-      heartbeatIntervalMs?: number;
-      heartbeatTimeoutMs?: number;
-    },
-  ) {
+  constructor(callbacks: SupervisorCallbacks) {
     this.callbacks = callbacks;
-    this.heartbeatIntervalMs = options?.heartbeatIntervalMs ?? DEFAULT_HEARTBEAT_INTERVAL_MS;
-    this.heartbeatTimeoutMs = options?.heartbeatTimeoutMs ?? DEFAULT_HEARTBEAT_TIMEOUT_MS;
   }
 
   async spawnWorker(session: SessionRecord, config: SessionRuntimeConfig): Promise<WorkerHandle> {
@@ -186,11 +171,6 @@ export class RuntimeSupervisor {
     };
 
     protocol.onEvent((event) => {
-      if (event.type === "pong") {
-        this.acknowledgeHeartbeat(session.id);
-        return;
-      }
-
       if (event.type === "fatal_error") {
         const workerError = new Error(event.error.message);
         if (!readyHandled) {
@@ -254,7 +234,6 @@ export class RuntimeSupervisor {
       throw toError(error);
     }
 
-    this.startHeartbeat(session.id);
     return handle;
   }
 
@@ -277,7 +256,6 @@ export class RuntimeSupervisor {
       return;
     }
 
-    this.stopHeartbeat(sessionId);
     const exitPromise = waitForExit(handle.process);
 
     try {
@@ -305,7 +283,6 @@ export class RuntimeSupervisor {
       return;
     }
 
-    this.stopHeartbeat(sessionId);
     const exitPromise = waitForExit(handle.process);
 
     try {
@@ -313,31 +290,6 @@ export class RuntimeSupervisor {
     } catch {
       // Process signaling below is the real termination path.
     }
-
-    if (!hasExited(handle.process)) {
-      handle.process.kill("SIGTERM");
-    }
-
-    const terminated = await Promise.race([
-      exitPromise.then(() => true),
-      delay(DEFAULT_TERMINATE_TIMEOUT_MS).then(() => false),
-    ]);
-
-    if (!terminated && !hasExited(handle.process)) {
-      handle.process.kill("SIGKILL");
-    }
-
-    await exitPromise;
-  }
-
-  private async abortWorker(sessionId: string): Promise<void> {
-    const handle = this.workers.get(sessionId);
-    if (!handle) {
-      return;
-    }
-
-    this.stopHeartbeat(sessionId);
-    const exitPromise = waitForExit(handle.process);
 
     if (!hasExited(handle.process)) {
       handle.process.kill("SIGTERM");
@@ -383,91 +335,12 @@ export class RuntimeSupervisor {
     }
   }
 
-  private startHeartbeat(sessionId: string): void {
-    this.stopHeartbeat(sessionId);
-
-    const timer = setInterval(() => {
-      const handle = this.workers.get(sessionId);
-      if (!handle) {
-        this.stopHeartbeat(sessionId);
-        return;
-      }
-
-      if (this.awaitingHeartbeat.has(sessionId)) {
-        return;
-      }
-
-      try {
-        handle.protocol.send({ type: "ping" });
-      } catch (error) {
-        this.callbacks.onWorkerError(sessionId, toError(error));
-        void this.abortWorker(sessionId).catch((terminateError) => {
-          this.callbacks.onWorkerError(sessionId, toError(terminateError));
-        });
-        return;
-      }
-
-      this.awaitingHeartbeat.add(sessionId);
-      const timeout = setTimeout(() => {
-        this.handleHeartbeatTimeout(sessionId);
-      }, this.heartbeatTimeoutMs);
-      timeout.unref?.();
-      this.heartbeatTimeouts.set(sessionId, timeout);
-    }, this.heartbeatIntervalMs);
-    timer.unref?.();
-
-    this.heartbeatTimers.set(sessionId, timer);
-  }
-
-  private stopHeartbeat(sessionId: string): void {
-    const timer = this.heartbeatTimers.get(sessionId);
-    if (timer) {
-      clearInterval(timer);
-      this.heartbeatTimers.delete(sessionId);
-    }
-
-    const timeout = this.heartbeatTimeouts.get(sessionId);
-    if (timeout) {
-      clearTimeout(timeout);
-      this.heartbeatTimeouts.delete(sessionId);
-    }
-
-    this.awaitingHeartbeat.delete(sessionId);
-  }
-
-  private handleHeartbeatTimeout(sessionId: string): void {
-    if (!this.workers.has(sessionId)) {
-      this.stopHeartbeat(sessionId);
-      return;
-    }
-
-    this.stopHeartbeat(sessionId);
-    this.callbacks.onWorkerError(
-      sessionId,
-      new Error(`Heartbeat timed out for worker ${sessionId}.`),
-    );
-    void this.abortWorker(sessionId).catch((error) => {
-      this.callbacks.onWorkerError(sessionId, toError(error));
-    });
-  }
-
-  private acknowledgeHeartbeat(sessionId: string): void {
-    const timeout = this.heartbeatTimeouts.get(sessionId);
-    if (timeout) {
-      clearTimeout(timeout);
-      this.heartbeatTimeouts.delete(sessionId);
-    }
-
-    this.awaitingHeartbeat.delete(sessionId);
-  }
-
   private cleanupWorker(sessionId: string): void {
     const handle = this.workers.get(sessionId);
     if (!handle) {
       return;
     }
 
-    this.stopHeartbeat(sessionId);
     handle.protocol.close();
     this.workers.delete(sessionId);
   }

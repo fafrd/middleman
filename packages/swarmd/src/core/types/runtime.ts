@@ -105,8 +105,7 @@ export type WorkerCommand =
       ok: boolean;
       payload?: unknown;
       error?: SessionErrorInfo;
-    }
-  | { type: "ping" };
+    };
 
 export const workerCommandSchema = z.discriminatedUnion("type", [
   z.object({
@@ -144,9 +143,6 @@ export const workerCommandSchema = z.discriminatedUnion("type", [
     payload: z.unknown().optional(),
     error: sessionErrorInfoSchema.optional(),
   }),
-  z.object({
-    type: z.literal("ping"),
-  }),
 ]);
 
 export type WorkerEvent =
@@ -170,8 +166,7 @@ export type WorkerEvent =
       ok: boolean;
       payload?: unknown;
       error?: SessionErrorInfo;
-    }
-  | { type: "pong" };
+    };
 
 export const workerEventSchema = z.discriminatedUnion("type", [
   z.object({
@@ -216,8 +211,5 @@ export const workerEventSchema = z.discriminatedUnion("type", [
     ok: z.boolean(),
     payload: z.unknown().optional(),
     error: sessionErrorInfoSchema.optional(),
-  }),
-  z.object({
-    type: z.literal("pong"),
   }),
 ]);
