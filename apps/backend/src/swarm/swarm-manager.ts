@@ -245,6 +245,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       await this.core.shutdown();
     }
 
+    this.lifecycle.invalidateDescriptorGraphCache();
     this.core = null;
     this.agentRepo = null;
     this.managerOrderRepo = null;
@@ -322,6 +323,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     });
 
     this.managerOrderRepoOrThrow().ensure([descriptor.agentId]);
+    this.lifecycle.invalidateDescriptorGraphCache();
     this.emitStatus(descriptor.agentId, descriptor.status, 0);
     this.emitAgentsSnapshot();
     await this.lifecycle.sendManagerBootstrapMessage(managerId, async (from, to, message) => {
@@ -386,6 +388,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
     await this.lifecycle.terminateSession(target.agentId);
     this.coreOrThrow().archiveSession(target.agentId);
+    this.lifecycle.invalidateDescriptorGraphCache();
     this.clearWorkerCompletionReportTracking(target.agentId);
     this.emitStatus(target.agentId, "terminated", 0);
     this.emitAgentsSnapshot();
@@ -521,6 +524,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
     await this.lifecycle.deleteAgentSession(targetManagerId);
     this.managerOrderRepoOrThrow().remove(targetManagerId);
+    this.lifecycle.invalidateDescriptorGraphCache();
 
     this.emitAgentsSnapshot();
 
@@ -548,6 +552,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     }
 
     const ordered = this.managerOrderRepoOrThrow().reorder(normalized);
+    this.lifecycle.invalidateDescriptorGraphCache();
     this.emitAgentsSnapshot();
     return ordered;
   }

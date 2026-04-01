@@ -309,6 +309,26 @@ describe("MIDDLEMAN_STORE_MIGRATIONS", () => {
     ).toEqual({ name: "idx_messages_tool_name_session_role" });
     expect(
       db
+        .prepare<[], { name: string }>(
+          `SELECT name
+           FROM sqlite_master
+           WHERE type = 'index'
+             AND name = 'idx_middleman_agents_manager_session'`,
+        )
+        .get(),
+    ).toEqual({ name: "idx_middleman_agents_manager_session" });
+    expect(
+      db
+        .prepare<[], { name: string }>(
+          `SELECT name
+           FROM sqlite_master
+           WHERE type = 'index'
+             AND name = 'idx_middleman_manager_order_sort'`,
+        )
+        .get(),
+    ).toEqual({ name: "idx_middleman_manager_order_sort" });
+    expect(
+      db
         .prepare<[], { id: string }>(
           `SELECT id
            FROM migrations
@@ -316,5 +336,14 @@ describe("MIDDLEMAN_STORE_MIGRATIONS", () => {
         )
         .get(),
     ).toEqual({ id: "middleman_003_compact_agent_tool_call_storage" });
+    expect(
+      db
+        .prepare<[], { id: string }>(
+          `SELECT id
+           FROM migrations
+           WHERE id = 'middleman_004_add_ordering_indexes'`,
+        )
+        .get(),
+    ).toEqual({ id: "middleman_004_add_ordering_indexes" });
   });
 });
