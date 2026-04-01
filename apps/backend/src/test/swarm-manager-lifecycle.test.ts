@@ -484,6 +484,59 @@ describe("SwarmManager lifecycle", () => {
     expect(harness.manager.getAgent(workerDescriptor.agentId)?.model.thinkingLevel).toBe("low");
   });
 
+  it("reuses the cached descriptor graph for hot-path lookups while still reflecting live status changes", async () => {
+    const harness = await createHarness();
+    harnesses.push(harness);
+
+    const agentListSpy = vi.spyOn(harness.agentRepo, "list");
+    const managerOrderListSpy = vi.spyOn(harness.managerOrderRepo, "list");
+    const sessionListSpy = vi.spyOn(harness.sessionService, "list");
+
+    const managerDescriptor = await harness.manager.createManager("__bootstrap_manager__", {
+      name: "Manager",
+      cwd: REPO_ROOT,
+      model: "pi-codex",
+    });
+    const workerDescriptor = await harness.manager.spawnAgent(managerDescriptor.agentId, {
+      agentId: "worker",
+      model: "codex-app",
+    });
+
+    agentListSpy.mockClear();
+    managerOrderListSpy.mockClear();
+    sessionListSpy.mockClear();
+    (harness.manager as any).lifecycle.invalidateDescriptorGraphCache();
+
+    expect(harness.manager.getAgent(workerDescriptor.agentId)?.status).toBe("idle");
+    expect(agentListSpy).toHaveBeenCalledTimes(1);
+    expect(managerOrderListSpy).toHaveBeenCalledTimes(1);
+    expect(sessionListSpy).toHaveBeenCalledTimes(2);
+
+    expect(harness.manager.getAgent(workerDescriptor.agentId)?.status).toBe("idle");
+    expect(agentListSpy).toHaveBeenCalledTimes(1);
+    expect(managerOrderListSpy).toHaveBeenCalledTimes(1);
+    expect(sessionListSpy).toHaveBeenCalledTimes(2);
+
+    (harness.sessionService as any).applyRuntimeStatus(workerDescriptor.agentId, "busy", null, {
+      tokens: 42,
+      contextWindow: 100,
+      percent: 42,
+    });
+
+    expect(harness.manager.getAgent(workerDescriptor.agentId)).toMatchObject({
+      agentId: workerDescriptor.agentId,
+      status: "busy",
+      contextUsage: {
+        tokens: 42,
+        contextWindow: 100,
+        percent: 42,
+      },
+    });
+    expect(agentListSpy).toHaveBeenCalledTimes(1);
+    expect(managerOrderListSpy).toHaveBeenCalledTimes(1);
+    expect(sessionListSpy).toHaveBeenCalledTimes(2);
+  });
+
   it("emits manager-to-manager agent messages for both the sender and recipient manager views", async () => {
     const harness = await createHarness();
     harnesses.push(harness);

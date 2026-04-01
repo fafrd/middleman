@@ -57,7 +57,17 @@ interface SwarmLifecycleServiceOptions {
   getManagerOrderRepo: () => MiddlemanManagerOrderRepo;
 }
 
+interface DescriptorGraphCache {
+  activeAgentIds: Set<string>;
+  rowsById: Map<string, MiddlemanAgentRow>;
+  sortedActiveAgentIds: string[];
+  sortedAllAgentIds: string[];
+  managerOrder: string[];
+}
+
 export class SwarmLifecycleService {
+  private descriptorGraphCache: DescriptorGraphCache | null = null;
+
   constructor(private readonly options: SwarmLifecycleServiceOptions) {}
 
   async createAgentSessionAndRow(input: {
@@ -113,6 +123,7 @@ export class SwarmLifecycleService {
       backendConfig: runtimeConfig.backendConfig,
       autoStart: false,
     });
+    this.invalidateDescriptorGraphCache();
 
     if (!input.preserveMiddlemanRow) {
       this.options.getAgentRepo().create({
@@ -141,10 +152,12 @@ export class SwarmLifecycleService {
         await this.terminateSession(agentId);
       }
       this.options.getCore().sessionService.delete(agentId);
+      this.invalidateDescriptorGraphCache();
     }
 
     if (!options?.preserveMiddlemanRow) {
       this.options.getAgentRepo().delete(agentId);
+      this.invalidateDescriptorGraphCache();
     }
   }
 
@@ -191,6 +204,7 @@ export class SwarmLifecycleService {
     this.options
       .getManagerOrderRepo()
       .ensure(this.listManagers().map((manager) => manager.agentId));
+    this.invalidateDescriptorGraphCache();
   }
 
   resolveDefaultModelDescriptor(): AgentModelDescriptor {
@@ -201,7 +215,7 @@ export class SwarmLifecycleService {
 
   resolvePreferredManagerId(): string | undefined {
     const managers = this.listManagers();
-    const orderedManagerIds = this.options.getManagerOrderRepo().list();
+    const orderedManagerIds = this.getDescriptorGraph().managerOrder;
     const preferredManagers = managers.filter(isPreferredManagerCandidate);
 
     for (const managerId of orderedManagerIds) {
@@ -228,58 +242,15 @@ export class SwarmLifecycleService {
   }
 
   getSortedDescriptors(options?: { includeArchived?: boolean }): AgentDescriptor[] {
-    const core = this.options.getCore();
-    const sessionsById = new Map(
-      core.sessionService
-        .list({
-          includeArchived: options?.includeArchived === true,
-        })
-        .map((session) => [session.id, session]),
-    );
-    const descriptors = this.options
-      .getAgentRepo()
-      .list()
-      .map((row) => {
-        const session = sessionsById.get(row.sessionId);
-        return session ? buildDescriptor(core, row, session) : null;
-      })
-      .filter((descriptor): descriptor is AgentDescriptor => descriptor !== null);
-
-    const managerOrder = this.options.getManagerOrderRepo().list();
-    const managerIndexById = new Map(managerOrder.map((managerId, index) => [managerId, index]));
-
-    return descriptors.sort((left, right) => {
-      if (left.role === "manager" && right.role === "manager") {
-        return (
-          (managerIndexById.get(left.agentId) ?? Number.MAX_SAFE_INTEGER) -
-          (managerIndexById.get(right.agentId) ?? Number.MAX_SAFE_INTEGER)
-        );
-      }
-
-      if (left.role === "manager") {
-        return -1;
-      }
-      if (right.role === "manager") {
-        return 1;
-      }
-
-      if (left.managerId !== right.managerId) {
-        return (
-          (managerIndexById.get(left.managerId) ?? Number.MAX_SAFE_INTEGER) -
-          (managerIndexById.get(right.managerId) ?? Number.MAX_SAFE_INTEGER)
-        );
-      }
-
-      if (left.createdAt !== right.createdAt) {
-        return left.createdAt.localeCompare(right.createdAt);
-      }
-
-      return left.agentId.localeCompare(right.agentId);
-    });
+    return this.getSortedDescriptorsInternal(options, true);
   }
 
   getAgent(agentId: string): AgentDescriptor | undefined {
-    return this.getSortedDescriptors().find((descriptor) => descriptor.agentId === agentId);
+    return this.getAgentInternal(agentId, true);
+  }
+
+  invalidateDescriptorGraphCache(): void {
+    this.descriptorGraphCache = null;
   }
 
   requireDescriptor(agentId: string): AgentDescriptor {
@@ -325,6 +296,132 @@ export class SwarmLifecycleService {
     }
     return normalizeArchetypeId(archetypeId);
   }
+
+  private getSortedDescriptorsInternal(
+    options: { includeArchived?: boolean } | undefined,
+    allowCacheRefresh: boolean,
+  ): AgentDescriptor[] {
+    const core = this.options.getCore();
+    const graph = this.getDescriptorGraph();
+    const sessionsById = new Map(
+      core.sessionService
+        .list({
+          includeArchived: options?.includeArchived === true,
+        })
+        .map((session) => [session.id, session]),
+    );
+    const agentIds =
+      options?.includeArchived === true ? graph.sortedAllAgentIds : graph.sortedActiveAgentIds;
+    const descriptors: AgentDescriptor[] = [];
+    let isStale = false;
+
+    for (const agentId of agentIds) {
+      const row = graph.rowsById.get(agentId);
+      const session = sessionsById.get(agentId);
+      if (!row || !session) {
+        isStale = true;
+        continue;
+      }
+      descriptors.push(buildDescriptor(core, row, session));
+    }
+
+    if (isStale && allowCacheRefresh) {
+      this.invalidateDescriptorGraphCache();
+      return this.getSortedDescriptorsInternal(options, false);
+    }
+
+    return descriptors;
+  }
+
+  private getAgentInternal(
+    agentId: string,
+    allowCacheRefresh: boolean,
+  ): AgentDescriptor | undefined {
+    const graph = this.getDescriptorGraph();
+    const core = this.options.getCore();
+    const row = graph.rowsById.get(agentId);
+    const session = core.sessionService.getById(agentId);
+    const isActive = graph.activeAgentIds.has(agentId);
+
+    if (!row || !session || !isActive) {
+      if (allowCacheRefresh && (row || session)) {
+        this.invalidateDescriptorGraphCache();
+        return this.getAgentInternal(agentId, false);
+      }
+      return undefined;
+    }
+
+    return buildDescriptor(core, row, session);
+  }
+
+  // Cache the structural agent graph so hot-path lookups only need a single
+  // session fetch instead of reloading and sorting every agent on each event.
+  private getDescriptorGraph(): DescriptorGraphCache {
+    if (this.descriptorGraphCache) {
+      return this.descriptorGraphCache;
+    }
+
+    const core = this.options.getCore();
+    const rows = this.options.getAgentRepo().list();
+    const managerOrder = this.options.getManagerOrderRepo().list();
+    const sessionsById = new Map(
+      core.sessionService.list({ includeArchived: true }).map((session) => [session.id, session]),
+    );
+    const activeAgentIds = new Set(core.sessionService.list().map((session) => session.id));
+    const managerIndexById = new Map(managerOrder.map((managerId, index) => [managerId, index]));
+    const rowsById = new Map(rows.map((row) => [row.sessionId, row]));
+    const sortedAllAgentIds = rows
+      .filter((row) => sessionsById.has(row.sessionId))
+      .sort((left, right) => compareAgentRows(left, right, sessionsById, managerIndexById))
+      .map((row) => row.sessionId);
+
+    this.descriptorGraphCache = {
+      activeAgentIds,
+      rowsById,
+      sortedActiveAgentIds: sortedAllAgentIds.filter((agentId) => activeAgentIds.has(agentId)),
+      sortedAllAgentIds,
+      managerOrder,
+    };
+
+    return this.descriptorGraphCache;
+  }
+}
+
+function compareAgentRows(
+  left: MiddlemanAgentRow,
+  right: MiddlemanAgentRow,
+  sessionsById: ReadonlyMap<string, SessionRecord>,
+  managerIndexById: ReadonlyMap<string, number>,
+): number {
+  const leftSession = sessionsById.get(left.sessionId);
+  const rightSession = sessionsById.get(right.sessionId);
+
+  if (left.role === "manager" && right.role === "manager") {
+    return (
+      (managerIndexById.get(left.sessionId) ?? Number.MAX_SAFE_INTEGER) -
+      (managerIndexById.get(right.sessionId) ?? Number.MAX_SAFE_INTEGER)
+    );
+  }
+
+  if (left.role === "manager") {
+    return -1;
+  }
+  if (right.role === "manager") {
+    return 1;
+  }
+
+  if (left.managerSessionId !== right.managerSessionId) {
+    return (
+      (managerIndexById.get(left.managerSessionId) ?? Number.MAX_SAFE_INTEGER) -
+      (managerIndexById.get(right.managerSessionId) ?? Number.MAX_SAFE_INTEGER)
+    );
+  }
+
+  if (leftSession?.createdAt !== rightSession?.createdAt) {
+    return (leftSession?.createdAt ?? "").localeCompare(rightSession?.createdAt ?? "");
+  }
+
+  return left.sessionId.localeCompare(right.sessionId);
 }
 
 function buildDescriptor(

@@ -130,6 +130,16 @@ export const MIDDLEMAN_STORE_MIGRATIONS: readonly MigrationDefinition[] = [
         );
     `,
   },
+  {
+    id: "middleman_004_add_ordering_indexes",
+    sql: `
+      CREATE INDEX IF NOT EXISTS idx_middleman_agents_manager_session
+        ON middleman_agents(manager_session_id, session_id);
+
+      CREATE INDEX IF NOT EXISTS idx_middleman_manager_order_sort
+        ON middleman_manager_order(sort_index, manager_session_id);
+    `,
+  },
 ];
 
 export interface MiddlemanAgentRow {
@@ -245,7 +255,44 @@ export class MiddlemanAgentRepo {
   }
 
   get(sessionId: string): MiddlemanAgentRow | null {
-    return this.list().find((row) => row.sessionId === sessionId) ?? null;
+    const row = this.db
+      .prepare<
+        { session_id: string },
+        {
+          session_id: string;
+          role: "manager" | "worker";
+          manager_session_id: string;
+          archetype_id: string | null;
+          memory_owner_session_id: string;
+          reply_target_json: string | null;
+        }
+      >(
+        `SELECT
+           session_id,
+           role,
+           manager_session_id,
+           archetype_id,
+           memory_owner_session_id,
+           reply_target_json
+         FROM middleman_agents
+         WHERE session_id = @session_id`,
+      )
+      .get({ session_id: sessionId });
+
+    if (!row) {
+      return null;
+    }
+
+    return {
+      sessionId: row.session_id,
+      role: row.role,
+      managerSessionId: row.manager_session_id,
+      archetypeId: row.archetype_id ?? undefined,
+      memoryOwnerSessionId: row.memory_owner_session_id,
+      replyTarget: row.reply_target_json
+        ? (parseJsonObject(row.reply_target_json) as MessageTargetContext)
+        : undefined,
+    };
   }
 
   create(input: {
