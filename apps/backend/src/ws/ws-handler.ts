@@ -1,11 +1,10 @@
 import type { ClientCommand, ServerEvent } from "@middleman/protocol";
-import type { IntegrationRegistryService } from "../integrations/registry.js";
 import type { SwarmManager } from "../swarm/swarm-manager.js";
 import { WebSocketServer, type RawData, WebSocket } from "ws";
+import { BUILD_HASH } from "../build-hash.js";
 import { extractRequestId, parseClientCommand } from "./ws-command-parser.js";
 import { handleAgentCommand } from "./routes/agent-routes.js";
 import { handleConversationCommand } from "./routes/conversation-routes.js";
-import { handleEscalationCommand } from "./routes/escalation-routes.js";
 import { handleManagerCommand } from "./routes/manager-routes.js";
 
 const BOOTSTRAP_SUBSCRIPTION_AGENT_ID = "__bootstrap_manager__";
@@ -15,23 +14,49 @@ const AGENT_DETAIL_HISTORY_TRUNCATED_CODE = "AGENT_DETAIL_HISTORY_TRUNCATED";
 const MAX_WS_EVENT_BYTES = 5 * 1024 * 1024;
 const MAX_WS_BUFFERED_AMOUNT_BYTES = 5 * 1024 * 1024;
 
+interface PreparedServerEvent {
+  event: ServerEvent;
+  serialized: string;
+  eventBytes: number;
+}
+
+function isPreferredManagerSubscriptionCandidate(
+  agent: ReturnType<SwarmManager["listAgents"]>[number],
+): boolean {
+  return agent.role === "manager" && agent.status !== "terminated";
+}
+
+function isAgentScopedEvent(event: ServerEvent): event is Extract<
+  ServerEvent,
+  {
+    type:
+      | "conversation_message"
+      | "conversation_log"
+      | "agent_message"
+      | "agent_tool_call"
+      | "conversation_reset";
+  }
+> {
+  return (
+    event.type === "conversation_message" ||
+    event.type === "conversation_log" ||
+    event.type === "agent_message" ||
+    event.type === "agent_tool_call" ||
+    event.type === "conversation_reset"
+  );
+}
+
 export class WsHandler {
   private readonly swarmManager: SwarmManager;
-  private readonly integrationRegistry: IntegrationRegistryService | null;
-  private readonly allowNonManagerSubscriptions: boolean;
 
   private wss: WebSocketServer | null = null;
   private readonly subscriptions = new Map<WebSocket, string>();
+  private readonly subscribersByAgentId = new Map<string, Set<WebSocket>>();
   private readonly agentDetailSubscriptions = new Map<WebSocket, string>();
+  private readonly agentDetailSubscribersByAgentId = new Map<string, Set<WebSocket>>();
 
-  constructor(options: {
-    swarmManager: SwarmManager;
-    integrationRegistry: IntegrationRegistryService | null;
-    allowNonManagerSubscriptions: boolean;
-  }) {
+  constructor(options: { swarmManager: SwarmManager }) {
     this.swarmManager = options.swarmManager;
-    this.integrationRegistry = options.integrationRegistry;
-    this.allowNonManagerSubscriptions = options.allowNonManagerSubscriptions;
   }
 
   attach(server: WebSocketServer): void {
@@ -43,13 +68,11 @@ export class WsHandler {
       });
 
       socket.on("close", () => {
-        this.subscriptions.delete(socket);
-        this.agentDetailSubscriptions.delete(socket);
+        this.clearSocketSubscriptions(socket);
       });
 
       socket.on("error", () => {
-        this.subscriptions.delete(socket);
-        this.agentDetailSubscriptions.delete(socket);
+        this.clearSocketSubscriptions(socket);
       });
     });
   }
@@ -57,7 +80,9 @@ export class WsHandler {
   reset(): void {
     this.wss = null;
     this.subscriptions.clear();
+    this.subscribersByAgentId.clear();
     this.agentDetailSubscriptions.clear();
+    this.agentDetailSubscribersByAgentId.clear();
   }
 
   broadcastToSubscribed(event: ServerEvent): void {
@@ -65,40 +90,23 @@ export class WsHandler {
       return;
     }
 
-    for (const client of this.wss.clients) {
-      if (client.readyState !== WebSocket.OPEN) {
-        continue;
-      }
+    const recipients = this.resolveBroadcastRecipients(event);
+    if (recipients.size === 0) {
+      return;
+    }
 
-      const subscribedAgent = this.subscriptions.get(client);
-      if (!subscribedAgent) {
-        continue;
-      }
-      const detailSubscribedAgent = this.agentDetailSubscriptions.get(client);
+    const prepared = this.serializeEvent(event);
+    if (!prepared) {
+      return;
+    }
 
-      if (
-        event.type === "conversation_message" ||
-        event.type === "conversation_escalation" ||
-        event.type === "conversation_log" ||
-        event.type === "agent_message" ||
-        event.type === "agent_tool_call" ||
-        event.type === "conversation_reset"
-      ) {
-        if (subscribedAgent !== event.agentId && detailSubscribedAgent !== event.agentId) {
-          continue;
-        }
-      }
+    if (!this.isPreparedEventWithinSizeLimit(prepared)) {
+      this.logOversizedEvent(prepared);
+      return;
+    }
 
-      if (event.type === "slack_status" || event.type === "telegram_status") {
-        if (event.managerId) {
-          const subscribedManagerId = this.resolveManagerContextAgentId(subscribedAgent);
-          if (subscribedManagerId !== event.managerId) {
-            continue;
-          }
-        }
-      }
-
-      this.send(client, event);
+    for (const client of recipients) {
+      this.sendPrepared(client, prepared);
     }
   }
 
@@ -106,12 +114,12 @@ export class WsHandler {
     const parsed = parseClientCommand(raw);
     if (!parsed.ok) {
       this.logDebug("command:invalid", {
-        message: parsed.error
+        message: parsed.error,
       });
       this.send(socket, {
         type: "error",
         code: "INVALID_COMMAND",
-        message: parsed.error
+        message: parsed.error,
       });
       return;
     }
@@ -119,17 +127,8 @@ export class WsHandler {
     const command = parsed.command;
     this.logDebug("command:received", {
       type: command.type,
-      requestId: extractRequestId(command)
+      requestId: extractRequestId(command),
     });
-
-    if (command.type === "ping") {
-      this.send(socket, {
-        type: "ready",
-        serverTime: new Date().toISOString(),
-        subscribedAgentId: this.subscriptions.get(socket) ?? this.resolveDefaultSubscriptionAgentId()
-      });
-      return;
-    }
 
     if (command.type === "subscribe") {
       await this.handleSubscribe(socket, command.agentId);
@@ -149,14 +148,19 @@ export class WsHandler {
     const subscribedAgentId = this.resolveSubscribedAgentId(socket);
     if (!subscribedAgentId) {
       this.logDebug("command:rejected:not_subscribed", {
-        type: command.type
+        type: command.type,
       });
       this.send(socket, {
         type: "error",
         code: "NOT_SUBSCRIBED",
         message: `Send subscribe before ${command.type}.`,
-        requestId: extractRequestId(command)
+        requestId: extractRequestId(command),
       });
+      return;
+    }
+
+    if (command.type === "load_older_history") {
+      this.handleLoadOlderHistory(socket, command, subscribedAgentId);
       return;
     }
 
@@ -168,7 +172,8 @@ export class WsHandler {
       resolveManagerContextAgentId: (agentId) => this.resolveManagerContextAgentId(agentId),
       send: (targetSocket, event) => this.send(targetSocket, event),
       broadcastToSubscribed: (event) => this.broadcastToSubscribed(event),
-      handleDeletedAgentSubscriptions: (deletedAgentIds) => this.handleDeletedAgentSubscriptions(deletedAgentIds)
+      handleDeletedAgentSubscriptions: (deletedAgentIds) =>
+        this.handleDeletedAgentSubscriptions(deletedAgentIds),
     });
     if (managerHandled) {
       return;
@@ -180,7 +185,7 @@ export class WsHandler {
       subscribedAgentId,
       swarmManager: this.swarmManager,
       resolveManagerContextAgentId: (agentId) => this.resolveManagerContextAgentId(agentId),
-      send: (targetSocket, event) => this.send(targetSocket, event)
+      send: (targetSocket, event) => this.send(targetSocket, event),
     });
     if (agentHandled) {
       return;
@@ -191,62 +196,40 @@ export class WsHandler {
       socket,
       subscribedAgentId,
       swarmManager: this.swarmManager,
-      allowNonManagerSubscriptions: this.allowNonManagerSubscriptions,
       send: (targetSocket, event) => this.send(targetSocket, event),
       logDebug: (message, details) => this.logDebug(message, details),
-      resolveConfiguredManagerId: () => this.resolveConfiguredManagerId()
     });
     if (conversationHandled) {
-      return;
-    }
-
-    const escalationHandled = await handleEscalationCommand({
-      command,
-      socket,
-      swarmManager: this.swarmManager,
-      send: (targetSocket, event) => this.send(targetSocket, event)
-    });
-    if (escalationHandled) {
       return;
     }
 
     this.send(socket, {
       type: "error",
       code: "UNKNOWN_COMMAND",
-      message: `Unsupported command type ${(command as ClientCommand).type}`
+      message: `Unsupported command type ${(command as ClientCommand).type}`,
     });
   }
 
   private async handleSubscribe(socket: WebSocket, requestedAgentId?: string): Promise<void> {
-    const managerId = this.resolveConfiguredManagerId();
     const targetAgentId =
-      requestedAgentId ?? this.resolvePreferredManagerSubscriptionId() ?? this.resolveDefaultSubscriptionAgentId();
-
-    if (!this.allowNonManagerSubscriptions && managerId && targetAgentId !== managerId) {
-      this.send(socket, {
-        type: "error",
-        code: "SUBSCRIPTION_NOT_SUPPORTED",
-        message: `Subscriptions are currently limited to ${managerId}.`
-      });
-      return;
-    }
+      requestedAgentId ??
+      this.resolvePreferredManagerSubscriptionId() ??
+      this.resolveDefaultSubscriptionAgentId();
 
     const targetDescriptor = this.swarmManager.getAgent(targetAgentId);
     const canBootstrapSubscription =
-      !targetDescriptor &&
-      !this.hasRunningManagers() &&
-      (managerId ? requestedAgentId === managerId : requestedAgentId === undefined);
+      !targetDescriptor && !this.hasKnownManagers() && requestedAgentId === undefined;
 
     if (!targetDescriptor && requestedAgentId && !canBootstrapSubscription) {
       this.send(socket, {
         type: "error",
         code: "UNKNOWN_AGENT",
-        message: `Agent ${targetAgentId} does not exist.`
+        message: `Agent ${targetAgentId} does not exist.`,
       });
       return;
     }
 
-    this.subscriptions.set(socket, targetAgentId);
+    this.setSubscription(socket, targetAgentId);
     this.sendSubscriptionBootstrap(socket, targetAgentId);
   }
 
@@ -265,7 +248,7 @@ export class WsHandler {
       return subscribedAgentId;
     }
 
-    this.subscriptions.set(socket, fallbackAgentId);
+    this.setSubscription(socket, fallbackAgentId);
     this.sendSubscriptionBootstrap(socket, fallbackAgentId);
 
     return fallbackAgentId;
@@ -277,19 +260,25 @@ export class WsHandler {
       this.send(socket, {
         type: "error",
         code: "UNKNOWN_AGENT",
-        message: `Agent ${targetAgentId} does not exist.`
+        message: `Agent ${targetAgentId} does not exist.`,
       });
       return;
     }
 
-    this.agentDetailSubscriptions.set(socket, targetAgentId);
-    const fullConversationHistory = this.swarmManager.getConversationHistory(targetAgentId);
+    this.setAgentDetailSubscription(socket, targetAgentId);
+    const transcriptPage = this.swarmManager.getVisibleTranscriptPage(targetAgentId, {
+      limit: BOOTSTRAP_HISTORY_LIMIT,
+    });
     this.sendConversationHistoryWithProgressiveFallback(
       socket,
       targetAgentId,
-      fullConversationHistory,
+      transcriptPage.entries,
+      {
+        mode: "replace",
+        hasMore: transcriptPage.hasMore,
+      },
       AGENT_DETAIL_HISTORY_TRUNCATED_CODE,
-      "entries"
+      "transcript messages",
     );
   }
 
@@ -298,14 +287,14 @@ export class WsHandler {
       return;
     }
 
-    this.agentDetailSubscriptions.delete(socket);
+    this.setAgentDetailSubscription(socket, undefined);
   }
 
   private resolveManagerContextAgentId(subscribedAgentId: string): string | undefined {
     const descriptor = this.swarmManager.getAgent(subscribedAgentId);
     if (!descriptor) {
-      if (!this.hasRunningManagers()) {
-        return this.resolveConfiguredManagerId() ?? subscribedAgentId;
+      if (!this.hasKnownManagers()) {
+        return subscribedAgentId;
       }
       return undefined;
     }
@@ -321,11 +310,11 @@ export class WsHandler {
 
       const fallbackAgentId = this.resolvePreferredManagerSubscriptionId();
       if (!fallbackAgentId) {
-        this.subscriptions.set(socket, this.resolveDefaultSubscriptionAgentId());
+        this.setSubscription(socket, this.resolveDefaultSubscriptionAgentId());
         continue;
       }
 
-      this.subscriptions.set(socket, fallbackAgentId);
+      this.setSubscription(socket, fallbackAgentId);
       this.sendSubscriptionBootstrap(socket, fallbackAgentId);
     }
 
@@ -334,7 +323,7 @@ export class WsHandler {
         continue;
       }
 
-      this.agentDetailSubscriptions.delete(socket);
+      this.setAgentDetailSubscription(socket, undefined);
     }
   }
 
@@ -342,31 +331,30 @@ export class WsHandler {
     this.send(socket, {
       type: "ready",
       serverTime: new Date().toISOString(),
-      subscribedAgentId: targetAgentId
+      subscribedAgentId: targetAgentId,
+      buildHash: BUILD_HASH,
     });
     this.send(socket, {
       type: "agents_snapshot",
-      agents: this.swarmManager.listAgents()
+      agents: this.swarmManager.listAgents(),
     });
     this.sendBootstrapConversationHistory(socket, targetAgentId);
-
-    const managerContextId = this.resolveManagerContextAgentId(targetAgentId);
-    if (this.integrationRegistry && managerContextId) {
-      this.send(socket, this.integrationRegistry.getStatus(managerContextId, "slack"));
-      this.send(socket, this.integrationRegistry.getStatus(managerContextId, "telegram"));
-    }
   }
 
   private sendBootstrapConversationHistory(socket: WebSocket, targetAgentId: string): void {
-    const transcriptMessages = this.swarmManager.getVisibleTranscript(targetAgentId, {
-      limit: BOOTSTRAP_HISTORY_LIMIT
+    const transcriptPage = this.swarmManager.getVisibleTranscriptPage(targetAgentId, {
+      limit: BOOTSTRAP_HISTORY_LIMIT,
     });
     this.sendConversationHistoryWithProgressiveFallback(
       socket,
       targetAgentId,
-      transcriptMessages,
+      transcriptPage.entries,
+      {
+        mode: "replace",
+        hasMore: transcriptPage.hasMore,
+      },
       BOOTSTRAP_HISTORY_TRUNCATED_CODE,
-      "transcript messages"
+      "transcript messages",
     );
   }
 
@@ -374,14 +362,20 @@ export class WsHandler {
     socket: WebSocket,
     targetAgentId: string,
     historyMessages: Extract<ServerEvent, { type: "conversation_history" }>["messages"],
+    options: {
+      mode: "replace" | "prepend";
+      hasMore: boolean;
+    },
     truncationCode: string,
-    historyLabel: string
+    historyLabel: string,
   ): void {
     if (historyMessages.length === 0) {
       this.send(socket, {
         type: "conversation_history",
         agentId: targetAgentId,
-        messages: []
+        messages: [],
+        mode: options.mode,
+        hasMore: options.hasMore,
       });
       return;
     }
@@ -394,11 +388,16 @@ export class WsHandler {
       const event: ServerEvent = {
         type: "conversation_history",
         agentId: targetAgentId,
-        messages
+        messages,
+        mode: options.mode,
+        hasMore: options.hasMore || sendCount < totalCount,
       };
 
-      if (this.isEventWithinSizeLimit(event)) {
-        this.send(socket, event);
+      const prepared = this.serializeEvent(event, {
+        logSerializeFailures: false,
+      });
+      if (prepared && this.isPreparedEventWithinSizeLimit(prepared)) {
+        this.sendPrepared(socket, prepared);
 
         if (sendCount < totalCount) {
           this.sendConversationHistoryTruncatedNotice(
@@ -407,7 +406,7 @@ export class WsHandler {
             totalCount,
             sendCount,
             truncationCode,
-            historyLabel
+            historyLabel,
           );
         }
         return;
@@ -420,7 +419,9 @@ export class WsHandler {
     this.send(socket, {
       type: "conversation_history",
       agentId: targetAgentId,
-      messages: []
+      messages: [],
+      mode: options.mode,
+      hasMore: true,
     });
     this.sendConversationHistoryTruncatedNotice(
       socket,
@@ -428,7 +429,7 @@ export class WsHandler {
       totalCount,
       0,
       truncationCode,
-      historyLabel
+      historyLabel,
     );
   }
 
@@ -438,56 +439,74 @@ export class WsHandler {
     originalCount: number,
     deliveredCount: number,
     truncationCode: string,
-    historyLabel: string
+    historyLabel: string,
   ): void {
     this.send(socket, {
       type: "error",
       code: truncationCode,
-      message: `Conversation history was truncated for ${targetAgentId}: loaded ${deliveredCount} of ${originalCount} ${historyLabel} due payload limits.`
+      message: `Conversation history was truncated for ${targetAgentId}: loaded ${deliveredCount} of ${originalCount} ${historyLabel} due payload limits.`,
     });
   }
 
-  private resolveDefaultSubscriptionAgentId(): string {
-    return (
-      this.resolvePreferredManagerSubscriptionId() ??
-      this.resolveConfiguredManagerId() ??
-      BOOTSTRAP_SUBSCRIPTION_AGENT_ID
+  private handleLoadOlderHistory(
+    socket: WebSocket,
+    command: Extract<ClientCommand, { type: "load_older_history" }>,
+    subscribedAgentId: string,
+  ): void {
+    const detailSubscribedAgentId = this.agentDetailSubscriptions.get(socket);
+    const targetAgentId = command.agentId;
+
+    if (detailSubscribedAgentId !== targetAgentId && subscribedAgentId !== targetAgentId) {
+      this.send(socket, {
+        type: "error",
+        code: "HISTORY_PAGE_NOT_SUBSCRIBED",
+        message: `Cannot load history for ${targetAgentId} without an active subscription.`,
+      });
+      return;
+    }
+
+    const isDetailHistoryRequest = detailSubscribedAgentId === targetAgentId;
+    const historyPage = this.swarmManager.getVisibleTranscriptPage(targetAgentId, {
+      before: command.before,
+      limit: BOOTSTRAP_HISTORY_LIMIT,
+    });
+
+    this.sendConversationHistoryWithProgressiveFallback(
+      socket,
+      targetAgentId,
+      historyPage.entries,
+      {
+        mode: "prepend",
+        hasMore: historyPage.hasMore,
+      },
+      isDetailHistoryRequest
+        ? AGENT_DETAIL_HISTORY_TRUNCATED_CODE
+        : BOOTSTRAP_HISTORY_TRUNCATED_CODE,
+      "transcript messages",
     );
   }
 
+  private resolveDefaultSubscriptionAgentId(): string {
+    return this.resolvePreferredManagerSubscriptionId() ?? BOOTSTRAP_SUBSCRIPTION_AGENT_ID;
+  }
+
   private resolvePreferredManagerSubscriptionId(): string | undefined {
-    const firstManager = this.swarmManager
-      .listAgents()
-      .find((agent) => agent.role === "manager" && this.isSubscribable(agent.status));
+    const agents = this.swarmManager.listAgents();
+    const preferredManager = agents.find(isPreferredManagerSubscriptionCandidate);
+    if (preferredManager) {
+      return preferredManager.agentId;
+    }
+
+    const firstManager = agents.find((agent) => agent.role === "manager");
 
     return firstManager?.agentId;
   }
 
-  private resolveConfiguredManagerId(): string | undefined {
-    const managerId = this.swarmManager.getConfig().managerId;
-    if (typeof managerId !== "string") {
-      return undefined;
-    }
-
-    const normalized = managerId.trim();
-    return normalized.length > 0 ? normalized : undefined;
-  }
-
-  private hasRunningManagers(): boolean {
-    return this.swarmManager
-      .listAgents()
-      .some((agent) => agent.role === "manager" && this.isSubscribable(agent.status));
-  }
-
-  private isSubscribable(status: string): boolean {
-    return status === "idle" || status === "streaming";
+  private hasKnownManagers(): boolean {
+    return this.swarmManager.listAgents().some((agent) => agent.role === "manager");
   }
 
   private logDebug(message: string, details?: unknown): void {
-    if (!this.swarmManager.getConfig().debug) {
-      return;
-    }
-
     const prefix = `[swarm][${new Date().toISOString()}] ws:${message}`;
     if (details === undefined) {
       console.log(prefix);
@@ -498,49 +517,137 @@ export class WsHandler {
   }
 
   private send(socket: WebSocket, event: ServerEvent): void {
+    const prepared = this.serializeEvent(event);
+    if (!prepared) {
+      return;
+    }
+
+    if (!this.isPreparedEventWithinSizeLimit(prepared)) {
+      this.logOversizedEvent(prepared);
+      return;
+    }
+
+    this.sendPrepared(socket, prepared);
+  }
+
+  private sendPrepared(socket: WebSocket, prepared: PreparedServerEvent): void {
     if (socket.readyState !== WebSocket.OPEN) {
       return;
     }
 
     if (socket.bufferedAmount > MAX_WS_BUFFERED_AMOUNT_BYTES) {
       console.warn("[swarm] ws:drop_event:backpressure", {
-        eventType: event.type,
+        eventType: prepared.event.type,
         bufferedAmount: socket.bufferedAmount,
-        maxBufferedAmountBytes: MAX_WS_BUFFERED_AMOUNT_BYTES
+        maxBufferedAmountBytes: MAX_WS_BUFFERED_AMOUNT_BYTES,
       });
       return;
     }
 
-    let serialized: string;
-    try {
-      serialized = JSON.stringify(event);
-    } catch (error) {
-      console.warn("[swarm] ws:drop_event:serialize_failed", {
-        eventType: event.type,
-        message: error instanceof Error ? error.message : String(error)
-      });
-      return;
-    }
-
-    const eventBytes = Buffer.byteLength(serialized, "utf8");
-    if (eventBytes > MAX_WS_EVENT_BYTES) {
-      console.warn("[swarm] ws:drop_event:oversized", {
-        eventType: event.type,
-        eventBytes,
-        maxEventBytes: MAX_WS_EVENT_BYTES
-      });
-      return;
-    }
-
-    socket.send(serialized);
+    socket.send(prepared.serialized);
   }
 
-  private isEventWithinSizeLimit(event: ServerEvent): boolean {
+  private serializeEvent(
+    event: ServerEvent,
+    options?: {
+      logSerializeFailures?: boolean;
+    },
+  ): PreparedServerEvent | null {
     try {
       const serialized = JSON.stringify(event);
-      return Buffer.byteLength(serialized, "utf8") <= MAX_WS_EVENT_BYTES;
-    } catch {
-      return false;
+      return {
+        event,
+        serialized,
+        eventBytes: Buffer.byteLength(serialized, "utf8"),
+      };
+    } catch (error) {
+      if (options?.logSerializeFailures !== false) {
+        console.warn("[swarm] ws:drop_event:serialize_failed", {
+          eventType: event.type,
+          message: error instanceof Error ? error.message : String(error),
+        });
+      }
+      return null;
+    }
+  }
+
+  private isPreparedEventWithinSizeLimit(prepared: PreparedServerEvent): boolean {
+    return prepared.eventBytes <= MAX_WS_EVENT_BYTES;
+  }
+
+  private logOversizedEvent(prepared: PreparedServerEvent): void {
+    console.warn("[swarm] ws:drop_event:oversized", {
+      eventType: prepared.event.type,
+      eventBytes: prepared.eventBytes,
+      maxEventBytes: MAX_WS_EVENT_BYTES,
+    });
+  }
+
+  private clearSocketSubscriptions(socket: WebSocket): void {
+    this.setSubscription(socket, undefined);
+    this.setAgentDetailSubscription(socket, undefined);
+  }
+
+  private setSubscription(socket: WebSocket, agentId: string | undefined): void {
+    this.updateSubscriptionIndex(socket, this.subscriptions, this.subscribersByAgentId, agentId);
+  }
+
+  private setAgentDetailSubscription(socket: WebSocket, agentId: string | undefined): void {
+    this.updateSubscriptionIndex(
+      socket,
+      this.agentDetailSubscriptions,
+      this.agentDetailSubscribersByAgentId,
+      agentId,
+    );
+  }
+
+  private updateSubscriptionIndex(
+    socket: WebSocket,
+    subscriptionMap: Map<WebSocket, string>,
+    reverseIndex: Map<string, Set<WebSocket>>,
+    nextAgentId: string | undefined,
+  ): void {
+    const currentAgentId = subscriptionMap.get(socket);
+    if (currentAgentId) {
+      const sockets = reverseIndex.get(currentAgentId);
+      sockets?.delete(socket);
+      if (sockets && sockets.size === 0) {
+        reverseIndex.delete(currentAgentId);
+      }
+    }
+
+    if (!nextAgentId) {
+      subscriptionMap.delete(socket);
+      return;
+    }
+
+    subscriptionMap.set(socket, nextAgentId);
+    let sockets = reverseIndex.get(nextAgentId);
+    if (!sockets) {
+      sockets = new Set<WebSocket>();
+      reverseIndex.set(nextAgentId, sockets);
+    }
+    sockets.add(socket);
+  }
+
+  private resolveBroadcastRecipients(event: ServerEvent): Set<WebSocket> {
+    if (!isAgentScopedEvent(event)) {
+      return new Set(this.subscriptions.keys());
+    }
+
+    const recipients = new Set<WebSocket>();
+    this.addRecipients(recipients, this.subscribersByAgentId.get(event.agentId));
+    this.addRecipients(recipients, this.agentDetailSubscribersByAgentId.get(event.agentId));
+    return recipients;
+  }
+
+  private addRecipients(target: Set<WebSocket>, sockets?: Set<WebSocket>): void {
+    if (!sockets) {
+      return;
+    }
+
+    for (const socket of sockets) {
+      target.add(socket);
     }
   }
 }

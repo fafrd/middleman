@@ -3,9 +3,9 @@
 import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { getControlPidFilePath } from "./prod-daemon-paths.mjs";
 
 const RESTART_SIGNAL = "SIGUSR1";
 const STOP_SIGNALS = ["SIGINT", "SIGTERM", "SIGHUP"];
@@ -14,12 +14,12 @@ const DEFAULT_COMMAND = "pnpm prod";
 const DEFAULT_INSTALL_COMMAND = "pnpm i";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const repoHash = createHash("sha1").update(repoRoot).digest("hex").slice(0, 10);
-const pidFile = path.join(os.tmpdir(), `swarm-prod-daemon-${repoHash}.pid`);
+const pidFile = getControlPidFilePath();
 const lockFilePath = path.join(repoRoot, "pnpm-lock.yaml");
-const lockHashFile = path.join(os.tmpdir(), `swarm-prod-daemon-lock-${repoHash}.sha1`);
+const lockHashFile = `${pidFile}.lock.sha1`;
 const command = process.env.SWARM_PROD_DAEMON_COMMAND?.trim() || DEFAULT_COMMAND;
-const installCommand = process.env.SWARM_PROD_DAEMON_INSTALL_COMMAND?.trim() || DEFAULT_INSTALL_COMMAND;
+const installCommand =
+  process.env.SWARM_PROD_DAEMON_INSTALL_COMMAND?.trim() || DEFAULT_INSTALL_COMMAND;
 
 let child = null;
 let restarting = false;
@@ -55,6 +55,7 @@ function readLockHashFile() {
 }
 
 function writeLockHashFile(lockHash) {
+  fs.mkdirSync(path.dirname(lockHashFile), { recursive: true });
   fs.writeFileSync(lockHashFile, `${lockHash}\n`, "utf8");
 }
 
@@ -104,7 +105,9 @@ function ensureDependenciesInstalled() {
   }
 
   if (installResult.status !== 0) {
-    const reason = installResult.signal ? `signal ${installResult.signal}` : `code ${installResult.status ?? 0}`;
+    const reason = installResult.signal
+      ? `signal ${installResult.signal}`
+      : `code ${installResult.status ?? 0}`;
     log(`Dependency install exited with ${reason}.`);
     return false;
   }
@@ -133,6 +136,7 @@ function writePidFile() {
     }
   }
 
+  fs.mkdirSync(path.dirname(pidFile), { recursive: true });
   fs.writeFileSync(pidFile, `${process.pid}\n`, "utf8");
 }
 
@@ -225,7 +229,10 @@ function startChild() {
 
   child = spawn(command, {
     cwd: repoRoot,
-    env: process.env,
+    env: {
+      ...process.env,
+      MIDDLEMAN_DAEMONIZED: "1",
+    },
     stdio: "inherit",
     shell: true,
     detached: true,

@@ -1,27 +1,21 @@
 import { existsSync } from "node:fs";
 import { readdir, readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 import { parseSkillFrontmatter, type ParsedSkillEnvDeclaration } from "./skill-frontmatter.js";
 import type { SwarmConfig } from "./types.js";
 
-const REPO_SKILLS_RELATIVE_DIR = ".swarm/skills";
 const REPO_BUILT_IN_SKILLS_RELATIVE_DIR = "apps/backend/src/swarm/skills/builtins";
 const SKILL_FILE_NAME = "SKILL.md";
 const REQUIRED_SKILL_NAMES = [
   "memory",
   "brave-search",
   "cron-scheduling",
-  "agent-browser",
-  "image-generation"
+  "image-generation",
 ] as const;
-
-const SKILL_METADATA_SERVICE_DIR = fileURLToPath(new URL(".", import.meta.url));
-const BACKEND_PACKAGE_DIR = resolve(SKILL_METADATA_SERVICE_DIR, "..", "..");
-const BUILT_IN_SKILLS_FALLBACK_DIR = resolve(BACKEND_PACKAGE_DIR, "src", "swarm", "skills", "builtins");
 
 export interface SkillMetadata {
   skillName: string;
+  description?: string;
   path: string;
   env: ParsedSkillEnvDeclaration[];
 }
@@ -43,8 +37,9 @@ export class SkillMetadataService {
   getSkillMetadata(): SkillMetadata[] {
     return this.skillMetadata.map((metadata) => ({
       skillName: metadata.skillName,
+      description: metadata.description,
       path: metadata.path,
-      env: [...metadata.env]
+      env: [...metadata.env],
     }));
   }
 
@@ -68,8 +63,7 @@ export class SkillMetadataService {
       this.resolveMemorySkillPath(skillPathIndex),
       this.resolveBraveSearchSkillPath(skillPathIndex),
       this.resolveCronSchedulingSkillPath(skillPathIndex),
-      this.resolveAgentBrowserSkillPath(skillPathIndex),
-      this.resolveImageGenerationSkillPath(skillPathIndex)
+      this.resolveImageGenerationSkillPath(skillPathIndex),
     ];
 
     const metadata: SkillMetadata[] = [];
@@ -88,8 +82,9 @@ export class SkillMetadataService {
       seenSkillNames.add(normalizedSkillName);
       metadata.push({
         skillName,
+        description: parsed.description?.trim() || undefined,
         path: skillPath,
-        env: parsed.env
+        env: parsed.env,
       });
     }
 
@@ -97,7 +92,11 @@ export class SkillMetadataService {
   }
 
   private resolveMemorySkillPath(skillPathIndex: Map<string, string[]>): string {
-    return this.resolveRequiredSkillPath("memory", skillPathIndex, this.deps.config.paths.repoMemorySkillFile);
+    return this.resolveRequiredSkillPath(
+      "memory",
+      skillPathIndex,
+      this.deps.config.paths.projectMemorySkillFile,
+    );
   }
 
   private resolveBraveSearchSkillPath(skillPathIndex: Map<string, string[]>): string {
@@ -108,10 +107,6 @@ export class SkillMetadataService {
     return this.resolveRequiredSkillPath("cron-scheduling", skillPathIndex);
   }
 
-  private resolveAgentBrowserSkillPath(skillPathIndex: Map<string, string[]>): string {
-    return this.resolveRequiredSkillPath("agent-browser", skillPathIndex);
-  }
-
   private resolveImageGenerationSkillPath(skillPathIndex: Map<string, string[]>): string {
     return this.resolveRequiredSkillPath("image-generation", skillPathIndex);
   }
@@ -119,7 +114,7 @@ export class SkillMetadataService {
   private resolveRequiredSkillPath(
     skillName: (typeof REQUIRED_SKILL_NAMES)[number],
     skillPathIndex: Map<string, string[]>,
-    explicitOverridePath?: string
+    explicitOverridePath?: string,
   ): string {
     if (typeof explicitOverridePath === "string" && existsSync(explicitOverridePath)) {
       return explicitOverridePath;
@@ -136,13 +131,18 @@ export class SkillMetadataService {
 
   private async scanSkillPathCandidates(): Promise<SkillPathCandidate[]> {
     const candidates: SkillPathCandidate[] = [];
+    const repositoryBuiltInSkillsDir = resolve(
+      this.deps.config.paths.projectRoot,
+      REPO_BUILT_IN_SKILLS_RELATIVE_DIR,
+    );
 
-    const repositorySkillsDir = resolve(this.deps.config.paths.rootDir, REPO_SKILLS_RELATIVE_DIR);
-    const repositoryBuiltInSkillsDir = resolve(this.deps.config.paths.rootDir, REPO_BUILT_IN_SKILLS_RELATIVE_DIR);
-
-    candidates.push(...(await this.scanSkillFilesInDirectory(repositorySkillsDir)));
+    candidates.push(
+      ...(await this.scanSkillFilesInDirectory(this.deps.config.paths.projectSkillsDir)),
+    );
+    candidates.push(
+      ...(await this.scanSkillFilesInDirectory(this.deps.config.paths.installSkillsDir)),
+    );
     candidates.push(...(await this.scanSkillFilesInDirectory(repositoryBuiltInSkillsDir)));
-    candidates.push(...(await this.scanSkillFilesInDirectory(BUILT_IN_SKILLS_FALLBACK_DIR)));
 
     return candidates;
   }
@@ -154,7 +154,7 @@ export class SkillMetadataService {
       const dirEntries = await readdir(directory, { withFileTypes: true, encoding: "utf8" });
       entries = dirEntries.map((entry) => ({
         isDirectory: () => entry.isDirectory(),
-        name: String(entry.name)
+        name: String(entry.name),
       }));
     } catch {
       return [];
@@ -174,7 +174,7 @@ export class SkillMetadataService {
 
       candidates.push({
         skillDirectoryName,
-        path: skillPath
+        path: skillPath,
       });
     }
 

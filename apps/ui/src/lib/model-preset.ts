@@ -1,32 +1,22 @@
-import type { AgentDescriptor, ManagerModelPreset } from '@middleman/protocol'
-
-const CODEX_APP_MODEL_ID = 'gpt-5.4'
-const LEGACY_CODEX_APP_MODEL_ID = 'default'
-const PI_CODEX_MODEL_ID = 'gpt-5.4'
-const LEGACY_PI_CODEX_MODEL_ID = 'gpt-5.3-codex'
+import {
+  inferManagerModelPresetIconFamilyFromDescriptor,
+  inferManagerModelPresetFromDescriptor,
+  supportsManualCompactionForDescriptor,
+  type AgentDescriptor,
+  type ModelPresetIconFamily,
+  type ManagerModelPreset,
+} from "@middleman/protocol";
 
 export function inferModelPreset(agent: AgentDescriptor): ManagerModelPreset | undefined {
-  const provider = agent.model.provider.trim().toLowerCase()
-  const modelId = agent.model.modelId.trim().toLowerCase()
+  return inferManagerModelPresetFromDescriptor(agent.model);
+}
 
-  if (provider === 'openai-codex' && (modelId === PI_CODEX_MODEL_ID || modelId === LEGACY_PI_CODEX_MODEL_ID)) {
-    return 'pi-codex'
-  }
+export function inferModelPresetIconFamily(
+  agent: AgentDescriptor,
+): ModelPresetIconFamily | undefined {
+  return inferManagerModelPresetIconFamilyFromDescriptor(agent.model);
+}
 
-  if (provider === 'anthropic' && modelId === 'claude-opus-4-6') {
-    return 'pi-opus'
-  }
-
-  if (
-    provider === 'openai-codex-app-server' &&
-    (modelId === CODEX_APP_MODEL_ID || modelId === LEGACY_CODEX_APP_MODEL_ID)
-  ) {
-    return 'codex-app'
-  }
-
-  if (provider === 'anthropic-claude-code' && modelId === 'claude-opus-4-6') {
-    return 'claude-code'
-  }
-
-  return undefined
+export function supportsManualCompaction(agent: AgentDescriptor): boolean {
+  return supportsManualCompactionForDescriptor(agent.model);
 }

@@ -1,31 +1,31 @@
-import type { ConversationAttachment } from './attachments.js'
-import type { DeliveryMode, ManagerModelPreset } from './shared-types.js'
+import type { ConversationAttachment } from "#attachments";
+import type { CreateManagerModelPreset, DeliveryMode } from "#shared-types";
 
 export type ClientCommand =
-  | { type: 'subscribe'; agentId?: string }
-  | { type: 'subscribe_agent_detail'; agentId: string }
-  | { type: 'unsubscribe_agent_detail'; agentId: string }
-  | { type: 'reorder_managers'; managerIds: string[]; requestId?: string }
-  | { type: 'get_all_escalations'; requestId?: string }
+  | { type: "subscribe"; agentId?: string }
+  | { type: "subscribe_agent_detail"; agentId: string }
+  | { type: "unsubscribe_agent_detail"; agentId: string }
+  | { type: "load_older_history"; agentId: string; before: string }
+  | { type: "reorder_managers"; managerIds: string[]; requestId?: string }
   | {
-      type: 'resolve_escalation'
-      escalationId: string
-      choice: string
-      isCustom: boolean
-      requestId?: string
+      type: "user_message";
+      text: string;
+      attachments?: ConversationAttachment[];
+      agentId?: string;
+      delivery?: DeliveryMode;
     }
+  | { type: "kill_agent"; agentId: string }
+  | { type: "interrupt_agent"; agentId: string; requestId?: string }
+  | { type: "compact_agent"; agentId: string; requestId?: string }
+  | { type: "stop_all_agents"; managerId: string; requestId?: string }
   | {
-      type: 'user_message'
-      text: string
-      attachments?: ConversationAttachment[]
-      agentId?: string
-      delivery?: DeliveryMode
+      type: "create_manager";
+      name: string;
+      cwd: string;
+      model?: CreateManagerModelPreset;
+      requestId?: string;
     }
-  | { type: 'kill_agent'; agentId: string }
-  | { type: 'stop_all_agents'; managerId: string; requestId?: string }
-  | { type: 'create_manager'; name: string; cwd: string; model?: ManagerModelPreset; requestId?: string }
-  | { type: 'delete_manager'; managerId: string; requestId?: string }
-  | { type: 'list_directories'; path?: string; requestId?: string }
-  | { type: 'validate_directory'; path: string; requestId?: string }
-  | { type: 'pick_directory'; defaultPath?: string; requestId?: string }
-  | { type: 'ping' }
+  | { type: "delete_manager"; managerId: string; requestId?: string }
+  | { type: "list_directories"; path?: string; requestId?: string }
+  | { type: "validate_directory"; path: string; requestId?: string }
+  | { type: "pick_directory"; defaultPath?: string; requestId?: string };

@@ -1,7 +1,11 @@
 import type { ClientCommand } from "@middleman/protocol";
 import { type RawData } from "ws";
 import { parseConversationAttachments } from "./attachment-parser.js";
-import { describeSwarmModelPresets, isSwarmModelPreset } from "../swarm/model-presets.js";
+import {
+  describeCreateManagerModelPresets,
+  isCreateManagerModelPreset,
+  resolveCreateManagerModelPreset,
+} from "../swarm/model-presets.js";
 
 export type ParsedClientCommand =
   | { ok: true; command: ClientCommand }
@@ -23,42 +27,74 @@ export function parseClientCommand(raw: RawData): ParsedClientCommand {
 
   const maybe = parsed as Partial<ClientCommand> & { type?: unknown };
 
-  if (maybe.type === "ping") {
-    return { ok: true, command: { type: "ping" } };
-  }
-
   if (maybe.type === "subscribe") {
     if (maybe.agentId !== undefined && typeof maybe.agentId !== "string") {
-      return { ok: false, error: "subscribe.agentId must be a string when provided" };
+      return {
+        ok: false,
+        error: "subscribe.agentId must be a string when provided",
+      };
     }
     return { ok: true, command: { type: "subscribe", agentId: maybe.agentId } };
   }
 
   if (maybe.type === "subscribe_agent_detail") {
     if (typeof maybe.agentId !== "string" || maybe.agentId.trim().length === 0) {
-      return { ok: false, error: "subscribe_agent_detail.agentId must be a non-empty string" };
+      return {
+        ok: false,
+        error: "subscribe_agent_detail.agentId must be a non-empty string",
+      };
     }
 
     return {
       ok: true,
       command: {
         type: "subscribe_agent_detail",
-        agentId: maybe.agentId.trim()
-      }
+        agentId: maybe.agentId.trim(),
+      },
     };
   }
 
   if (maybe.type === "unsubscribe_agent_detail") {
     if (typeof maybe.agentId !== "string" || maybe.agentId.trim().length === 0) {
-      return { ok: false, error: "unsubscribe_agent_detail.agentId must be a non-empty string" };
+      return {
+        ok: false,
+        error: "unsubscribe_agent_detail.agentId must be a non-empty string",
+      };
     }
 
     return {
       ok: true,
       command: {
         type: "unsubscribe_agent_detail",
-        agentId: maybe.agentId.trim()
-      }
+        agentId: maybe.agentId.trim(),
+      },
+    };
+  }
+
+  if (maybe.type === "load_older_history") {
+    const before = (maybe as { before?: unknown }).before;
+
+    if (typeof maybe.agentId !== "string" || maybe.agentId.trim().length === 0) {
+      return {
+        ok: false,
+        error: "load_older_history.agentId must be a non-empty string",
+      };
+    }
+
+    if (typeof before !== "string" || before.trim().length === 0) {
+      return {
+        ok: false,
+        error: "load_older_history.before must be a non-empty string",
+      };
+    }
+
+    return {
+      ok: true,
+      command: {
+        type: "load_older_history",
+        agentId: maybe.agentId.trim(),
+        before: before.trim(),
+      },
     };
   }
 
@@ -67,13 +103,24 @@ export function parseClientCommand(raw: RawData): ParsedClientCommand {
     const requestId = (maybe as { requestId?: unknown }).requestId;
 
     if (!Array.isArray(managerIds)) {
-      return { ok: false, error: "reorder_managers.managerIds must be an array of manager ids" };
+      return {
+        ok: false,
+        error: "reorder_managers.managerIds must be an array of manager ids",
+      };
     }
-    if (managerIds.some((managerId) => typeof managerId !== "string" || managerId.trim().length === 0)) {
-      return { ok: false, error: "reorder_managers.managerIds must contain only non-empty strings" };
+    if (
+      managerIds.some((managerId) => typeof managerId !== "string" || managerId.trim().length === 0)
+    ) {
+      return {
+        ok: false,
+        error: "reorder_managers.managerIds must contain only non-empty strings",
+      };
     }
     if (requestId !== undefined && typeof requestId !== "string") {
-      return { ok: false, error: "reorder_managers.requestId must be a string when provided" };
+      return {
+        ok: false,
+        error: "reorder_managers.requestId must be a string when provided",
+      };
     }
 
     return {
@@ -81,69 +128,79 @@ export function parseClientCommand(raw: RawData): ParsedClientCommand {
       command: {
         type: "reorder_managers",
         managerIds: managerIds.map((managerId) => managerId.trim()),
-        requestId
-      }
-    };
-  }
-
-  if (maybe.type === "get_all_escalations") {
-    const requestId = (maybe as { requestId?: unknown }).requestId;
-
-    if (requestId !== undefined && typeof requestId !== "string") {
-      return { ok: false, error: "get_all_escalations.requestId must be a string when provided" };
-    }
-
-    return {
-      ok: true,
-      command: {
-        type: "get_all_escalations",
-        requestId
-      }
-    };
-  }
-
-  if (maybe.type === "resolve_escalation") {
-    const escalationId = (maybe as { escalationId?: unknown }).escalationId;
-    const choice = (maybe as { choice?: unknown }).choice;
-    const isCustom = (maybe as { isCustom?: unknown }).isCustom;
-    const requestId = (maybe as { requestId?: unknown }).requestId;
-
-    if (typeof escalationId !== "string" || escalationId.trim().length === 0) {
-      return { ok: false, error: "resolve_escalation.escalationId must be a non-empty string" };
-    }
-    if (typeof choice !== "string" || choice.trim().length === 0) {
-      return { ok: false, error: "resolve_escalation.choice must be a non-empty string" };
-    }
-    if (typeof isCustom !== "boolean") {
-      return { ok: false, error: "resolve_escalation.isCustom must be a boolean" };
-    }
-    if (requestId !== undefined && typeof requestId !== "string") {
-      return { ok: false, error: "resolve_escalation.requestId must be a string when provided" };
-    }
-
-    return {
-      ok: true,
-      command: {
-        type: "resolve_escalation",
-        escalationId: escalationId.trim(),
-        choice: choice.trim(),
-        isCustom,
-        requestId
-      }
+        requestId,
+      },
     };
   }
 
   if (maybe.type === "kill_agent") {
     if (typeof maybe.agentId !== "string" || maybe.agentId.trim().length === 0) {
-      return { ok: false, error: "kill_agent.agentId must be a non-empty string" };
+      return {
+        ok: false,
+        error: "kill_agent.agentId must be a non-empty string",
+      };
     }
 
     return {
       ok: true,
       command: {
         type: "kill_agent",
-        agentId: maybe.agentId.trim()
-      }
+        agentId: maybe.agentId.trim(),
+      },
+    };
+  }
+
+  if (maybe.type === "interrupt_agent") {
+    const agentId = (maybe as { agentId?: unknown }).agentId;
+    const requestId = (maybe as { requestId?: unknown }).requestId;
+
+    if (typeof agentId !== "string" || agentId.trim().length === 0) {
+      return {
+        ok: false,
+        error: "interrupt_agent.agentId must be a non-empty string",
+      };
+    }
+    if (requestId !== undefined && typeof requestId !== "string") {
+      return {
+        ok: false,
+        error: "interrupt_agent.requestId must be a string when provided",
+      };
+    }
+
+    return {
+      ok: true,
+      command: {
+        type: "interrupt_agent",
+        agentId: agentId.trim(),
+        requestId,
+      },
+    };
+  }
+
+  if (maybe.type === "compact_agent") {
+    const agentId = (maybe as { agentId?: unknown }).agentId;
+    const requestId = (maybe as { requestId?: unknown }).requestId;
+
+    if (typeof agentId !== "string" || agentId.trim().length === 0) {
+      return {
+        ok: false,
+        error: "compact_agent.agentId must be a non-empty string",
+      };
+    }
+    if (requestId !== undefined && typeof requestId !== "string") {
+      return {
+        ok: false,
+        error: "compact_agent.requestId must be a string when provided",
+      };
+    }
+
+    return {
+      ok: true,
+      command: {
+        type: "compact_agent",
+        agentId: agentId.trim(),
+        requestId,
+      },
     };
   }
 
@@ -152,10 +209,16 @@ export function parseClientCommand(raw: RawData): ParsedClientCommand {
     const requestId = (maybe as { requestId?: unknown }).requestId;
 
     if (typeof managerId !== "string" || managerId.trim().length === 0) {
-      return { ok: false, error: "stop_all_agents.managerId must be a non-empty string" };
+      return {
+        ok: false,
+        error: "stop_all_agents.managerId must be a non-empty string",
+      };
     }
     if (requestId !== undefined && typeof requestId !== "string") {
-      return { ok: false, error: "stop_all_agents.requestId must be a string when provided" };
+      return {
+        ok: false,
+        error: "stop_all_agents.requestId must be a string when provided",
+      };
     }
 
     return {
@@ -163,8 +226,8 @@ export function parseClientCommand(raw: RawData): ParsedClientCommand {
       command: {
         type: "stop_all_agents",
         managerId: managerId.trim(),
-        requestId
-      }
+        requestId,
+      },
     };
   }
 
@@ -175,19 +238,28 @@ export function parseClientCommand(raw: RawData): ParsedClientCommand {
     const requestId = (maybe as { requestId?: unknown }).requestId;
 
     if (typeof name !== "string" || name.trim().length === 0) {
-      return { ok: false, error: "create_manager.name must be a non-empty string" };
-    }
-    if (typeof cwd !== "string" || cwd.trim().length === 0) {
-      return { ok: false, error: "create_manager.cwd must be a non-empty string" };
-    }
-    if (model !== undefined && !isSwarmModelPreset(model)) {
       return {
         ok: false,
-        error: `create_manager.model must be one of ${describeSwarmModelPresets()}`
+        error: "create_manager.name must be a non-empty string",
+      };
+    }
+    if (typeof cwd !== "string" || cwd.trim().length === 0) {
+      return {
+        ok: false,
+        error: "create_manager.cwd must be a non-empty string",
+      };
+    }
+    if (model !== undefined && !isCreateManagerModelPreset(model)) {
+      return {
+        ok: false,
+        error: `create_manager.model must be one of ${describeCreateManagerModelPresets()}`,
       };
     }
     if (requestId !== undefined && typeof requestId !== "string") {
-      return { ok: false, error: "create_manager.requestId must be a string when provided" };
+      return {
+        ok: false,
+        error: "create_manager.requestId must be a string when provided",
+      };
     }
 
     return {
@@ -196,9 +268,9 @@ export function parseClientCommand(raw: RawData): ParsedClientCommand {
         type: "create_manager",
         name: name.trim(),
         cwd,
-        model,
-        requestId
-      }
+        model: resolveCreateManagerModelPreset(model, "create_manager.model"),
+        requestId,
+      },
     };
   }
 
@@ -207,10 +279,16 @@ export function parseClientCommand(raw: RawData): ParsedClientCommand {
     const requestId = (maybe as { requestId?: unknown }).requestId;
 
     if (typeof managerId !== "string" || managerId.trim().length === 0) {
-      return { ok: false, error: "delete_manager.managerId must be a non-empty string" };
+      return {
+        ok: false,
+        error: "delete_manager.managerId must be a non-empty string",
+      };
     }
     if (requestId !== undefined && typeof requestId !== "string") {
-      return { ok: false, error: "delete_manager.requestId must be a string when provided" };
+      return {
+        ok: false,
+        error: "delete_manager.requestId must be a string when provided",
+      };
     }
 
     return {
@@ -218,8 +296,8 @@ export function parseClientCommand(raw: RawData): ParsedClientCommand {
       command: {
         type: "delete_manager",
         managerId: managerId.trim(),
-        requestId
-      }
+        requestId,
+      },
     };
   }
 
@@ -228,10 +306,16 @@ export function parseClientCommand(raw: RawData): ParsedClientCommand {
     const requestId = (maybe as { requestId?: unknown }).requestId;
 
     if (path !== undefined && typeof path !== "string") {
-      return { ok: false, error: "list_directories.path must be a string when provided" };
+      return {
+        ok: false,
+        error: "list_directories.path must be a string when provided",
+      };
     }
     if (requestId !== undefined && typeof requestId !== "string") {
-      return { ok: false, error: "list_directories.requestId must be a string when provided" };
+      return {
+        ok: false,
+        error: "list_directories.requestId must be a string when provided",
+      };
     }
 
     return {
@@ -239,8 +323,8 @@ export function parseClientCommand(raw: RawData): ParsedClientCommand {
       command: {
         type: "list_directories",
         path,
-        requestId
-      }
+        requestId,
+      },
     };
   }
 
@@ -249,10 +333,16 @@ export function parseClientCommand(raw: RawData): ParsedClientCommand {
     const requestId = (maybe as { requestId?: unknown }).requestId;
 
     if (typeof path !== "string" || path.trim().length === 0) {
-      return { ok: false, error: "validate_directory.path must be a non-empty string" };
+      return {
+        ok: false,
+        error: "validate_directory.path must be a non-empty string",
+      };
     }
     if (requestId !== undefined && typeof requestId !== "string") {
-      return { ok: false, error: "validate_directory.requestId must be a string when provided" };
+      return {
+        ok: false,
+        error: "validate_directory.requestId must be a string when provided",
+      };
     }
 
     return {
@@ -260,8 +350,8 @@ export function parseClientCommand(raw: RawData): ParsedClientCommand {
       command: {
         type: "validate_directory",
         path,
-        requestId
-      }
+        requestId,
+      },
     };
   }
 
@@ -270,10 +360,16 @@ export function parseClientCommand(raw: RawData): ParsedClientCommand {
     const requestId = (maybe as { requestId?: unknown }).requestId;
 
     if (defaultPath !== undefined && typeof defaultPath !== "string") {
-      return { ok: false, error: "pick_directory.defaultPath must be a string when provided" };
+      return {
+        ok: false,
+        error: "pick_directory.defaultPath must be a string when provided",
+      };
     }
     if (requestId !== undefined && typeof requestId !== "string") {
-      return { ok: false, error: "pick_directory.requestId must be a string when provided" };
+      return {
+        ok: false,
+        error: "pick_directory.requestId must be a string when provided",
+      };
     }
 
     return {
@@ -281,8 +377,8 @@ export function parseClientCommand(raw: RawData): ParsedClientCommand {
       command: {
         type: "pick_directory",
         defaultPath: defaultPath?.trim() ? defaultPath : undefined,
-        requestId
-      }
+        requestId,
+      },
     };
   }
 
@@ -294,7 +390,7 @@ export function parseClientCommand(raw: RawData): ParsedClientCommand {
     const normalizedText = maybe.text.trim();
     const parsedAttachments = parseConversationAttachments(
       (maybe as { attachments?: unknown }).attachments,
-      "user_message.attachments"
+      "user_message.attachments",
     );
     if (!parsedAttachments.ok) {
       return { ok: false, error: parsedAttachments.error };
@@ -303,12 +399,15 @@ export function parseClientCommand(raw: RawData): ParsedClientCommand {
     if (!normalizedText && parsedAttachments.attachments.length === 0) {
       return {
         ok: false,
-        error: "user_message must include non-empty text or at least one attachment"
+        error: "user_message must include non-empty text or at least one attachment",
       };
     }
 
     if (maybe.agentId !== undefined && typeof maybe.agentId !== "string") {
-      return { ok: false, error: "user_message.agentId must be a string when provided" };
+      return {
+        ok: false,
+        error: "user_message.agentId must be a string when provided",
+      };
     }
 
     if (
@@ -317,7 +416,10 @@ export function parseClientCommand(raw: RawData): ParsedClientCommand {
       maybe.delivery !== "followUp" &&
       maybe.delivery !== "steer"
     ) {
-      return { ok: false, error: "user_message.delivery must be one of auto|followUp|steer" };
+      return {
+        ok: false,
+        error: "user_message.delivery must be one of auto|followUp|steer",
+      };
     }
 
     return {
@@ -325,10 +427,11 @@ export function parseClientCommand(raw: RawData): ParsedClientCommand {
       command: {
         type: "user_message",
         text: normalizedText,
-        attachments: parsedAttachments.attachments.length > 0 ? parsedAttachments.attachments : undefined,
+        attachments:
+          parsedAttachments.attachments.length > 0 ? parsedAttachments.attachments : undefined,
         agentId: maybe.agentId,
-        delivery: maybe.delivery
-      }
+        delivery: maybe.delivery,
+      },
     };
   }
 
@@ -340,20 +443,20 @@ export function extractRequestId(command: ClientCommand): string | undefined {
     case "reorder_managers":
     case "create_manager":
     case "delete_manager":
+    case "interrupt_agent":
+    case "compact_agent":
     case "stop_all_agents":
     case "list_directories":
     case "validate_directory":
     case "pick_directory":
-    case "get_all_escalations":
-    case "resolve_escalation":
       return command.requestId;
 
     case "subscribe":
     case "subscribe_agent_detail":
     case "unsubscribe_agent_detail":
+    case "load_older_history":
     case "user_message":
     case "kill_agent":
-    case "ping":
       return undefined;
   }
 }

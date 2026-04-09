@@ -1,12 +1,11 @@
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
-import { dirname } from "node:path";
 import { AuthStorage, type AuthCredential } from "@mariozechner/pi-coding-agent";
+import type { MiddlemanSettingsRepo } from "./swarm-sql.js";
 import { normalizeEnvVarName, type ParsedSkillEnvDeclaration } from "./skill-frontmatter.js";
 import type {
   SettingsAuthProvider,
   SettingsAuthProviderName,
   SkillEnvRequirement,
-  SwarmConfig
+  SwarmConfig,
 } from "./types.js";
 
 const SETTINGS_ENV_MASK = "********";
@@ -18,12 +17,12 @@ const SETTINGS_AUTH_PROVIDER_DEFINITIONS: Array<{
 }> = [
   {
     provider: "anthropic",
-    storageProvider: "anthropic"
+    storageProvider: "anthropic",
   },
   {
     provider: "openai-codex",
-    storageProvider: "openai-codex"
-  }
+    storageProvider: "openai-codex",
+  },
 ];
 
 interface SkillMetadataForSettings {
@@ -33,6 +32,7 @@ interface SkillMetadataForSettings {
 
 interface SecretsEnvServiceDependencies {
   config: SwarmConfig;
+  settingsRepo: MiddlemanSettingsRepo;
   ensureSkillMetadataLoaded: () => Promise<void>;
   getSkillMetadata: () => SkillMetadataForSettings[];
 }
@@ -59,7 +59,7 @@ export class SecretsEnvService {
           helpUrl: declaration.helpUrl,
           skillName: skill.skillName,
           isSet: typeof resolvedValue === "string" && resolvedValue.trim().length > 0,
-          maskedValue: resolvedValue ? SETTINGS_ENV_MASK : undefined
+          maskedValue: resolvedValue ? SETTINGS_ENV_MASK : undefined,
         });
       }
     }
@@ -68,12 +68,13 @@ export class SecretsEnvService {
       const codexApiKey = this.resolveEnvValue("CODEX_API_KEY");
       requirements.push({
         name: "CODEX_API_KEY",
-        description: "API key used by the codex-app runtime when no existing Codex login session is available.",
+        description:
+          "API key used by the codex-app runtime when no existing Codex login session is available.",
         required: false,
         helpUrl: "https://platform.openai.com/api-keys",
         skillName: "codex-app-runtime",
         isSet: typeof codexApiKey === "string" && codexApiKey.trim().length > 0,
-        maskedValue: codexApiKey ? SETTINGS_ENV_MASK : undefined
+        maskedValue: codexApiKey ? SETTINGS_ENV_MASK : undefined,
       });
     }
 
@@ -104,10 +105,9 @@ export class SecretsEnvService {
       }
 
       this.secrets[normalizedName] = normalizedValue;
+      this.deps.settingsRepo.set("env", normalizedName, normalizedValue);
       this.applySecretToProcessEnv(normalizedName, normalizedValue);
     }
-
-    await this.saveSecretsStore();
   }
 
   async deleteSettingsEnv(name: string): Promise<void> {
@@ -121,8 +121,8 @@ export class SecretsEnvService {
     }
 
     delete this.secrets[normalizedName];
+    this.deps.settingsRepo.delete("env", normalizedName);
     this.restoreProcessEnvForSecret(normalizedName);
-    await this.saveSecretsStore();
   }
 
   async listSettingsAuth(): Promise<SettingsAuthProvider[]> {
@@ -136,7 +136,7 @@ export class SecretsEnvService {
         provider: definition.provider,
         configured: typeof resolvedToken === "string" && resolvedToken.length > 0,
         authType: resolveAuthCredentialType(credential),
-        maskedValue: resolvedToken ? maskSettingsAuthValue(resolvedToken) : undefined
+        maskedValue: resolvedToken ? maskSettingsAuthValue(resolvedToken) : undefined,
       } satisfies SettingsAuthProvider;
     });
   }
@@ -160,15 +160,12 @@ export class SecretsEnvService {
         throw new Error(`Auth value for ${resolvedProvider.provider} must be a non-empty string`);
       }
 
-      const credential = {
+      const credential: AuthCredential = {
         type: "api_key",
         key: normalizedValue,
-        access: normalizedValue,
-        refresh: "",
-        expires: ""
       };
 
-      authStorage.set(resolvedProvider.storageProvider, credential as unknown as AuthCredential);
+      authStorage.set(resolvedProvider.storageProvider, credential);
     }
   }
 
@@ -183,11 +180,23 @@ export class SecretsEnvService {
   }
 
   async loadSecretsStore(): Promise<void> {
-    this.secrets = await this.readSecretsStore();
+    this.secrets = this.deps.settingsRepo.listEnv();
 
     for (const [name, value] of Object.entries(this.secrets)) {
       this.applySecretToProcessEnv(name, value);
     }
+  }
+
+  hasSettingsAuth(provider: SettingsAuthProviderName): boolean {
+    const resolvedProvider = SETTINGS_AUTH_PROVIDER_DEFINITIONS.find(
+      (definition) => definition.provider === provider,
+    );
+    if (!resolvedProvider) {
+      return false;
+    }
+
+    const authStorage = AuthStorage.create(this.deps.config.paths.authFile);
+    return Boolean(extractAuthCredentialToken(authStorage.get(resolvedProvider.storageProvider)));
   }
 
   private resolveEnvValue(name: string): string | undefined {
@@ -202,61 +211,6 @@ export class SecretsEnvService {
     }
 
     return processValue;
-  }
-
-  private async readSecretsStore(): Promise<Record<string, string>> {
-    let raw: string;
-
-    try {
-      raw = await readFile(this.deps.config.paths.secretsFile, "utf8");
-    } catch (error) {
-      if (isEnoentError(error)) {
-        return {};
-      }
-      throw error;
-    }
-
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(raw);
-    } catch {
-      return {};
-    }
-
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-      return {};
-    }
-
-    const normalized: Record<string, string> = {};
-
-    for (const [rawName, rawValue] of Object.entries(parsed)) {
-      const normalizedName = normalizeEnvVarName(rawName);
-      if (!normalizedName) {
-        continue;
-      }
-
-      if (typeof rawValue !== "string") {
-        continue;
-      }
-
-      const normalizedValue = rawValue.trim();
-      if (!normalizedValue) {
-        continue;
-      }
-
-      normalized[normalizedName] = normalizedValue;
-    }
-
-    return normalized;
-  }
-
-  private async saveSecretsStore(): Promise<void> {
-    const target = this.deps.config.paths.secretsFile;
-    const tmp = `${target}.tmp`;
-
-    await mkdir(dirname(target), { recursive: true });
-    await writeFile(tmp, `${JSON.stringify(this.secrets, null, 2)}\n`, "utf8");
-    await rename(tmp, target);
   }
 
   private applySecretToProcessEnv(name: string, value: string): void {
@@ -280,7 +234,7 @@ export class SecretsEnvService {
 }
 
 function resolveSettingsAuthProvider(
-  provider: string
+  provider: string,
 ): { provider: SettingsAuthProviderName; storageProvider: string } | undefined {
   const normalizedProvider = provider.trim().toLowerCase();
   if (!normalizedProvider) {
@@ -288,7 +242,7 @@ function resolveSettingsAuthProvider(
   }
 
   const definition = SETTINGS_AUTH_PROVIDER_DEFINITIONS.find(
-    (entry) => entry.provider === normalizedProvider
+    (entry) => entry.provider === normalizedProvider,
   );
   if (!definition) {
     return undefined;
@@ -296,12 +250,12 @@ function resolveSettingsAuthProvider(
 
   return {
     provider: definition.provider,
-    storageProvider: definition.storageProvider
+    storageProvider: definition.storageProvider,
   };
 }
 
 function resolveAuthCredentialType(
-  credential: AuthCredential | undefined
+  credential: AuthCredential | undefined,
 ): SettingsAuthProvider["authType"] | undefined {
   if (!credential) {
     return undefined;
@@ -355,13 +309,4 @@ function maskSettingsAuthValue(value: string): string {
   }
 
   return `${SETTINGS_AUTH_MASK}${suffix}`;
-}
-
-function isEnoentError(error: unknown): boolean {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    "code" in error &&
-    (error as { code?: string }).code === "ENOENT"
-  );
 }

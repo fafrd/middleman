@@ -8,7 +8,11 @@ export interface ParsedSkillEnvDeclaration {
   helpUrl?: string;
 }
 
-export function parseSkillFrontmatter(markdown: string): { name?: string; env: ParsedSkillEnvDeclaration[] } {
+export function parseSkillFrontmatter(markdown: string): {
+  name?: string;
+  description?: string;
+  env: ParsedSkillEnvDeclaration[];
+} {
   const match = SKILL_FRONTMATTER_BLOCK_PATTERN.exec(markdown);
   if (!match) {
     return { env: [] };
@@ -16,6 +20,7 @@ export function parseSkillFrontmatter(markdown: string): { name?: string; env: P
 
   const lines = match[1].split(/\r?\n/);
   let skillName: string | undefined;
+  let skillDescription: string | undefined;
 
   for (const line of lines) {
     const trimmed = line.trim();
@@ -33,13 +38,21 @@ export function parseSkillFrontmatter(markdown: string): { name?: string; env: P
       if (candidate) {
         skillName = candidate;
       }
-      break;
+      continue;
+    }
+
+    if (parsed.key === "description") {
+      const candidate = parseYamlStringValue(parsed.value);
+      if (candidate) {
+        skillDescription = candidate;
+      }
     }
   }
 
   return {
     name: skillName,
-    env: parseSkillEnvDeclarations(lines)
+    description: skillDescription,
+    env: parseSkillEnvDeclarations(lines),
   };
 }
 
@@ -87,7 +100,7 @@ function parseSkillEnvDeclarations(lines: string[]): ParsedSkillEnvDeclaration[]
       helpUrl:
         typeof current.helpUrl === "string" && current.helpUrl.trim().length > 0
           ? current.helpUrl.trim()
-          : undefined
+          : undefined,
     });
 
     current = undefined;
@@ -138,7 +151,11 @@ function parseSkillEnvDeclarations(lines: string[]): ParsedSkillEnvDeclaration[]
   return declarations;
 }
 
-function assignSkillEnvField(target: Partial<ParsedSkillEnvDeclaration>, key: string, value: string): void {
+function assignSkillEnvField(
+  target: Partial<ParsedSkillEnvDeclaration>,
+  key: string,
+  value: string,
+): void {
   switch (key) {
     case "name":
       target.name = parseYamlStringValue(value);
@@ -178,7 +195,7 @@ function parseYamlKeyValue(line: string): { key: string; value: string } | undef
 
   return {
     key,
-    value: line.slice(separatorIndex + 1).trim()
+    value: line.slice(separatorIndex + 1).trim(),
   };
 }
 
@@ -186,7 +203,7 @@ function parseYamlStringValue(value: string): string {
   const trimmed = value.trim();
 
   if (
-    (trimmed.startsWith("\"") && trimmed.endsWith("\"")) ||
+    (trimmed.startsWith('"') && trimmed.endsWith('"')) ||
     (trimmed.startsWith("'") && trimmed.endsWith("'"))
   ) {
     return trimmed.slice(1, -1).trim();

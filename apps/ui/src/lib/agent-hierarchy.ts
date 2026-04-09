@@ -1,65 +1,53 @@
-import { getOrderedManagers } from './manager-order'
-import type { AgentDescriptor } from '@middleman/protocol'
-
-const ACTIVE_STATUSES = new Set(['idle', 'streaming'])
+import { getOrderedManagers } from "./manager-order";
+import type { AgentDescriptor } from "@middleman/protocol";
 
 function byCreatedAtThenId(a: AgentDescriptor, b: AgentDescriptor): number {
-  const createdOrder = a.createdAt.localeCompare(b.createdAt)
-  if (createdOrder !== 0) return createdOrder
-  return a.agentId.localeCompare(b.agentId)
-}
-
-export function isActiveAgent(agent: AgentDescriptor): boolean {
-  return ACTIVE_STATUSES.has(agent.status)
+  const createdOrder = a.createdAt.localeCompare(b.createdAt);
+  if (createdOrder !== 0) return createdOrder;
+  return a.agentId.localeCompare(b.agentId);
 }
 
 export function getPrimaryManagerId(
   agents: AgentDescriptor[],
   managerOrder: string[] = [],
 ): string | null {
-  return (
-    getOrderedManagers(
-      agents.filter((agent) => isActiveAgent(agent)),
-      managerOrder,
-    )[0]?.agentId ?? null
-  )
+  return getOrderedManagers(agents, managerOrder)[0]?.agentId ?? null;
 }
 
 export interface ManagerTreeRow {
-  manager: AgentDescriptor
-  workers: AgentDescriptor[]
+  manager: AgentDescriptor;
+  workers: AgentDescriptor[];
 }
 
 export function buildManagerTreeRows(
   agents: AgentDescriptor[],
   managerOrder: string[] = [],
 ): {
-  managerRows: ManagerTreeRow[]
-  orphanWorkers: AgentDescriptor[]
+  managerRows: ManagerTreeRow[];
+  orphanWorkers: AgentDescriptor[];
 } {
-  const activeAgents = agents.filter(isActiveAgent)
-  const managers = getOrderedManagers(activeAgents, managerOrder)
-  const workers = activeAgents.filter((agent) => agent.role === 'worker').sort(byCreatedAtThenId)
+  const managers = getOrderedManagers(agents, managerOrder);
+  const workers = agents.filter((agent) => agent.role === "worker").sort(byCreatedAtThenId);
 
-  const workersByManager = new Map<string, AgentDescriptor[]>()
+  const workersByManager = new Map<string, AgentDescriptor[]>();
   for (const worker of workers) {
-    const entries = workersByManager.get(worker.managerId)
+    const entries = workersByManager.get(worker.managerId);
     if (entries) {
-      entries.push(worker)
+      entries.push(worker);
     } else {
-      workersByManager.set(worker.managerId, [worker])
+      workersByManager.set(worker.managerId, [worker]);
     }
   }
 
   const managerRows = managers.map((manager) => ({
     manager,
     workers: workersByManager.get(manager.agentId) ?? [],
-  }))
+  }));
 
-  const managerIds = new Set(managers.map((manager) => manager.agentId))
-  const orphanWorkers = workers.filter((worker) => !managerIds.has(worker.managerId))
+  const managerIds = new Set(managers.map((manager) => manager.agentId));
+  const orphanWorkers = workers.filter((worker) => !managerIds.has(worker.managerId));
 
-  return { managerRows, orphanWorkers }
+  return { managerRows, orphanWorkers };
 }
 
 export function chooseFallbackAgentId(
@@ -67,19 +55,39 @@ export function chooseFallbackAgentId(
   managerOrder: string[] = [],
   preferredAgentId?: string | null,
 ): string | null {
-  const activeAgents = agents.filter(isActiveAgent)
-  if (activeAgents.length === 0) {
-    return null
+  if (agents.length === 0) {
+    return null;
   }
 
-  if (preferredAgentId && activeAgents.some((agent) => agent.agentId === preferredAgentId)) {
-    return preferredAgentId
+  const preferredAgent = preferredAgentId
+    ? agents.find((agent) => agent.agentId === preferredAgentId)
+    : undefined;
+  const preferredManagers = agents.filter(
+    (agent) => agent.role === "manager" && agent.status !== "terminated",
+  );
+
+  if (preferredAgent) {
+    if (preferredAgent.role !== "manager" || preferredAgent.status !== "terminated") {
+      return preferredAgent.agentId;
+    }
+
+    const preferredManagerId = getPrimaryManagerId(preferredManagers, managerOrder);
+    if (preferredManagerId) {
+      return preferredManagerId;
+    }
+
+    return preferredAgent.agentId;
   }
 
-  const primaryManagerId = getPrimaryManagerId(activeAgents, managerOrder)
+  const preferredManagerId = getPrimaryManagerId(preferredManagers, managerOrder);
+  if (preferredManagerId) {
+    return preferredManagerId;
+  }
+
+  const primaryManagerId = getPrimaryManagerId(agents, managerOrder);
   if (primaryManagerId) {
-    return primaryManagerId
+    return primaryManagerId;
   }
 
-  return [...activeAgents].sort(byCreatedAtThenId)[0]?.agentId ?? null
+  return [...agents].sort(byCreatedAtThenId)[0]?.agentId ?? null;
 }

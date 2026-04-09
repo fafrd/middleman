@@ -3,497 +3,392 @@ import {
   useCallback,
   useEffect,
   useImperativeHandle,
-  useMemo,
   useRef,
   useState,
   type ChangeEvent,
   type ClipboardEvent,
   type FormEvent,
   type KeyboardEvent,
-} from 'react'
-import { useAtom } from 'jotai'
-import { ArrowUp, Loader2, Mic, Paperclip, Square } from 'lucide-react'
-import { AttachedFiles } from '@/components/chat/AttachedFiles'
-import { PinnedEscalations } from '@/components/chat/PinnedEscalations'
-import { Button } from '@/components/ui/button'
-import { MAX_VOICE_RECORDING_DURATION_MS, useVoiceRecorder } from '@/hooks/use-voice-recorder'
+} from "react";
+import { useAtom, useAtomValue } from "jotai";
+import { ArrowUp, Loader2, Paperclip, Square } from "lucide-react";
+import { AttachedFiles } from "@/components/chat/AttachedFiles";
+import { Button } from "@/components/ui/button";
+import { fileToPendingAttachment, type PendingAttachment } from "@/lib/file-attachments";
+import { messageDraftsAtom } from "@/lib/message-drafts";
 import {
-  fileToPendingAttachment,
-  type PendingAttachment,
-} from '@/lib/file-attachments'
-import { messageDraftsAtom } from '@/lib/message-drafts'
-import { resolveApiEndpoint } from '@/lib/api-endpoint'
-import { transcribeVoice } from '@/lib/voice-transcription-client'
-import { cn } from '@/lib/utils'
-import type {
-  ConversationAttachment,
-  UserEscalation,
-} from '@middleman/protocol'
+  activeAgentIdAtom,
+  activeAgentLabelAtom,
+  connectedAtom,
+  isLoadingAtom,
+} from "@/lib/ws-state";
+import { cn } from "@/lib/utils";
+import type { ConversationAttachment } from "@middleman/protocol";
 
-const TEXTAREA_MAX_HEIGHT = 186
-const ACTIVE_WAVEFORM_BAR_COUNT = 16
-const OPENAI_KEY_REQUIRED_MESSAGE = 'OpenAI API key required \u2014 add it in Settings.'
+const TEXTAREA_MAX_HEIGHT = 186;
+const COARSE_POINTER_MEDIA_QUERY = "(pointer: coarse)";
+const MOBILE_VIEWPORT_RESET_DELAY_MS = 320;
 
 interface MessageInputProps {
-  agentId: string | null
-  onSend: (message: string, attachments?: ConversationAttachment[]) => void
-  pinnedEscalations?: UserEscalation[]
-  onEscalationClick?: (escalation: UserEscalation) => void
-  onSubmitted?: () => void
-  isLoading: boolean
-  disabled?: boolean
-  agentLabel?: string
-  allowWhileLoading?: boolean
-  wsUrl?: string
+  agentId?: string | null;
+  onSend: (message: string, attachments?: ConversationAttachment[]) => void;
+  onSubmitted?: () => void;
+  isLoading?: boolean;
+  disabled?: boolean;
+  agentLabel?: string;
+  allowWhileLoading?: boolean;
+  canStop?: boolean;
+  stopInProgress?: boolean;
+  onStop?: () => void;
+  stopLabel?: string;
 }
 
 export interface MessageInputHandle {
-  setInput: (value: string) => void
-  focus: () => void
-  addFiles: (files: File[]) => Promise<void>
+  setInput: (value: string) => void;
+  focus: () => void;
+  addFiles: (files: File[]) => Promise<void>;
 }
 
-function formatDuration(durationMs: number): string {
-  const totalSeconds = Math.max(0, Math.floor(durationMs / 1000))
-  const minutes = Math.floor(totalSeconds / 60)
-  const seconds = totalSeconds % 60
-  return `${minutes}:${seconds.toString().padStart(2, '0')}`
+function isCoarsePointerDevice(): boolean {
+  return (
+    typeof window !== "undefined" &&
+    typeof window.matchMedia === "function" &&
+    window.matchMedia(COARSE_POINTER_MEDIA_QUERY).matches
+  );
 }
 
-function stretchWaveformBars(source: number[], targetCount: number): number[] {
-  if (targetCount <= 0) return []
-  if (source.length === 0) return Array.from({ length: targetCount }, () => 0)
-  if (source.length === 1) return Array.from({ length: targetCount }, () => source[0] ?? 0)
-
-  return Array.from({ length: targetCount }, (_, index) => {
-    const position = (index / (targetCount - 1)) * (source.length - 1)
-    const lower = Math.floor(position)
-    const upper = Math.min(source.length - 1, Math.ceil(position))
-    const ratio = position - lower
-    const lowerValue = source[lower] ?? 0
-    const upperValue = source[upper] ?? lowerValue
-    return lowerValue + (upperValue - lowerValue) * ratio
-  })
-}
-
-async function hasConfiguredOpenAiKey(endpoint: string): Promise<boolean> {
-  try {
-    const response = await fetch(endpoint)
-    if (!response.ok) {
-      return false
-    }
-
-    const payload = (await response.json()) as {
-      providers?: Array<{
-        provider?: unknown
-        configured?: unknown
-      }>
-    }
-
-    if (!payload || !Array.isArray(payload.providers)) {
-      return false
-    }
-
-    return payload.providers.some((provider) => {
-      if (!provider || typeof provider !== 'object') {
-        return false
-      }
-
-      const providerId =
-        typeof provider.provider === 'string' ? provider.provider.trim().toLowerCase() : ''
-      const configured = provider.configured === true
-
-      return configured && providerId === 'openai-codex'
-    })
-  } catch {
-    return false
+function scrollLayoutViewportToTop(): void {
+  if (typeof window === "undefined") {
+    return;
   }
+
+  window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+  document.documentElement.scrollTop = 0;
+  document.body.scrollTop = 0;
 }
 
 export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(function MessageInput(
   {
     agentId,
     onSend,
-    pinnedEscalations = [],
-    onEscalationClick,
     onSubmitted,
     isLoading,
-    disabled = false,
-    agentLabel = 'agent',
+    disabled,
+    agentLabel,
     allowWhileLoading = false,
-    wsUrl,
+    canStop = false,
+    stopInProgress = false,
+    onStop,
+    stopLabel = "Stop agent",
   },
   ref,
 ) {
-  const [drafts, setDrafts] = useAtom(messageDraftsAtom)
-  const [attachedFiles, setAttachedFiles] = useState<PendingAttachment[]>([])
-  const [isTranscribingVoice, setIsTranscribingVoice] = useState(false)
-  const [voiceError, setVoiceError] = useState<string | null>(null)
+  const activeAgentId = useAtomValue(activeAgentIdAtom);
+  const activeAgentLabel = useAtomValue(activeAgentLabelAtom);
+  const connected = useAtomValue(connectedAtom);
+  const isLoadingFromAtom = useAtomValue(isLoadingAtom);
+  const [drafts, setDrafts] = useAtom(messageDraftsAtom);
+  const [attachedFiles, setAttachedFiles] = useState<PendingAttachment[]>([]);
 
-  const textareaRef = useRef<HTMLTextAreaElement | null>(null)
-  const fileInputRef = useRef<HTMLInputElement | null>(null)
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const mobileViewportResetFrameRef = useRef<number | null>(null);
+  const mobileViewportResetTimeoutRef = useRef<number | null>(null);
+  const mobileViewportResetCleanupRef = useRef<(() => void) | null>(null);
 
-  const {
-    isRecording,
-    isRequestingPermission: isRequestingMicrophone,
-    durationMs: voiceRecordingDurationMs,
-    waveformBars: recordingWaveformBars,
-    startRecording,
-    stopRecording,
-  } = useVoiceRecorder()
+  const resolvedAgentId = agentId ?? activeAgentId;
+  const resolvedAgentLabel = agentLabel ?? activeAgentLabel ?? "agent";
+  const resolvedIsLoading = isLoading ?? isLoadingFromAtom;
+  const resolvedDisabled = disabled ?? (!connected || !resolvedAgentId);
 
-  const transcribeEndpoint = useMemo(() => resolveApiEndpoint(wsUrl, '/api/transcribe'), [wsUrl])
-  const settingsAuthEndpoint = useMemo(() => resolveApiEndpoint(wsUrl, '/api/settings/auth'), [wsUrl])
-  const input = agentId ? drafts[agentId] ?? '' : ''
+  const input = resolvedAgentId ? (drafts[resolvedAgentId] ?? "") : "";
 
   const resizeTextarea = useCallback(() => {
-    const textarea = textareaRef.current
-    if (!textarea) return
+    const textarea = textareaRef.current;
+    if (!textarea) return;
 
-    textarea.style.overflowY = 'hidden'
-    textarea.style.height = 'auto'
-    const nextHeight = Math.min(textarea.scrollHeight, TEXTAREA_MAX_HEIGHT)
-    textarea.style.height = `${nextHeight}px`
-    textarea.style.overflowY = textarea.scrollHeight > TEXTAREA_MAX_HEIGHT ? 'auto' : 'hidden'
-  }, [])
+    textarea.style.overflowY = "hidden";
+    textarea.style.height = "auto";
+    const nextHeight = Math.min(textarea.scrollHeight, TEXTAREA_MAX_HEIGHT);
+    textarea.style.height = `${nextHeight}px`;
+    textarea.style.overflowY = textarea.scrollHeight > TEXTAREA_MAX_HEIGHT ? "auto" : "hidden";
+  }, []);
 
   const updateDraft = useCallback(
     (nextValue: string | ((previousValue: string) => string)) => {
-      if (!agentId) {
-        return
+      if (!resolvedAgentId) {
+        return;
       }
 
       setDrafts((previousDrafts) => {
-        const previousValue = previousDrafts[agentId] ?? ''
+        const previousValue = previousDrafts[resolvedAgentId] ?? "";
         const resolvedValue =
-          typeof nextValue === 'function' ? nextValue(previousValue) : nextValue
+          typeof nextValue === "function" ? nextValue(previousValue) : nextValue;
 
         if (resolvedValue.length === 0) {
-          if (!(agentId in previousDrafts)) {
-            return previousDrafts
+          if (!(resolvedAgentId in previousDrafts)) {
+            return previousDrafts;
           }
 
-          const { [agentId]: _removedDraft, ...remainingDrafts } = previousDrafts
-          return remainingDrafts
+          const { [resolvedAgentId]: _removedDraft, ...remainingDrafts } = previousDrafts;
+          return remainingDrafts;
         }
 
         if (resolvedValue === previousValue) {
-          return previousDrafts
+          return previousDrafts;
         }
 
         return {
           ...previousDrafts,
-          [agentId]: resolvedValue,
-        }
-      })
+          [resolvedAgentId]: resolvedValue,
+        };
+      });
     },
-    [agentId, setDrafts],
-  )
+    [resolvedAgentId, setDrafts],
+  );
 
-  const blockedByLoading = isLoading && !allowWhileLoading
+  const blockedByLoading = resolvedIsLoading && !allowWhileLoading;
 
-  useEffect(() => {
-    resizeTextarea()
-  }, [input, resizeTextarea])
-
-  useEffect(() => {
-    if (!disabled && !blockedByLoading && !isRecording) {
-      textareaRef.current?.focus()
+  const cancelMobileViewportReset = useCallback(() => {
+    if (typeof window === "undefined") {
+      return;
     }
-  }, [blockedByLoading, disabled, isRecording])
+
+    if (mobileViewportResetFrameRef.current !== null) {
+      window.cancelAnimationFrame(mobileViewportResetFrameRef.current);
+      mobileViewportResetFrameRef.current = null;
+    }
+
+    if (mobileViewportResetTimeoutRef.current !== null) {
+      window.clearTimeout(mobileViewportResetTimeoutRef.current);
+      mobileViewportResetTimeoutRef.current = null;
+    }
+
+    mobileViewportResetCleanupRef.current?.();
+    mobileViewportResetCleanupRef.current = null;
+  }, []);
+
+  useEffect(() => {
+    resizeTextarea();
+  }, [input, resizeTextarea]);
+
+  useEffect(() => {
+    if (resolvedDisabled || blockedByLoading) {
+      return;
+    }
+
+    if (isCoarsePointerDevice()) {
+      return;
+    }
+
+    textareaRef.current?.focus();
+  }, [blockedByLoading, resolvedDisabled]);
+
+  useEffect(() => cancelMobileViewportReset, [cancelMobileViewportReset]);
 
   const addFiles = useCallback(
     async (files: File[]) => {
-      if (disabled || isRecording || files.length === 0) return
+      if (resolvedDisabled || files.length === 0) return;
 
-      const uploaded = await Promise.all(files.map(fileToPendingAttachment))
-      const nextAttachments = uploaded.filter((attachment): attachment is PendingAttachment => attachment !== null)
+      const uploaded = await Promise.all(files.map(fileToPendingAttachment));
+      const nextAttachments = uploaded.filter(
+        (attachment): attachment is PendingAttachment => attachment !== null,
+      );
 
       if (nextAttachments.length === 0) {
-        return
+        return;
       }
 
-      setAttachedFiles((previous) => [...previous, ...nextAttachments])
+      setAttachedFiles((previous) => [...previous, ...nextAttachments]);
     },
-    [disabled, isRecording],
-  )
+    [resolvedDisabled],
+  );
 
   useImperativeHandle(
     ref,
     () => ({
       setInput: (value: string) => {
-        updateDraft(value)
-        requestAnimationFrame(() => textareaRef.current?.focus())
+        updateDraft(value);
+        requestAnimationFrame(() => textareaRef.current?.focus());
       },
       focus: () => {
-        textareaRef.current?.focus()
+        textareaRef.current?.focus();
       },
       addFiles,
     }),
     [addFiles, updateDraft],
-  )
+  );
 
   const handleFileSelect = async (event: ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(event.target.files ?? [])
-    await addFiles(files)
-    event.target.value = ''
-  }
+    const files = Array.from(event.target.files ?? []);
+    await addFiles(files);
+    event.target.value = "";
+  };
 
   const handlePaste = async (event: ClipboardEvent<HTMLTextAreaElement>) => {
     const files = Array.from(event.clipboardData.items)
-      .filter((item) => item.kind === 'file')
+      .filter((item) => item.kind === "file")
       .map((item) => item.getAsFile())
-      .filter((file): file is File => file !== null)
+      .filter((file): file is File => file !== null);
 
-    if (files.length === 0) return
+    if (files.length === 0) return;
 
-    event.preventDefault()
-    await addFiles(files)
-  }
+    event.preventDefault();
+    await addFiles(files);
+  };
 
   const removeAttachment = (attachmentId: string) => {
-    setAttachedFiles((previous) => previous.filter((attachment) => attachment.id !== attachmentId))
-  }
+    setAttachedFiles((previous) => previous.filter((attachment) => attachment.id !== attachmentId));
+  };
 
-  const appendTranscriptionToInput = useCallback((transcribedText: string): boolean => {
-    const trimmedText = transcribedText.trim()
-    if (!trimmedText) {
-      return false
+  const restoreMobileViewportAfterSubmit = useCallback(() => {
+    if (!isCoarsePointerDevice()) {
+      return;
     }
 
-    updateDraft((previousInput) => {
-      if (!previousInput.trim()) {
-        return trimmedText
-      }
+    textareaRef.current?.blur();
+    cancelMobileViewportReset();
+    scrollLayoutViewportToTop();
 
-      const separator = previousInput.endsWith('\n') || previousInput.endsWith(' ') ? '' : '\n'
-      return `${previousInput}${separator}${trimmedText}`
-    })
+    mobileViewportResetFrameRef.current = window.requestAnimationFrame(() => {
+      mobileViewportResetFrameRef.current = null;
+      scrollLayoutViewportToTop();
+    });
 
-    requestAnimationFrame(() => textareaRef.current?.focus())
-    return true
-  }, [updateDraft])
+    const visualViewport = window.visualViewport;
+    if (
+      visualViewport &&
+      typeof visualViewport.addEventListener === "function" &&
+      typeof visualViewport.removeEventListener === "function"
+    ) {
+      const handleViewportResize = () => {
+        scrollLayoutViewportToTop();
+        mobileViewportResetCleanupRef.current = null;
+      };
 
-  const stopAndTranscribeRecording = useCallback(async () => {
-    const recording = await stopRecording()
-    if (!recording) {
-      setVoiceError('Recording failed. Could not capture audio. Please try again.')
-      return
+      visualViewport.addEventListener("resize", handleViewportResize, { once: true });
+      mobileViewportResetCleanupRef.current = () => {
+        visualViewport.removeEventListener("resize", handleViewportResize);
+      };
     }
 
-    setIsTranscribingVoice(true)
-    setVoiceError(null)
-
-    try {
-      const result = await transcribeVoice(recording.blob, transcribeEndpoint)
-      const appended = appendTranscriptionToInput(result.text)
-      if (!appended) {
-        setVoiceError('No speech detected. Try speaking a little louder.')
-      }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Voice transcription failed.'
-      setVoiceError(message)
-    } finally {
-      setIsTranscribingVoice(false)
-    }
-  }, [appendTranscriptionToInput, stopRecording, transcribeEndpoint])
-
-  useEffect(() => {
-    if (!isRecording || isTranscribingVoice) return
-    if (voiceRecordingDurationMs < MAX_VOICE_RECORDING_DURATION_MS) return
-    void stopAndTranscribeRecording()
-  }, [isRecording, isTranscribingVoice, stopAndTranscribeRecording, voiceRecordingDurationMs])
-
-  const startInlineRecording = useCallback(async () => {
-    const hasOpenAiKey = await hasConfiguredOpenAiKey(settingsAuthEndpoint)
-    if (!hasOpenAiKey) {
-      setVoiceError(OPENAI_KEY_REQUIRED_MESSAGE)
-      return
-    }
-
-    try {
-      await startRecording()
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Could not access your microphone.'
-      setVoiceError(message)
-    }
-  }, [settingsAuthEndpoint, startRecording])
-
-  const handleVoiceButtonClick = useCallback(() => {
-    if (disabled || blockedByLoading || isRequestingMicrophone || isTranscribingVoice) {
-      return
-    }
-
-    setVoiceError(null)
-
-    if (isRecording) {
-      void stopAndTranscribeRecording()
-      return
-    }
-
-    void startInlineRecording()
-  }, [
-    blockedByLoading,
-    disabled,
-    isRecording,
-    isRequestingMicrophone,
-    isTranscribingVoice,
-    startInlineRecording,
-    stopAndTranscribeRecording,
-  ])
+    mobileViewportResetTimeoutRef.current = window.setTimeout(() => {
+      mobileViewportResetTimeoutRef.current = null;
+      scrollLayoutViewportToTop();
+      mobileViewportResetCleanupRef.current?.();
+      mobileViewportResetCleanupRef.current = null;
+    }, MOBILE_VIEWPORT_RESET_DELAY_MS);
+  }, [cancelMobileViewportReset]);
 
   const submitMessage = useCallback(() => {
-    const trimmed = input.trim()
-    const hasContent = trimmed.length > 0 || attachedFiles.length > 0
-    if (!hasContent || disabled || blockedByLoading || isRecording || isTranscribingVoice) {
-      return
+    const trimmed = input.trim();
+    const hasContent = trimmed.length > 0 || attachedFiles.length > 0;
+    if (!hasContent || resolvedDisabled || blockedByLoading) {
+      return;
     }
 
     onSend(
       trimmed,
       attachedFiles.length > 0
         ? attachedFiles.map((attachment) => {
-            if (attachment.type === 'text') {
+            if (attachment.type === "text") {
               return {
-                type: 'text' as const,
+                type: "text" as const,
                 mimeType: attachment.mimeType,
                 text: attachment.text,
                 fileName: attachment.fileName,
-              }
+              };
             }
 
-            if (attachment.type === 'binary') {
+            if (attachment.type === "binary") {
               return {
-                type: 'binary' as const,
+                type: "binary" as const,
                 mimeType: attachment.mimeType,
                 data: attachment.data,
                 fileName: attachment.fileName,
-              }
+              };
             }
 
             return {
               mimeType: attachment.mimeType,
               data: attachment.data,
               fileName: attachment.fileName,
-            }
+            };
           })
         : undefined,
-    )
+    );
 
-    updateDraft('')
-    setAttachedFiles([])
+    updateDraft("");
+    setAttachedFiles([]);
+    restoreMobileViewportAfterSubmit();
     requestAnimationFrame(() => {
-      onSubmitted?.()
-    })
+      onSubmitted?.();
+    });
   }, [
     attachedFiles,
     blockedByLoading,
-    disabled,
+    resolvedDisabled,
     input,
-    isRecording,
-    isTranscribingVoice,
     onSend,
     onSubmitted,
+    restoreMobileViewportAfterSubmit,
     updateDraft,
-  ])
+  ]);
 
   const handleSubmit = useCallback(
     (event: FormEvent<HTMLFormElement>) => {
-      event.preventDefault()
-      submitMessage()
+      event.preventDefault();
+      submitMessage();
     },
     [submitMessage],
-  )
+  );
 
   const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (event.key === 'Enter' && !event.shiftKey) {
-      event.preventDefault()
-      submitMessage()
+    if (event.key === "Enter" && !event.shiftKey) {
+      event.preventDefault();
+      submitMessage();
     }
-  }
+  };
 
-  const hasContent = input.trim().length > 0 || attachedFiles.length > 0
-  const canSubmit = hasContent && !disabled && !blockedByLoading && !isRecording && !isTranscribingVoice
-  const placeholder = disabled
-    ? 'Waiting for connection...'
-    : allowWhileLoading && isLoading
-      ? `Send another message to ${agentLabel}...`
-      : `Message ${agentLabel}...`
-
-  const activeWaveformBars = useMemo(
-    () => stretchWaveformBars(recordingWaveformBars, ACTIVE_WAVEFORM_BAR_COUNT),
-    [recordingWaveformBars],
-  )
-
-  const voiceButtonDisabled = disabled || blockedByLoading || isRequestingMicrophone || isTranscribingVoice
+  const hasContent = input.trim().length > 0 || attachedFiles.length > 0;
+  const canSubmit = hasContent && !resolvedDisabled && !blockedByLoading;
+  const showStop = !hasContent && canStop && !resolvedDisabled && typeof onStop === "function";
+  const placeholder = resolvedDisabled
+    ? "Waiting for connection..."
+    : allowWhileLoading && resolvedIsLoading
+      ? `Send another message to ${resolvedAgentLabel}...`
+      : `Message ${resolvedAgentLabel}...`;
 
   return (
     <form
       data-react-grab-ignore
       onSubmit={handleSubmit}
-      className="sticky bottom-0 shrink-0 bg-background p-2 md:p-3"
+      className="sticky bottom-0 z-10 shrink-0 bg-background px-2 pt-2 pb-[calc(0.5rem+var(--app-safe-bottom))] md:px-3 md:pt-3 md:pb-[calc(0.75rem+var(--app-safe-bottom))]"
     >
       <div className="overflow-hidden rounded-2xl border border-border">
         <AttachedFiles attachments={attachedFiles} onRemove={removeAttachment} />
-        {onEscalationClick ? (
-          <PinnedEscalations
-            escalations={pinnedEscalations}
-            onEscalationClick={onEscalationClick}
-          />
-        ) : null}
 
         <div className="group flex flex-col">
-          {isRecording ? (
-            <div className="flex min-h-[48px] items-center gap-2 border-b border-border/60 bg-red-500/[0.05] px-3 py-2">
-              <div className="flex h-7 flex-1 items-center gap-px py-1" aria-hidden>
-                {activeWaveformBars.map((bar, index) => {
-                  const barHeight = Math.max(2, Math.round(bar * 18))
-                  return (
-                    <span
-                      key={index}
-                      className="flex-1 rounded-[1px] bg-red-500/60 transition-[height] duration-150 ease-out"
-                      style={{ height: `${barHeight}px` }}
-                    />
-                  )
-                })}
-              </div>
-
-              <span className="shrink-0 text-[11px] font-medium tabular-nums text-muted-foreground">
-                {formatDuration(voiceRecordingDurationMs)}
-              </span>
-
-              <button
-                type="button"
-                className="flex size-5 shrink-0 items-center justify-center rounded-full bg-red-500 text-white transition-colors hover:bg-red-600 disabled:opacity-50"
-                onClick={() => void stopAndTranscribeRecording()}
-                disabled={voiceButtonDisabled}
-                aria-label="Stop recording"
-              >
-                <Square className="size-2 fill-current" />
-              </button>
-            </div>
-          ) : (
-            <textarea
-              ref={textareaRef}
-              value={input}
-              onChange={(event) => updateDraft(event.target.value)}
-              onKeyDown={handleKeyDown}
-              onPaste={handlePaste}
-              placeholder={placeholder}
-              disabled={disabled}
-              rows={1}
-              className={cn(
-                'w-full resize-none border-0 bg-transparent text-sm leading-normal text-foreground shadow-none focus:outline-none',
-                'min-h-[44px]',
-                'px-4 pt-3 pb-2',
-                '[&::-webkit-scrollbar]:w-1.5',
-                '[&::-webkit-scrollbar-track]:bg-transparent',
-                '[&::-webkit-scrollbar-thumb]:bg-transparent',
-                '[&::-webkit-scrollbar-thumb]:rounded-full',
-                'group-hover:[&::-webkit-scrollbar-thumb]:bg-border',
-              )}
-            />
-          )}
+          <textarea
+            ref={textareaRef}
+            value={input}
+            onChange={(event) => updateDraft(event.target.value)}
+            onKeyDown={handleKeyDown}
+            onPaste={handlePaste}
+            placeholder={placeholder}
+            disabled={resolvedDisabled}
+            rows={1}
+            className={cn(
+              "w-full resize-none border-0 bg-transparent text-sm leading-normal text-foreground shadow-none focus:outline-none",
+              "min-h-[44px]",
+              "px-4 pt-3 pb-2",
+              "[&::-webkit-scrollbar]:w-1.5",
+              "[&::-webkit-scrollbar-track]:bg-transparent",
+              "[&::-webkit-scrollbar-thumb]:bg-transparent",
+              "[&::-webkit-scrollbar-thumb]:rounded-full",
+              "group-hover:[&::-webkit-scrollbar-thumb]:bg-border",
+            )}
+          />
 
           <input
             ref={fileInputRef}
@@ -512,55 +407,52 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
                 size="icon"
                 className="size-7 rounded-full text-muted-foreground/60 hover:text-foreground"
                 onClick={() => fileInputRef.current?.click()}
-                disabled={disabled || isRecording}
+                disabled={resolvedDisabled}
                 aria-label="Attach files"
               >
                 <Paperclip className="size-3.5" />
               </Button>
-
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                className={cn(
-                  'size-7 rounded-full transition-colors',
-                  isRecording
-                    ? 'text-red-500 hover:bg-red-500/10 hover:text-red-600'
-                    : 'text-muted-foreground/60 hover:text-foreground',
-                )}
-                onClick={handleVoiceButtonClick}
-                disabled={voiceButtonDisabled}
-                aria-label={isRecording ? 'Stop recording and transcribe' : 'Record voice input'}
-              >
-                {isRequestingMicrophone || isTranscribingVoice ? (
-                  <Loader2 className="size-3.5 animate-spin" />
-                ) : isRecording ? (
-                  <Square className="size-3 fill-current" />
-                ) : (
-                  <Mic className="size-3.5" />
-                )}
-              </Button>
             </div>
 
-            <Button
-              type="submit"
-              disabled={!canSubmit}
-              size="icon"
-              className={cn(
-                'size-7 rounded-full transition-all',
-                canSubmit
-                  ? 'bg-primary text-primary-foreground hover:bg-primary/90 active:scale-95'
-                  : 'cursor-default bg-muted text-muted-foreground/40',
-              )}
-              aria-label="Send message"
-            >
-              <ArrowUp className="size-3.5" strokeWidth={2.5} />
-            </Button>
+            {showStop ? (
+              <Button
+                type="button"
+                disabled={stopInProgress}
+                size="icon"
+                className={cn(
+                  "size-7 rounded-full transition-all",
+                  stopInProgress
+                    ? "cursor-default bg-secondary/70 text-secondary-foreground"
+                    : "bg-secondary text-secondary-foreground hover:bg-secondary/80 active:scale-95",
+                )}
+                onClick={() => onStop?.()}
+                aria-label={stopLabel}
+              >
+                {stopInProgress ? (
+                  <Loader2 className="size-3.5 animate-spin" />
+                ) : (
+                  <Square className="size-3.5 fill-current" strokeWidth={2.2} />
+                )}
+              </Button>
+            ) : (
+              <Button
+                type="submit"
+                disabled={!canSubmit}
+                size="icon"
+                className={cn(
+                  "size-7 rounded-full transition-all",
+                  canSubmit
+                    ? "bg-primary text-primary-foreground hover:bg-primary/90 active:scale-95"
+                    : "cursor-default bg-muted text-muted-foreground/40",
+                )}
+                aria-label="Send message"
+              >
+                <ArrowUp className="size-3.5" strokeWidth={2.5} />
+              </Button>
+            )}
           </div>
-
-          {voiceError ? <p className="px-3 pb-2 text-xs text-destructive">{voiceError}</p> : null}
         </div>
       </div>
     </form>
-  )
-})
+  );
+});

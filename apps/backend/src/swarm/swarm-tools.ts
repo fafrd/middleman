@@ -1,108 +1,208 @@
-import { Type } from "@sinclair/typebox";
-import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
-import { parseSwarmModelPreset } from "./model-presets.js";
+import { AGENT_THINKING_LEVELS } from "@middleman/protocol";
+import { Type, type Static, type TSchema } from "@sinclair/typebox";
+import {
+  describeSwarmModelPresets,
+  describeSwarmThinkingLevels,
+  parseSwarmModelPreset,
+  parseSwarmThinkingLevel,
+} from "./model-presets.js";
 import {
   type AgentDescriptor,
   type AgentStatus,
-  type MessageChannel,
+  type AgentThinkingLevel,
   type MessageSourceContext,
   type MessageTargetContext,
   type RequestedDeliveryMode,
   type SendMessageReceipt,
-  type SpawnAgentInput
+  type SwarmModelPreset,
+  SWARM_MODEL_PRESETS,
+  type SpawnAgentInput,
 } from "./types.js";
 
 export interface SwarmToolHost {
-  listAgents(): AgentDescriptor[];
+  listAgents(options?: { includeArchived?: boolean }): AgentDescriptor[];
   spawnAgent(callerAgentId: string, input: SpawnAgentInput): Promise<AgentDescriptor>;
   killAgent(callerAgentId: string, targetAgentId: string): Promise<void>;
   sendMessage(
     fromAgentId: string,
     targetAgentId: string,
     message: string,
-    delivery?: RequestedDeliveryMode
+    delivery?: RequestedDeliveryMode,
   ): Promise<SendMessageReceipt>;
   publishToUser(
     agentId: string,
     text: string,
     source?: "speak_to_user" | "system",
-    targetContext?: MessageTargetContext
+    targetContext?: MessageTargetContext,
   ): Promise<{ targetContext: MessageSourceContext }>;
+}
+
+interface BuildSwarmToolsOptions {
+  availableArchetypeIds?: string[];
+}
+
+export interface SwarmToolResult<TDetails = unknown> {
+  content: Array<{ type: "text"; text: string }>;
+  details?: TDetails;
+}
+
+export interface SwarmToolDefinition<TParams extends TSchema = TSchema, TDetails = unknown> {
+  name: string;
+  label: string;
+  description: string;
+  parameters: TParams;
+  execute(toolCallId: string, params: Static<TParams>): Promise<SwarmToolResult<TDetails>>;
 }
 
 const deliveryModeSchema = Type.Union([
   Type.Literal("auto"),
   Type.Literal("followUp"),
-  Type.Literal("steer")
+  Type.Literal("steer"),
 ]);
 
-const spawnModelPresetSchema = Type.Union([
-  Type.Literal("pi-codex"),
-  Type.Literal("pi-opus"),
-  Type.Literal("codex-app"),
-  Type.Literal("claude-code")
-]);
-
-const messageChannelSchema = Type.Union([
-  Type.Literal("web"),
-  Type.Literal("slack"),
-  Type.Literal("telegram")
-]);
-
-const speakToUserTargetSchema = Type.Object({
-  channel: messageChannelSchema,
-  channelId: Type.Optional(
-    Type.String({ description: "Required when channel is 'slack' or 'telegram'." })
-  ),
-  userId: Type.Optional(Type.String()),
-  threadTs: Type.Optional(Type.String()),
-  integrationProfileId: Type.Optional(
-    Type.String({ description: "Optional integration profile id for provider-targeted delivery." })
-  )
+const spawnModelPresetSchema = Type.Unsafe<SwarmModelPreset>({
+  type: "string",
+  enum: [...SWARM_MODEL_PRESETS],
 });
 
-type ListAgentsEntry = Pick<AgentDescriptor, "agentId" | "role" | "managerId" | "status" | "model">;
+const spawnThinkingLevelSchema = Type.Unsafe<AgentThinkingLevel>({
+  type: "string",
+  enum: [...AGENT_THINKING_LEVELS],
+});
 
-const ACTIVE_AGENT_STATUSES = new Set<AgentStatus>(["idle", "streaming"]);
+type ListAgentsEntry = Pick<
+  AgentDescriptor,
+  "agentId" | "role" | "managerId" | "status" | "model"
+> & {
+  isExternal?: boolean;
+};
 
-export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor): ToolDefinition[] {
-  const shared: ToolDefinition[] = [
+const DEFAULT_VISIBLE_AGENT_STATUSES = new Set<AgentStatus>([
+  "created",
+  "starting",
+  "idle",
+  "busy",
+  "compacting",
+  "interrupting",
+  "stopping",
+  "stopped",
+]);
+
+function buildVisibleAgentEntries(
+  caller: AgentDescriptor,
+  agents: AgentDescriptor[],
+  options: {
+    includeArchived?: boolean;
+    includeManagers?: boolean;
+    includeInactive?: boolean;
+  },
+): ListAgentsEntry[] {
+  const teamManagerId = caller.role === "manager" ? caller.agentId : caller.managerId;
+  const includeInactive = options.includeInactive === true;
+
+  const isVisible = (agent: AgentDescriptor): boolean => {
+    if (!includeInactive && !DEFAULT_VISIBLE_AGENT_STATUSES.has(agent.status)) {
+      return false;
+    }
+
+    if (agent.role === "manager") {
+      if (agent.agentId === teamManagerId) {
+        return true;
+      }
+
+      return caller.role === "manager" && options.includeManagers === true;
+    }
+
+    return agent.managerId === teamManagerId;
+  };
+
+  const teamAgents: ListAgentsEntry[] = [];
+  const externalManagers: ListAgentsEntry[] = [];
+
+  for (const agent of agents) {
+    if (!isVisible(agent)) {
+      continue;
+    }
+
+    const entry: ListAgentsEntry = {
+      agentId: agent.agentId,
+      role: agent.role,
+      managerId: agent.managerId,
+      status: agent.status,
+      model: agent.model,
+    };
+
+    if (agent.role === "manager" && agent.agentId !== teamManagerId) {
+      externalManagers.push({
+        ...entry,
+        isExternal: true,
+      });
+      continue;
+    }
+
+    teamAgents.push(entry);
+  }
+
+  return [...teamAgents, ...externalManagers];
+}
+
+export function buildSwarmTools(
+  host: SwarmToolHost,
+  descriptor: AgentDescriptor,
+  options: BuildSwarmToolsOptions = {},
+): SwarmToolDefinition[] {
+  const availableArchetypeIds = options.availableArchetypeIds ?? [];
+  const archetypeIdDescriptionSuffix =
+    availableArchetypeIds.length > 0
+      ? ` Available archetype ids: ${availableArchetypeIds.join(", ")}.`
+      : "";
+  const shared: SwarmToolDefinition[] = [
     {
       name: "list_agents",
       label: "List Agents",
       description:
-        "List swarm agents with ids, roles, manager ids, status, and model. Returns active agents (idle/streaming) by default; set includeTerminated=true to include inactive agents.",
+        "List the caller's current team with ids, roles, manager ids, status, and model. Returns non-archived team agents by default, including stopping/stopped sessions; set includeInactive=true to also include errored and terminated agents, and includeArchived=true to include archived sessions. Managers can set includeManagers=true to also include other managers in the system, flagged with isExternal=true.",
       parameters: Type.Object({
-        includeTerminated: Type.Optional(
+        includeInactive: Type.Optional(
           Type.Boolean({
-            description: "When true, include stopped/terminated/error agents in the results."
-          })
-        )
+            description:
+              "When true, also include errored and terminated agents beyond the default visible statuses.",
+          }),
+        ),
+        includeArchived: Type.Optional(
+          Type.Boolean({
+            description:
+              "When true, include archived agents in the candidate set. Combine with includeInactive=true to surface archived errored or terminated agents.",
+          }),
+        ),
+        includeManagers: Type.Optional(
+          Type.Boolean({
+            description:
+              "Manager only. When true, also include other managers outside the caller's own team.",
+          }),
+        ),
       }),
       async execute(_toolCallId, params) {
         const parsed = params as {
-          includeTerminated?: boolean;
+          includeInactive?: boolean;
+          includeArchived?: boolean;
+          includeManagers?: boolean;
         };
-        const agents: ListAgentsEntry[] = host
-          .listAgents()
-          .filter((agent) => parsed.includeTerminated === true || ACTIVE_AGENT_STATUSES.has(agent.status))
-          .map((agent) => ({
-            agentId: agent.agentId,
-            role: agent.role,
-            managerId: agent.managerId,
-            status: agent.status,
-            model: agent.model
-          }));
+        const agents = buildVisibleAgentEntries(
+          descriptor,
+          host.listAgents({ includeArchived: parsed.includeArchived === true }),
+          parsed,
+        );
         return {
           content: [
             {
               type: "text",
-              text: JSON.stringify({ agents }, null, 2)
-            }
+              text: JSON.stringify({ agents }, null, 2),
+            },
           ],
-          details: { agents }
+          details: { agents },
         };
-      }
+      },
     },
     {
       name: "send_message_to_agent",
@@ -112,7 +212,7 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
       parameters: Type.Object({
         targetAgentId: Type.String({ description: "Agent id to receive the message." }),
         message: Type.String({ description: "Message text to deliver." }),
-        delivery: Type.Optional(deliveryModeSchema)
+        delivery: Type.Optional(deliveryModeSchema),
       }),
       async execute(_toolCallId, params) {
         const parsed = params as {
@@ -125,44 +225,50 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
           descriptor.agentId,
           parsed.targetAgentId,
           parsed.message,
-          parsed.delivery
+          parsed.delivery,
         );
 
         return {
           content: [
             {
               type: "text",
-              text: `Queued message for ${receipt.targetAgentId}. deliveryId=${receipt.deliveryId}, mode=${receipt.acceptedMode}`
-            }
+              text: `Queued message for ${receipt.targetAgentId}. deliveryId=${receipt.deliveryId}, mode=${receipt.acceptedMode}`,
+            },
           ],
-          details: receipt
+          details: receipt,
         };
-      }
-    }
+      },
+    },
   ];
 
   if (descriptor.role !== "manager") {
     return shared;
   }
 
-  const managerOnly: ToolDefinition[] = [
+  const managerOnly: SwarmToolDefinition[] = [
     {
       name: "spawn_agent",
       label: "Spawn Agent",
-      description:
-        "Create and start a new worker agent. agentId is required and normalized to lowercase kebab-case; if taken, a numeric suffix (-2, -3, …) is appended. archetypeId, systemPrompt, model, cwd, and initialMessage are optional. model accepts pi-codex|pi-opus|codex-app|claude-code.",
+      description: `Create and start a new worker agent. agentId is required and normalized to lowercase kebab-case; if taken, a numeric suffix (-2, -3, …) is appended. archetypeId, systemPrompt, model, thinkingLevel, cwd, and initialMessage are optional. model accepts ${describeSwarmModelPresets()}. thinkingLevel accepts ${describeSwarmThinkingLevels()}.`,
       parameters: Type.Object({
         agentId: Type.String({
           description:
-            "Required agent identifier. Normalized to lowercase kebab-case; collisions are suffixed numerically."
+            "Required agent identifier. Normalized to lowercase kebab-case; collisions are suffixed numerically.",
         }),
         archetypeId: Type.Optional(
-          Type.String({ description: "Optional archetype id (for example: merger)." })
+          Type.String({
+            description: `Optional archetype id.${archetypeIdDescriptionSuffix}`,
+          }),
         ),
-        systemPrompt: Type.Optional(Type.String({ description: "Optional system prompt override." })),
+        systemPrompt: Type.Optional(
+          Type.String({ description: "Optional system prompt override." }),
+        ),
         model: Type.Optional(spawnModelPresetSchema),
+        thinkingLevel: Type.Optional(spawnThinkingLevelSchema),
         cwd: Type.Optional(Type.String({ description: "Optional working directory override." })),
-        initialMessage: Type.Optional(Type.String({ description: "Optional first message to send after spawn." }))
+        initialMessage: Type.Optional(
+          Type.String({ description: "Optional first message to send after spawn." }),
+        ),
       }),
       async execute(_toolCallId, params) {
         const parsed = params as {
@@ -170,6 +276,7 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
           archetypeId?: string;
           systemPrompt?: string;
           model?: unknown;
+          thinkingLevel?: unknown;
           cwd?: string;
           initialMessage?: string;
         };
@@ -179,27 +286,28 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
           archetypeId: parsed.archetypeId,
           systemPrompt: parsed.systemPrompt,
           model: parseSwarmModelPreset(parsed.model, "spawn_agent.model"),
+          thinkingLevel: parseSwarmThinkingLevel(parsed.thinkingLevel, "spawn_agent.thinkingLevel"),
           cwd: parsed.cwd,
-          initialMessage: parsed.initialMessage
+          initialMessage: parsed.initialMessage,
         });
 
         return {
           content: [
             {
               type: "text",
-              text: `Spawned agent ${spawned.agentId} (${spawned.displayName})`
-            }
+              text: `Spawned agent ${spawned.agentId} (${spawned.displayName})`,
+            },
           ],
-          details: spawned
+          details: spawned,
         };
-      }
+      },
     },
     {
       name: "kill_agent",
       label: "Kill Agent",
       description: "Terminate a running worker agent. Manager cannot be terminated.",
       parameters: Type.Object({
-        targetAgentId: Type.String({ description: "Agent id to terminate." })
+        targetAgentId: Type.String({ description: "Agent id to terminate." }),
       }),
       async execute(_toolCallId, params) {
         const parsed = params as { targetAgentId: string };
@@ -208,58 +316,47 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
           content: [
             {
               type: "text",
-              text: `Terminated agent ${parsed.targetAgentId}`
-            }
+              text: `Terminated agent ${parsed.targetAgentId}`,
+            },
           ],
           details: {
             targetAgentId: parsed.targetAgentId,
-            terminated: true
-          }
+            terminated: true,
+          },
         };
-      }
+      },
     },
     {
       name: "speak_to_user",
       label: "Speak To User",
-      description:
-        "Publish a user-visible manager message into the websocket conversation feed. If target is omitted, delivery defaults to web. For Slack/Telegram delivery, set target.channel and target.channelId explicitly.",
+      description: "Publish a user-visible manager message into the websocket conversation feed.",
       parameters: Type.Object({
         text: Type.String({ description: "Message content to show to the user." }),
-        target: Type.Optional(speakToUserTargetSchema)
       }),
       async execute(_toolCallId, params) {
-        const parsed = params as {
-          text: string;
-          target?: {
-            channel: MessageChannel;
-            channelId?: string;
-            userId?: string;
-            threadTs?: string;
-            integrationProfileId?: string;
-          };
-        };
+        const parsed = params as { text: string };
 
         const published = await host.publishToUser(
           descriptor.agentId,
           parsed.text,
           "speak_to_user",
-          parsed.target
         );
 
         return {
           content: [
             {
               type: "text",
-              text: `Published message to user (${published.targetContext.channel}).`
-            }
+              text: `Published message to user (${published.targetContext.channel}).`,
+            },
           ],
           details: {
             published: true,
-            targetContext: published.targetContext
-          }
+            text: parsed.text,
+            targetContext: published.targetContext,
+          },
         };
-      }
-    }
+      },
+    },
   ];
 
   return [...shared, ...managerOnly];

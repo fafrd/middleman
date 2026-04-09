@@ -8,38 +8,32 @@ description: Create, list, and remove persistent scheduled tasks using cron expr
 Use this skill when the user asks to schedule, reschedule, or cancel reminders/tasks for later.
 
 Before creating a schedule, confirm:
+
 - exact schedule timing (cron expression),
 - timezone (IANA, for example `America/Los_Angeles`),
 - task message content.
 
 If the request is ambiguous, ask a follow-up question before adding a schedule.
 
-## Storage
-
-Schedules are stored at:
-- `${SWARM_DATA_DIR}/schedules/<managerId>.json`
-
 ## Commands
 
-Run the scheduler CLI from the repository root:
+Use the embedded CLI. It talks to the backend schedule service and stores schedules in SQLite.
 
 ```bash
-node apps/backend/src/swarm/skills/builtins/cron-scheduling/schedule.js add \
-  --manager "manager" \
-  --name "Daily standup reminder" \
+middleman schedule add \
   --cron "0 9 * * 1-5" \
   --message "Remind me about the daily standup" \
+  --description "Daily standup reminder" \
   --timezone "America/Los_Angeles"
 ```
 
 One-shot schedule (fires once at the next matching cron time):
 
 ```bash
-node apps/backend/src/swarm/skills/builtins/cron-scheduling/schedule.js add \
-  --manager "manager" \
-  --name "One-time deployment check" \
+middleman schedule add \
   --cron "30 14 * * *" \
   --message "Check deployment status" \
+  --description "One-time deployment check" \
   --timezone "America/Los_Angeles" \
   --one-shot
 ```
@@ -47,22 +41,25 @@ node apps/backend/src/swarm/skills/builtins/cron-scheduling/schedule.js add \
 Remove a schedule:
 
 ```bash
-node apps/backend/src/swarm/skills/builtins/cron-scheduling/schedule.js remove \
-  --manager "manager" \
-  --id "<schedule-id>"
+middleman schedule remove \
+  "<schedule-id>"
 ```
 
 List schedules:
 
 ```bash
-node apps/backend/src/swarm/skills/builtins/cron-scheduling/schedule.js list --manager "manager"
+middleman schedule list
+```
 
-`--manager` is optional. If omitted, the CLI will auto-select a manager when there is only one manager
-or when a known default manager is detected.
+Override manager context manually when needed:
+
+```bash
+middleman schedule list --manager "manager"
 ```
 
 ## Output
 
 All commands return JSON:
+
 - Success: `{ "ok": true, ... }`
 - Failure: `{ "ok": false, "error": "..." }`

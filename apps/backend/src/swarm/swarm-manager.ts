@@ -1,75 +1,80 @@
+import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
-import { existsSync } from "node:fs";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { join, resolve } from "node:path";
-import type { ServerEvent } from "@middleman/protocol";
-import { EscalationStorage } from "../escalations/escalation-storage.js";
+
+import type {
+  ContentPart,
+  DeliveryMode as SwarmdDeliveryMode,
+  EventEnvelope,
+  HostCallRequest,
+  SwarmdCoreHandle,
+} from "swarmd";
+import { createCore } from "swarmd";
+
+import type { CreateScheduledTaskInput, ScheduledTask } from "../scheduler/schedule-types.js";
+import {
+  computeNextFireAt,
+  normalizeOptionalScheduleText,
+  normalizeScheduleText,
+  normalizeScheduleTimezone,
+  resolveScheduleName,
+} from "../scheduler/schedule-utils.js";
 import {
   loadArchetypePromptRegistry,
-  normalizeArchetypeId,
-  type ArchetypePromptRegistry
+  type ArchetypePromptRegistry,
 } from "./archetypes/archetype-prompt-registry.js";
-import { ConversationProjector } from "./conversation-projector.js";
-import { getAgentMemoryPath as getAgentMemoryPathForDataDir } from "./memory-paths.js";
-import { PersistenceService } from "./persistence-service.js";
-import { RuntimeFactory } from "./runtime-factory.js";
-import { SecretsEnvService } from "./secrets-env-service.js";
-import { SkillMetadataService } from "./skill-metadata-service.js";
 import {
   listDirectories,
   normalizeAllowlistRoots,
-  validateDirectory as validateDirectoryInput,
-  validateDirectoryPath,
+  validateDirectory,
   type DirectoryListingResult,
-  type DirectoryValidationResult
+  type DirectoryValidationResult,
 } from "./cwd-policy.js";
 import { pickDirectory as pickNativeDirectory } from "./directory-picker.js";
 import {
-  isConversationBinaryAttachment,
-  isConversationImageAttachment,
-  isConversationTextAttachment
-} from "./conversation-validators.js";
-import {
-  extractMessageText,
-  extractRole,
-} from "./message-utils.js";
-import {
+  resolveCreateManagerModelPreset,
   DEFAULT_SWARM_MODEL_PRESET,
+  inferSettingsAuthProviderFromDescriptor,
   inferSwarmModelPresetFromDescriptor,
-  normalizeSwarmModelDescriptor,
   parseSwarmModelPreset,
-  resolveModelDescriptorFromPreset
+  parseSwarmThinkingLevel,
+  resolveModelDescriptorFromPreset,
 } from "./model-presets.js";
+import { SecretsEnvService } from "./secrets-env-service.js";
+import { SkillMetadataService } from "./skill-metadata-service.js";
+import { SwarmLifecycleService } from "./swarm-manager-lifecycle.js";
 import {
-  isNonRunningAgentStatus,
-  normalizeAgentStatus,
-  transitionAgentStatus,
-  type AgentStatusInput
-} from "./agent-state-machine.js";
+  buildAttachmentMetadata,
+  cloneDescriptor,
+  type ConversationHistoryPageResult,
+  extractEventText,
+  fromSwarmdDeliveryMode,
+  isAgentStatus,
+  readObject,
+  readRole,
+  readString,
+  safeJson,
+  SwarmTranscriptService,
+} from "./swarm-manager-transcript.js";
+import { SwarmRuntimeContextService, MANAGER_ARCHETYPE_ID } from "./swarm-runtime-context.js";
+import { buildSwarmTools, type SwarmToolHost } from "./swarm-tools.js";
+import {
+  MIDDLEMAN_STORE_MIGRATIONS,
+  MiddlemanAgentRepo,
+  MiddlemanManagerOrderRepo,
+  MiddlemanScheduleRepo,
+  MiddlemanSettingsRepo,
+} from "./swarm-sql.js";
 import type {
-  RuntimeImageAttachment,
-  RuntimeErrorEvent,
-  RuntimeSessionEvent,
-  RuntimeUserMessage,
-  SwarmAgentRuntime
-} from "./runtime-types.js";
-import type { SwarmToolHost } from "./swarm-tools.js";
-import type {
-  AgentMessageEvent,
   AgentContextUsage,
   AgentDescriptor,
-  AgentModelDescriptor,
+  AgentMessageEvent,
   AgentStatus,
-  AgentStatusEvent,
+  AgentToolCallEvent,
   AgentsSnapshotEvent,
-  AgentsStoreFile,
   ConversationAttachment,
-  ConversationAttachmentMetadata,
-  ConversationBinaryAttachment,
-  ConversationEscalationEvent,
   ConversationEntryEvent,
+  ConversationLogEvent,
   ConversationMessageEvent,
-  ConversationTextAttachment,
   MessageSourceContext,
   MessageTargetContext,
   RequestedDeliveryMode,
@@ -79,60 +84,11 @@ import type {
   SpawnAgentInput,
   SwarmConfig,
   SwarmModelPreset,
-  UserEscalation,
-  UserEscalationResponse
 } from "./types.js";
 
-const DEFAULT_WORKER_SYSTEM_PROMPT = `You are a worker agent in a swarm.
-- You can list agents and send messages to other agents.
-- Use coding tools (read/bash/edit/write) to execute implementation tasks.
-- Report progress and outcomes back to the manager using send_message_to_agent.
-- You are not user-facing.
-- End users only see messages they send and manager speak_to_user outputs.
-- Your plain assistant text is not directly visible to end users.
-- Incoming messages prefixed with "SYSTEM:" are internal control/context updates, not direct end-user chat.
-- Persistent memory for this runtime is at \${SWARM_MEMORY_FILE} and is auto-loaded into context.
-- Workers read their owning manager's memory file.
-- Only write memory when explicitly asked to remember/update/forget durable information.
-- Follow the memory skill workflow before editing the memory file, and never store secrets in memory.
-
-Shell command guidance:
-- Avoid compound bash commands that background a long-lived server, poll health, run a build, then kill/wait — all in a single bash invocation. Instead, use separate small bash calls for each step.
-- If you must start a background server (e.g. for a build step), prefer dedicated tooling over raw nohup/& wrappers. If you do use nohup or &, start it in one bash call, then immediately call send_message_to_agent to report the server is up before continuing.
-- Never leave a long-running process running inside a bash call that has not yet returned. The swarm runtime cannot receive new messages while your bash tool call is active.`;
-const MANAGER_ARCHETYPE_ID = "manager";
-const MERGER_ARCHETYPE_ID = "merger";
-const INTERNAL_MODEL_MESSAGE_PREFIX = "SYSTEM: ";
-const MANAGER_BOOTSTRAP_INTERVIEW_MESSAGE = `You are a newly created manager agent for this user.
-
-Send a warm welcome via speak_to_user and explain that you orchestrate worker agents to get work done quickly and safely.
-
-Then run a short onboarding interview. Ask:
-1. What kinds of projects/tasks they expect to work on most.
-2. Whether they prefer delegation-heavy execution or hands-on collaboration.
-3. Which tools/integrations matter most (Slack, Telegram, cron scheduling, web search, etc.).
-4. Any coding/process preferences (style conventions, testing expectations, branching/PR habits).
-5. Communication style preferences (concise vs detailed, formal vs casual, update cadence).
-
-Offer this example workflow to show what's possible:
-
-"The Delegator" workflow:
-- User describes a feature or task.
-- Manager spawns a codex worker in a git worktree branch.
-- Worker implements and validates (typecheck, build, tests).
-- Merger agent merges the branch to main.
-- Multiple independent tasks can run in parallel across separate workers.
-- Use different model workers for different strengths (e.g. opus for UI polish, codex for backend).
-- Manager focuses on orchestration and concise status updates.
-- Memory file tracks preferences, decisions, and project context across sessions.
-
-This is just one example — ask the user how they'd like to work and adapt to their style.
-
-Close by asking if they want you to save their preferences to memory for future sessions.
-If they agree, summarize the choices and persist them using the memory workflow.`;
-// Retain recent non-web activity while preserving the full user-facing web transcript.
-const SWARM_CONTEXT_FILE_NAME = "SWARM.md";
-const SWARM_MANAGER_MAX_EVENT_LISTENERS = 64;
+const DEFAULT_REPLY_TARGET: MessageTargetContext = { channel: "web" };
+const COMPACT_OPERATION_TIMEOUT_MS = 300_000;
+const TOOL_PROGRESS_BROADCAST_INTERVAL_MS = 500;
 
 function nowIso(): string {
   return new Date().toISOString();
@@ -141,1202 +97,465 @@ function nowIso(): string {
 function createEmptyArchetypePromptRegistry(): ArchetypePromptRegistry {
   return {
     resolvePrompt: () => undefined,
-    listArchetypeIds: () => []
+    listArchetypeIds: () => [],
   };
 }
 
-function cloneContextUsage(contextUsage: AgentContextUsage | undefined): AgentContextUsage | undefined {
-  if (!contextUsage) {
-    return undefined;
+function normalizeContextUsage(value: unknown): AgentContextUsage | null | undefined {
+  if (value === null) {
+    return null;
   }
 
-  return {
-    tokens: contextUsage.tokens,
-    contextWindow: contextUsage.contextWindow,
-    percent: contextUsage.percent
-  };
-}
-
-function cloneDescriptor(descriptor: AgentDescriptor): AgentDescriptor {
-  return {
-    ...descriptor,
-    model: { ...descriptor.model },
-    contextUsage: cloneContextUsage(descriptor.contextUsage)
-  };
-}
-
-function normalizeContextUsage(contextUsage: AgentContextUsage | undefined): AgentContextUsage | undefined {
-  if (!contextUsage) {
-    return undefined;
-  }
+  const usage = readObject(value);
+  const tokens = usage?.tokens;
+  const contextWindow = usage?.contextWindow;
+  const percent = usage?.percent;
 
   if (
-    typeof contextUsage.tokens !== "number" ||
-    !Number.isFinite(contextUsage.tokens) ||
-    contextUsage.tokens < 0
+    typeof tokens !== "number" ||
+    !Number.isFinite(tokens) ||
+    tokens < 0 ||
+    typeof contextWindow !== "number" ||
+    !Number.isFinite(contextWindow) ||
+    contextWindow <= 0 ||
+    typeof percent !== "number" ||
+    !Number.isFinite(percent)
   ) {
     return undefined;
   }
 
-  if (
-    typeof contextUsage.contextWindow !== "number" ||
-    !Number.isFinite(contextUsage.contextWindow) ||
-    contextUsage.contextWindow <= 0
-  ) {
-    return undefined;
-  }
-
-  if (typeof contextUsage.percent !== "number" || !Number.isFinite(contextUsage.percent)) {
-    return undefined;
-  }
-
   return {
-    tokens: Math.round(contextUsage.tokens),
-    contextWindow: Math.max(1, Math.round(contextUsage.contextWindow)),
-    percent: Math.max(0, Math.min(100, contextUsage.percent))
+    tokens: Math.round(tokens),
+    contextWindow: Math.max(1, Math.round(contextWindow)),
+    percent: Math.max(0, Math.min(100, percent)),
   };
-}
-
-function areContextUsagesEqual(
-  left: AgentContextUsage | undefined,
-  right: AgentContextUsage | undefined
-): boolean {
-  if (!left && !right) {
-    return true;
-  }
-
-  if (!left || !right) {
-    return false;
-  }
-
-  return (
-    left.tokens === right.tokens &&
-    left.contextWindow === right.contextWindow &&
-    left.percent === right.percent
-  );
-}
-
-function compareDescriptorsByCreatedAtThenId(left: AgentDescriptor, right: AgentDescriptor): number {
-  if (left.createdAt !== right.createdAt) {
-    return left.createdAt.localeCompare(right.createdAt);
-  }
-
-  return left.agentId.localeCompare(right.agentId);
 }
 
 export class SwarmManager extends EventEmitter implements SwarmToolHost {
   private readonly config: SwarmConfig;
   private readonly now: () => string;
-  private readonly defaultModelPreset: SwarmModelPreset;
+  private readonly cwdAllowlistRoots: string[];
 
-  private readonly descriptors = new Map<string, AgentDescriptor>();
-  private managerOrder: string[] = [];
-  private readonly runtimes = new Map<string, SwarmAgentRuntime>();
-  private readonly conversationEntriesByAgentId = new Map<string, ConversationEntryEvent[]>();
-  private readonly conversationProjector: ConversationProjector;
-  private readonly persistenceService: PersistenceService;
-  private readonly escalationStorage: EscalationStorage;
-  private readonly runtimeFactory: RuntimeFactory;
+  private core: SwarmdCoreHandle | null = null;
+  private agentRepo: MiddlemanAgentRepo | null = null;
+  private managerOrderRepo: MiddlemanManagerOrderRepo | null = null;
+  private scheduleRepo: MiddlemanScheduleRepo | null = null;
+  private settingsRepo: MiddlemanSettingsRepo | null = null;
   private readonly skillMetadataService: SkillMetadataService;
-  private readonly secretsEnvService: SecretsEnvService;
-
+  private secretsEnvService: SecretsEnvService | null = null;
   private archetypePromptRegistry: ArchetypePromptRegistry = createEmptyArchetypePromptRegistry();
+  private unsubscribeCoreEvents: (() => void) | null = null;
+  private readonly lastWorkerCompletionReportTimestampByAgentId = new Map<string, string>();
+  private readonly pendingWorkerCompletionReportAgentIds = new Set<string>();
+  private readonly suppressNextWorkerCompletionReportAgentIds = new Set<string>();
+  private readonly compactingAgentIds = new Set<string>();
+  private readonly lastToolProgressBroadcastAtByKey = new Map<string, number>();
 
-  // Stale-streaming watchdog: agents that have already been warned stay in this
-  // set so we don't spam the feed. Cleared when the agent leaves streaming.
-  private readonly staleStreamingWarnedAgentIds = new Set<string>();
-  private staleStreamingWatchdogTimer: ReturnType<typeof setInterval> | undefined;
-  private static readonly STALE_STREAMING_THRESHOLD_MS = 15 * 60 * 1000; // 15 min
-  private static readonly STALE_STREAMING_CHECK_INTERVAL_MS = 60 * 1000; // 1 min
+  private readonly runtimeContext: SwarmRuntimeContextService;
+  private readonly lifecycle: SwarmLifecycleService;
+  private readonly transcript: SwarmTranscriptService;
 
   constructor(config: SwarmConfig, options?: { now?: () => string }) {
     super();
 
-    this.defaultModelPreset =
+    const defaultPreset =
       inferSwarmModelPresetFromDescriptor(config.defaultModel) ?? DEFAULT_SWARM_MODEL_PRESET;
+    this.cwdAllowlistRoots = normalizeAllowlistRoots(config.cwdAllowlistRoots);
     this.config = {
       ...config,
-      defaultModel: resolveModelDescriptorFromPreset(this.defaultModelPreset)
+      defaultModel: resolveModelDescriptorFromPreset(defaultPreset),
+      cwdAllowlistRoots: this.cwdAllowlistRoots,
     };
     this.now = options?.now ?? nowIso;
-    this.persistenceService = new PersistenceService({
-      config: this.config,
-      descriptors: this.descriptors,
-      sortedDescriptors: () => this.sortedDescriptors(),
-      getManagerOrder: () => [...this.managerOrder],
-      getConfiguredManagerId: () => this.getConfiguredManagerId(),
-      resolveMemoryOwnerAgentId: (descriptor) => this.resolveMemoryOwnerAgentId(descriptor),
-      validateAgentDescriptor,
-      extractDescriptorAgentId,
-      logDebug: (message, details) => this.logDebug(message, details)
-    });
-    this.escalationStorage = new EscalationStorage({
-      dataDir: this.config.paths.dataDir,
-      now: this.now
-    });
-    this.conversationProjector = new ConversationProjector({
-      descriptors: this.descriptors,
-      runtimes: this.runtimes,
-      conversationEntriesByAgentId: this.conversationEntriesByAgentId,
-      now: this.now,
-      emitServerEvent: (eventName, payload) => {
-        this.emit(eventName, payload);
-      },
-      logDebug: (message, details) => this.logDebug(message, details)
-    });
     this.skillMetadataService = new SkillMetadataService({
-      config: this.config
-    });
-    this.secretsEnvService = new SecretsEnvService({
       config: this.config,
-      ensureSkillMetadataLoaded: () => this.skillMetadataService.ensureSkillMetadataLoaded(),
-      getSkillMetadata: () => this.skillMetadataService.getSkillMetadata()
     });
-    this.runtimeFactory = new RuntimeFactory({
-      host: this,
+
+    this.runtimeContext = new SwarmRuntimeContextService({
+      config: this.config,
+      cwdAllowlistRoots: this.cwdAllowlistRoots,
+      skillMetadataService: this.skillMetadataService,
+      getArchetypePromptRegistry: () => this.archetypePromptRegistry,
+      getSettingsRepo: () => this.settingsRepoOrThrow(),
+      listAgents: () => this.lifecycle.getSortedDescriptors(),
+    });
+    this.lifecycle = new SwarmLifecycleService({
       config: this.config,
       now: this.now,
-      logDebug: (message, details) => this.logDebug(message, details),
-      getMemoryRuntimeResources: async (descriptor) => this.getMemoryRuntimeResources(descriptor),
-      getSwarmContextFiles: async (cwd) => this.getSwarmContextFiles(cwd),
-      mergeRuntimeContextFiles: (baseAgentsFiles, options) =>
-        this.mergeRuntimeContextFiles(baseAgentsFiles, options),
-      callbacks: {
-        onStatusChange: async (agentId, status, pendingCount, contextUsage) => {
-          await this.handleRuntimeStatus(agentId, status, pendingCount, contextUsage);
-        },
-        onSessionEvent: async (agentId, event) => {
-          await this.handleRuntimeSessionEvent(agentId, event);
-        },
-        onAgentEnd: async (agentId) => {
-          await this.handleRuntimeAgentEnd(agentId);
-        },
-        onRuntimeError: async (agentId, error) => {
-          await this.handleRuntimeError(agentId, error);
-        }
-      }
+      runtimeContext: this.runtimeContext,
+      getCore: () => this.coreOrThrow(),
+      getAgentRepo: () => this.agentRepoOrThrow(),
+      getManagerOrderRepo: () => this.managerOrderRepoOrThrow(),
     });
-    this.setMaxListeners(SWARM_MANAGER_MAX_EVENT_LISTENERS);
+    this.transcript = new SwarmTranscriptService({
+      getCore: () => this.coreOrThrow(),
+      getAgent: (agentId) => this.lifecycle.getAgent(agentId),
+      resolvePreferredManagerId: () => this.lifecycle.resolvePreferredManagerId(),
+      resolveRuntimeErrorMessage: (descriptor, payload) =>
+        this.resolveRuntimeErrorMessage(descriptor, payload),
+    });
   }
 
   async boot(): Promise<void> {
-    this.logDebug("boot:start", {
-      host: this.config.host,
-      port: this.config.port,
-      authFile: this.config.paths.authFile,
-      managerId: this.config.managerId
+    await this.runtimeContext.ensureDirectories();
+
+    this.core = await createCore(
+      {
+        dataDir: this.config.paths.dataDir,
+        dbPath: this.config.paths.swarmdDbFile,
+      },
+      {
+        migrations: MIDDLEMAN_STORE_MIGRATIONS,
+        onHostCall: async (sessionId, request) => await this.handleHostCall(sessionId, request),
+        runRecovery: false,
+      },
+    );
+
+    const db = this.core.db;
+    this.agentRepo = new MiddlemanAgentRepo(db);
+    this.managerOrderRepo = new MiddlemanManagerOrderRepo(db);
+    this.scheduleRepo = new MiddlemanScheduleRepo(db);
+    this.settingsRepo = new MiddlemanSettingsRepo(db);
+    this.secretsEnvService = new SecretsEnvService({
+      config: this.config,
+      settingsRepo: this.settingsRepo,
+      ensureSkillMetadataLoaded: () => this.skillMetadataService.ensureSkillMetadataLoaded(),
+      getSkillMetadata: () => this.skillMetadataService.getSkillMetadata(),
     });
 
-    await this.ensureDirectories();
-    await this.escalationStorage.load();
-    await this.loadSecretsStore();
-    await this.reloadSkillMetadata();
-
-    try {
-      this.config.defaultCwd = await this.resolveAndValidateCwd(this.config.defaultCwd);
-    } catch (error) {
-      if (error instanceof Error) {
-        throw new Error(`Invalid default working directory: ${error.message}`);
-      }
-      throw error;
-    }
-
+    await this.secretsEnvService.loadSecretsStore();
+    await this.skillMetadataService.ensureSkillMetadataLoaded();
     this.archetypePromptRegistry = await loadArchetypePromptRegistry({
-      repoOverridesDir: this.config.paths.repoArchetypesDir
+      builtInDir: this.config.paths.installArchetypesDir,
+      projectOverridesDir: this.config.paths.projectArchetypesDir,
     });
 
-    const loaded = await this.loadStore();
-    for (const descriptor of loaded.agents) {
-      this.descriptors.set(descriptor.agentId, descriptor);
-    }
-    this.managerOrder = this.sanitizeManagerOrder(await this.loadManagerOrder());
-    this.normalizeStreamingStatusesForBoot();
-
-    await this.ensureMemoryFilesForBoot();
-    await this.saveStore();
-
-    this.loadConversationHistoriesFromStore();
-    await this.restoreRuntimesForBoot();
-
-    const managerDescriptor = this.getBootLogManagerDescriptor();
-    this.emitAgentsSnapshot();
-
-    this.logDebug("boot:ready", {
-      managerId: managerDescriptor?.agentId,
-      managerStatus: managerDescriptor?.status,
-      model: managerDescriptor?.model,
-      cwd: managerDescriptor?.cwd,
-      managerAgentDir: this.config.paths.managerAgentDir,
-      managerSystemPromptSource: managerDescriptor ? `archetype:${MANAGER_ARCHETYPE_ID}` : undefined,
-      loadedArchetypeIds: this.archetypePromptRegistry.listArchetypeIds(),
-      restoredAgentIds: Array.from(this.runtimes.keys())
-    });
-
-    this.startStaleStreamingWatchdog();
+    this.core.sessionService.reconcilePersistedSessions();
+    this.suppressExpectedShutdownErrors();
+    await this.runtimeContext.ensureMemoryFilesForAgents();
+    await this.lifecycle.ensureManagerOrder();
+    this.installCoreEventProjection();
   }
 
-  listAgents(): AgentDescriptor[] {
-    return this.sortedDescriptors().map((descriptor) => cloneDescriptor(descriptor));
+  async shutdown(): Promise<void> {
+    this.unsubscribeCoreEvents?.();
+    this.unsubscribeCoreEvents = null;
+
+    if (this.core) {
+      await this.core.shutdown();
+    }
+
+    this.lifecycle.invalidateDescriptorGraphCache();
+    this.core = null;
+    this.agentRepo = null;
+    this.managerOrderRepo = null;
+    this.scheduleRepo = null;
+    this.settingsRepo = null;
+    this.secretsEnvService = null;
+    this.lastWorkerCompletionReportTimestampByAgentId.clear();
+    this.pendingWorkerCompletionReportAgentIds.clear();
+    this.lastToolProgressBroadcastAtByKey.clear();
+  }
+
+  getConfig(): SwarmConfig {
+    return this.config;
+  }
+
+  getAgent(agentId: string): AgentDescriptor | undefined {
+    return this.lifecycle.getAgent(agentId);
+  }
+
+  listAgents(options?: { includeArchived?: boolean }): AgentDescriptor[] {
+    return this.lifecycle.getSortedDescriptors(options).map(cloneDescriptor);
   }
 
   getConversationHistory(agentId?: string, options?: { limit?: number }): ConversationEntryEvent[] {
-    const resolvedAgentId = normalizeOptionalAgentId(agentId) ?? this.resolvePreferredManagerId();
-    if (!resolvedAgentId) {
-      return [];
-    }
+    return this.transcript.projectConversationEntries(agentId, options?.limit);
+  }
 
-    return this.conversationProjector.getConversationHistory(resolvedAgentId, options?.limit);
+  getConversationHistoryPage(
+    agentId: string | undefined,
+    options: { before?: string; limit: number },
+  ): ConversationHistoryPageResult {
+    return this.transcript.getConversationHistoryPage(agentId, options);
   }
 
   getVisibleTranscript(
     agentId?: string,
-    options?: { limit?: number }
-  ): Array<ConversationMessageEvent | ConversationEscalationEvent> {
-    const resolvedAgentId = normalizeOptionalAgentId(agentId) ?? this.resolvePreferredManagerId();
-    if (!resolvedAgentId) {
-      return [];
+    options?: { limit?: number },
+  ): Array<ConversationMessageEvent | ConversationLogEvent | AgentMessageEvent> {
+    return this.transcript.getVisibleTranscript(agentId, options);
+  }
+
+  getVisibleTranscriptPage(
+    agentId: string | undefined,
+    options: { before?: string; limit?: number },
+  ): ConversationHistoryPageResult<
+    ConversationMessageEvent | ConversationLogEvent | AgentMessageEvent
+  > {
+    return this.transcript.getVisibleTranscriptPage(agentId, options);
+  }
+
+  async createManager(
+    callerAgentId: string,
+    input: { name: string; cwd: string; model?: SwarmModelPreset },
+  ): Promise<AgentDescriptor> {
+    const caller = this.getAgent(callerAgentId);
+    if (caller && caller.role !== "manager") {
+      throw new Error("Only managers can create managers.");
+    }
+    if (!caller && this.lifecycle.listManagers().length > 0) {
+      throw new Error("Only managers can create managers.");
     }
 
-    return this.conversationProjector.getVisibleTranscript(resolvedAgentId, options?.limit);
+    const managerId = this.lifecycle.generateUniqueManagerId(input.name);
+    const cwd = await this.runtimeContext.resolveAndValidateCwd(input.cwd);
+    const model = resolveModelDescriptorFromPreset(
+      resolveCreateManagerModelPreset(input.model, "create_manager.model"),
+    );
+    const descriptor = await this.lifecycle.createAgentSessionAndRow({
+      agentId: managerId,
+      role: "manager",
+      managerId,
+      archetypeId: MANAGER_ARCHETYPE_ID,
+      cwd,
+      model,
+      memoryOwnerAgentId: managerId,
+    });
+
+    this.managerOrderRepoOrThrow().ensure([descriptor.agentId]);
+    this.lifecycle.invalidateDescriptorGraphCache();
+    this.emitStatus(descriptor.agentId, descriptor.status, 0);
+    this.emitAgentsSnapshot();
+    await this.lifecycle.sendManagerBootstrapMessage(managerId, async (from, to, message) => {
+      await this.sendMessage(from, to, message, "auto");
+    });
+    return cloneDescriptor(descriptor);
   }
 
   async spawnAgent(callerAgentId: string, input: SpawnAgentInput): Promise<AgentDescriptor> {
-    const manager = this.assertManager(callerAgentId, "spawn agents");
-
+    const manager = this.lifecycle.assertManager(callerAgentId, "spawn agents");
     const requestedAgentId = input.agentId?.trim();
     if (!requestedAgentId) {
       throw new Error("spawn_agent requires a non-empty agentId");
     }
 
-    const agentId = this.generateUniqueAgentId(requestedAgentId);
-    const createdAt = this.now();
-
-    const model = this.resolveSpawnModel(input.model, manager.model);
-    const archetypeId = this.resolveSpawnWorkerArchetypeId(input, agentId);
-
-    const descriptor: AgentDescriptor = {
+    const agentId = this.lifecycle.generateUniqueAgentId(requestedAgentId);
+    const cwd = input.cwd
+      ? await this.runtimeContext.resolveAndValidateCwd(input.cwd)
+      : manager.cwd;
+    const thinkingLevel = parseSwarmThinkingLevel(input.thinkingLevel, "spawn_agent.thinkingLevel");
+    const modelPreset = parseSwarmModelPreset(input.model, "spawn_agent.model");
+    const model = modelPreset
+      ? resolveModelDescriptorFromPreset(modelPreset, thinkingLevel)
+      : thinkingLevel
+        ? {
+            ...manager.model,
+            thinkingLevel,
+          }
+        : manager.model;
+    const archetypeId = this.lifecycle.resolveSpawnWorkerArchetypeId(input.archetypeId);
+    const descriptor = await this.lifecycle.createAgentSessionAndRow({
       agentId,
-      displayName: agentId,
       role: "worker",
       managerId: manager.agentId,
       archetypeId,
-      status: "idle",
-      createdAt,
-      updatedAt: createdAt,
-      cwd: input.cwd ? await this.resolveAndValidateCwd(input.cwd) : manager.cwd,
+      cwd,
       model,
-      sessionFile: join(this.config.paths.sessionsDir, `${agentId}.jsonl`)
-    };
-
-    this.descriptors.set(agentId, descriptor);
-    await this.saveStore();
-
-    this.logDebug("agent:spawn", {
-      callerAgentId,
-      agentId,
-      managerId: descriptor.managerId,
-      displayName: descriptor.displayName,
-      archetypeId: descriptor.archetypeId,
-      model: descriptor.model,
-      cwd: descriptor.cwd
+      memoryOwnerAgentId: manager.agentId,
+      systemPrompt: input.systemPrompt?.trim() || undefined,
     });
 
-    const explicitSystemPrompt = input.systemPrompt?.trim();
-    const runtimeSystemPrompt =
-      explicitSystemPrompt && explicitSystemPrompt.length > 0
-        ? explicitSystemPrompt
-        : this.resolveSystemPromptForDescriptor(descriptor);
-
-    const runtime = await this.createRuntimeForDescriptor(descriptor, runtimeSystemPrompt);
-    this.runtimes.set(agentId, runtime);
-
-    const contextUsage = runtime.getContextUsage();
-    descriptor.contextUsage = contextUsage;
-
-    this.emitStatus(agentId, descriptor.status, runtime.getPendingCount(), contextUsage);
+    this.emitStatus(descriptor.agentId, descriptor.status, 0);
     this.emitAgentsSnapshot();
 
-    if (input.initialMessage && input.initialMessage.trim().length > 0) {
-      await this.sendMessage(callerAgentId, agentId, input.initialMessage, "auto", { origin: "internal" });
+    if (input.initialMessage?.trim()) {
+      await this.sendMessage(manager.agentId, descriptor.agentId, input.initialMessage, "auto");
     }
 
     return cloneDescriptor(descriptor);
   }
 
   async killAgent(callerAgentId: string, targetAgentId: string): Promise<void> {
-    const manager = this.assertManager(callerAgentId, "kill agents");
+    const manager = this.lifecycle.assertManager(callerAgentId, "kill agents");
+    const target = this.lifecycle.requireDescriptor(targetAgentId);
 
-    const target = this.descriptors.get(targetAgentId);
-    if (!target) {
-      throw new Error(`Unknown agent: ${targetAgentId}`);
+    if (target.role !== "worker") {
+      throw new Error("Only worker agents can be killed.");
     }
-    if (target.role === "manager") {
-      throw new Error("Manager cannot be killed");
-    }
-
     if (target.managerId !== manager.agentId) {
-      throw new Error(`Only owning manager can kill agent ${targetAgentId}`);
+      throw new Error(`Only the owning manager can kill ${targetAgentId}.`);
     }
 
-    await this.terminateDescriptor(target, { abort: true, emitStatus: false });
-    await this.saveStore();
-
-    this.logDebug("agent:kill", {
-      callerAgentId,
-      targetAgentId,
-      managerId: manager.agentId
-    });
-
-    this.emitStatus(targetAgentId, target.status, 0);
+    await this.lifecycle.terminateSession(target.agentId);
+    this.coreOrThrow().archiveSession(target.agentId);
+    this.lifecycle.invalidateDescriptorGraphCache();
+    this.clearWorkerCompletionReportTracking(target.agentId);
+    this.emitStatus(target.agentId, "terminated", 0);
     this.emitAgentsSnapshot();
+  }
+
+  async interruptAgentForUser(
+    callerAgentId: string,
+    targetAgentId: string,
+  ): Promise<{ agentId: string; interrupted: boolean }> {
+    const manager = this.lifecycle.assertManager(callerAgentId, "interrupt agents");
+    const target = this.lifecycle.requireDescriptor(targetAgentId);
+
+    if (target.role === "manager") {
+      if (target.agentId !== manager.agentId) {
+        throw new Error(`Only ${target.agentId} can interrupt itself.`);
+      }
+    } else if (target.managerId !== manager.agentId) {
+      throw new Error(`Only the owning manager can interrupt ${targetAgentId}.`);
+    }
+
+    const interrupted = await this.interruptSessionIfActive(target.agentId);
+    if (interrupted && target.role === "worker") {
+      this.suppressNextWorkerCompletionReportAgentIds.add(target.agentId);
+    }
+
+    return {
+      agentId: target.agentId,
+      interrupted,
+    };
+  }
+
+  async compactAgentForUser(
+    callerAgentId: string,
+    targetAgentId: string,
+  ): Promise<{ agentId: string; compacted: true }> {
+    const manager = this.lifecycle.assertManager(callerAgentId, "compact agents");
+    const target = this.lifecycle.requireDescriptor(targetAgentId);
+
+    if (target.role === "manager") {
+      if (target.agentId !== manager.agentId) {
+        throw new Error(`Only ${target.agentId} can compact itself.`);
+      }
+    } else if (target.managerId !== manager.agentId) {
+      throw new Error(`Only the owning manager can compact ${targetAgentId}.`);
+    }
+
+    const core = this.coreOrThrow();
+    const session = core.sessionService.getById(target.agentId);
+    if (!session || !core.supervisor.hasWorker(target.agentId)) {
+      throw new Error(`Agent ${target.agentId} does not have a running Pi session.`);
+    }
+
+    if (session.backend !== "pi") {
+      throw new Error(`Agent ${target.agentId} is not using the Pi backend.`);
+    }
+
+    if (this.isAgentCompacting(target.agentId)) {
+      throw new Error(`Manual compaction is already in progress for ${target.agentId}.`);
+    }
+
+    if (session.status !== "idle") {
+      throw new Error(
+        `Agent ${target.agentId} is busy. Wait for the current turn to finish or interrupt it before compacting.`,
+      );
+    }
+
+    this.compactingAgentIds.add(target.agentId);
+
+    try {
+      const operationId = core.messageService.compact(target.agentId);
+      await this.waitForOperationCompletion(target.agentId, operationId);
+      return {
+        agentId: target.agentId,
+        compacted: true,
+      };
+    } finally {
+      this.compactingAgentIds.delete(target.agentId);
+    }
   }
 
   async stopAllAgents(
     callerAgentId: string,
-    targetManagerId: string
+    targetManagerId: string,
   ): Promise<{
     managerId: string;
     stoppedWorkerIds: string[];
     managerStopped: boolean;
-    terminatedWorkerIds: string[];
-    managerTerminated: boolean;
   }> {
-    const manager = this.assertManager(callerAgentId, "stop all agents");
-
-    const target = this.descriptors.get(targetManagerId);
-    if (!target || target.role !== "manager") {
-      throw new Error(`Unknown manager: ${targetManagerId}`);
+    const manager = this.lifecycle.assertManager(callerAgentId, "stop all agents");
+    if (manager.agentId !== targetManagerId) {
+      throw new Error(`Only ${targetManagerId} can stop its team.`);
     }
 
-    if (target.agentId !== manager.agentId) {
-      throw new Error(`Only selected manager can stop all agents for ${targetManagerId}`);
-    }
-
+    const workerIds = this.listAgents()
+      .filter((agent) => agent.role === "worker" && agent.managerId === targetManagerId)
+      .map((agent) => agent.agentId);
     const stoppedWorkerIds: string[] = [];
 
-    for (const descriptor of Array.from(this.descriptors.values())) {
-      if (descriptor.role !== "worker") {
-        continue;
+    for (const workerId of workerIds) {
+      if (await this.interruptSessionIfActive(workerId)) {
+        this.suppressNextWorkerCompletionReportAgentIds.add(workerId);
+        stoppedWorkerIds.push(workerId);
       }
-
-      if (descriptor.managerId !== targetManagerId) {
-        continue;
-      }
-
-      if (isNonRunningAgentStatus(descriptor.status)) {
-        continue;
-      }
-
-      const runtime = this.runtimes.get(descriptor.agentId);
-      if (runtime) {
-        await runtime.stopInFlight({ abort: true });
-      } else {
-        descriptor.status = transitionAgentStatus(descriptor.status, "idle");
-        descriptor.updatedAt = this.now();
-        this.descriptors.set(descriptor.agentId, descriptor);
-        this.emitStatus(descriptor.agentId, descriptor.status, 0, descriptor.contextUsage);
-      }
-
-      stoppedWorkerIds.push(descriptor.agentId);
     }
 
-    let managerStopped = false;
-    if (!isNonRunningAgentStatus(target.status)) {
-      const managerRuntime = this.runtimes.get(target.agentId);
-      if (managerRuntime) {
-        await managerRuntime.stopInFlight({ abort: true });
-      } else {
-        target.status = transitionAgentStatus(target.status, "idle");
-        target.updatedAt = this.now();
-        this.descriptors.set(target.agentId, target);
-        this.emitStatus(target.agentId, target.status, 0, target.contextUsage);
-      }
-
-      managerStopped = true;
-    }
-
-    await this.saveStore();
-    this.emitAgentsSnapshot();
-
-    this.logDebug("manager:stop_all", {
-      callerAgentId,
-      targetManagerId,
-      stoppedWorkerIds,
-      managerStopped
-    });
+    const managerStopped = await this.interruptSessionIfActive(targetManagerId);
 
     return {
       managerId: targetManagerId,
       stoppedWorkerIds,
       managerStopped,
-      // Backward compatibility for older clients still expecting terminated-oriented fields.
-      terminatedWorkerIds: stoppedWorkerIds,
-      managerTerminated: managerStopped
     };
-  }
-
-  async createManager(
-    callerAgentId: string,
-    input: { name: string; cwd: string; model?: SwarmModelPreset }
-  ): Promise<AgentDescriptor> {
-    const callerDescriptor = this.descriptors.get(callerAgentId);
-    if (!callerDescriptor || callerDescriptor.role !== "manager") {
-      const canBootstrap = !this.hasRunningManagers();
-      if (!canBootstrap) {
-        throw new Error("Only manager can create managers");
-      }
-    } else if (isNonRunningAgentStatus(callerDescriptor.status)) {
-      throw new Error(`Manager is not running: ${callerAgentId}`);
-    }
-
-    const requestedName = input.name?.trim();
-    if (!requestedName) {
-      throw new Error("create_manager requires a non-empty name");
-    }
-
-    const requestedModelPreset = parseSwarmModelPreset(input.model, "create_manager.model");
-    const managerId = this.generateUniqueManagerId(requestedName);
-    const createdAt = this.now();
-    const cwd = await this.resolveAndValidateCwd(input.cwd);
-
-    const descriptor: AgentDescriptor = {
-      agentId: managerId,
-      displayName: managerId,
-      role: "manager",
-      managerId,
-      archetypeId: MANAGER_ARCHETYPE_ID,
-      status: "idle",
-      createdAt,
-      updatedAt: createdAt,
-      cwd,
-      model: requestedModelPreset
-        ? resolveModelDescriptorFromPreset(requestedModelPreset)
-        : this.resolveDefaultModelDescriptor(),
-      sessionFile: join(this.config.paths.sessionsDir, `${managerId}.jsonl`)
-    };
-
-    this.descriptors.set(descriptor.agentId, descriptor);
-    const nextManagerOrder = this.sanitizeManagerOrder(this.managerOrder);
-    this.managerOrder = [...nextManagerOrder.filter((managerId) => managerId !== descriptor.agentId), descriptor.agentId];
-
-    let runtime: SwarmAgentRuntime;
-    try {
-      runtime = await this.createRuntimeForDescriptor(
-        descriptor,
-        this.resolveSystemPromptForDescriptor(descriptor)
-      );
-    } catch (error) {
-      this.descriptors.delete(descriptor.agentId);
-      this.managerOrder = this.managerOrder.filter((managerId) => managerId !== descriptor.agentId);
-      throw error;
-    }
-
-    this.runtimes.set(managerId, runtime);
-    await this.saveStore();
-
-    const contextUsage = runtime.getContextUsage();
-    descriptor.contextUsage = contextUsage;
-
-    this.emitStatus(managerId, descriptor.status, runtime.getPendingCount(), contextUsage);
-    this.emitAgentsSnapshot();
-
-    this.logDebug("manager:create", {
-      callerAgentId,
-      managerId,
-      cwd: descriptor.cwd
-    });
-
-    await this.sendManagerBootstrapMessage(managerId);
-
-    return cloneDescriptor(descriptor);
   }
 
   async deleteManager(
     callerAgentId: string,
-    targetManagerId: string
+    targetManagerId: string,
   ): Promise<{ managerId: string; terminatedWorkerIds: string[] }> {
-    this.assertManager(callerAgentId, "delete managers");
-
-    const target = this.descriptors.get(targetManagerId);
-    if (!target || target.role !== "manager") {
+    this.lifecycle.assertManager(callerAgentId, "delete managers");
+    const target = this.lifecycle.requireDescriptor(targetManagerId);
+    if (target.role !== "manager") {
       throw new Error(`Unknown manager: ${targetManagerId}`);
     }
 
-    const terminatedWorkerIds: string[] = [];
+    const workerIds = this.listAgents({ includeArchived: true })
+      .filter((agent) => agent.role === "worker" && agent.managerId === targetManagerId)
+      .map((agent) => agent.agentId);
 
-    for (const descriptor of Array.from(this.descriptors.values())) {
-      if (descriptor.role !== "worker") {
-        continue;
-      }
-      if (descriptor.managerId !== targetManagerId) {
-        continue;
-      }
-
-      terminatedWorkerIds.push(descriptor.agentId);
-      await this.terminateDescriptor(descriptor, { abort: true, emitStatus: true });
-      this.descriptors.delete(descriptor.agentId);
-      this.conversationProjector.deleteConversationHistory(descriptor.agentId);
+    for (const workerId of workerIds) {
+      this.clearWorkerCompletionReportTracking(workerId);
+      await this.lifecycle.deleteAgentSession(workerId);
     }
 
-    await this.terminateDescriptor(target, { abort: true, emitStatus: true });
-    this.descriptors.delete(targetManagerId);
-    this.managerOrder = this.managerOrder.filter((managerId) => managerId !== targetManagerId);
-    this.conversationProjector.deleteConversationHistory(targetManagerId);
+    await this.lifecycle.deleteAgentSession(targetManagerId);
+    this.managerOrderRepoOrThrow().remove(targetManagerId);
+    this.lifecycle.invalidateDescriptorGraphCache();
 
-    await this.deleteManagerSchedulesFile(targetManagerId);
-    const deletedEscalationIds = await this.escalationStorage.deleteForManager(targetManagerId);
-    await this.saveStore();
     this.emitAgentsSnapshot();
-    if (deletedEscalationIds.length > 0) {
-      this.emitEscalationsDeleted(deletedEscalationIds);
-    }
 
-    this.logDebug("manager:delete", {
-      callerAgentId,
-      targetManagerId,
-      terminatedWorkerIds,
-      deletedEscalationIds
-    });
-
-    return { managerId: targetManagerId, terminatedWorkerIds };
+    return {
+      managerId: targetManagerId,
+      terminatedWorkerIds: workerIds,
+    };
   }
 
   async reorderManagers(callerAgentId: string, managerIds: string[]): Promise<string[]> {
-    this.assertManager(callerAgentId, "reorder managers");
-    const normalizedManagerIds = managerIds
-      .map((managerId) => normalizeOptionalAgentId(managerId))
-      .filter((managerId): managerId is string => typeof managerId === "string");
-    const currentManagerIds = this.getOrderedManagerDescriptors().map((descriptor) => descriptor.agentId);
+    this.lifecycle.assertManager(callerAgentId, "reorder managers");
+    const actualManagerIds = new Set(
+      this.lifecycle.listManagers().map((manager) => manager.agentId),
+    );
+    const normalized = managerIds.map((managerId) => managerId.trim()).filter(Boolean);
 
-    if (normalizedManagerIds.length !== currentManagerIds.length) {
+    if (normalized.length !== actualManagerIds.size) {
       throw new Error("reorder_managers must include every manager exactly once");
     }
 
-    const currentManagerIdSet = new Set(currentManagerIds);
-    const nextManagerIdSet = new Set(normalizedManagerIds);
-    if (nextManagerIdSet.size !== normalizedManagerIds.length) {
-      throw new Error("reorder_managers must not include duplicate manager ids");
-    }
-
-    for (const managerId of normalizedManagerIds) {
-      if (!currentManagerIdSet.has(managerId)) {
+    for (const managerId of normalized) {
+      if (!actualManagerIds.has(managerId)) {
         throw new Error(`Unknown manager in reorder_managers: ${managerId}`);
       }
     }
 
-    this.managerOrder = normalizedManagerIds;
-    await this.saveStore();
+    const ordered = this.managerOrderRepoOrThrow().reorder(normalized);
+    this.lifecycle.invalidateDescriptorGraphCache();
     this.emitAgentsSnapshot();
-
-    this.logDebug("manager:reorder", {
-      callerAgentId,
-      managerIds: normalizedManagerIds
-    });
-
-    return [...this.managerOrder];
-  }
-
-  async createEscalationForManager(
-    managerId: string,
-    input: { title: string; description: string; options: string[] }
-  ): Promise<UserEscalation> {
-    const manager = this.assertManager(managerId, "manage escalations");
-    const escalation = await this.escalationStorage.create({
-      managerId: manager.agentId,
-      title: input.title,
-      description: input.description,
-      options: input.options
-    });
-
-    this.logDebug("escalation:create", {
-      managerId: manager.agentId,
-      escalationId: escalation.id,
-      title: escalation.title,
-      optionCount: escalation.options.length
-    });
-    this.emitEscalationCreated(escalation);
-    this.emitConversationEscalation({
-      type: "conversation_escalation",
-      agentId: manager.agentId,
-      escalation,
-      timestamp: escalation.createdAt
-    });
-
-    return escalation;
-  }
-
-  async listEscalationsForManager(
-    managerId: string,
-    status: "open" | "resolved" | "all" = "open"
-  ): Promise<UserEscalation[]> {
-    const manager = this.assertManager(managerId, "manage escalations");
-    return this.escalationStorage.listForManager(manager.agentId, status);
-  }
-
-  async listOpenEscalationsForManager(managerId: string): Promise<UserEscalation[]> {
-    return this.listEscalationsForManager(managerId, "open");
-  }
-
-  getEscalationForManager(managerId: string, escalationId: string): UserEscalation {
-    const manager = this.assertManager(managerId, "manage escalations");
-    const normalizedEscalationId = escalationId.trim();
-    if (normalizedEscalationId.length === 0) {
-      throw new Error("escalation id must be a non-empty string");
-    }
-
-    const escalation = this.escalationStorage.get(normalizedEscalationId);
-    if (!escalation) {
-      throw new Error(`Unknown escalation: ${normalizedEscalationId}`);
-    }
-
-    if (escalation.managerId !== manager.agentId) {
-      throw new Error(`Escalation ${escalation.id} does not belong to manager ${manager.agentId}`);
-    }
-
-    return escalation;
-  }
-
-  listAllEscalations(): UserEscalation[] {
-    return this.escalationStorage.listAll();
-  }
-
-  async resolveEscalation(
-    escalationId: string,
-    options: {
-      choice: string;
-      isCustom: boolean;
-      sourceContext?: MessageSourceContext;
-    }
-  ): Promise<UserEscalation> {
-    const normalizedEscalationId = escalationId.trim();
-    if (normalizedEscalationId.length === 0) {
-      throw new Error("resolve_escalation escalationId must be a non-empty string");
-    }
-
-    const existingEscalation = this.escalationStorage.get(normalizedEscalationId);
-    if (!existingEscalation) {
-      throw new Error(`Unknown escalation: ${normalizedEscalationId}`);
-    }
-
-    if (existingEscalation.status === "resolved") {
-      return existingEscalation;
-    }
-
-    const response = this.buildEscalationResponse(existingEscalation, options.choice, options.isCustom);
-    const resolvedEscalation = await this.escalationStorage.resolve(normalizedEscalationId, response);
-    const sourceContext = normalizeMessageSourceContext(options.sourceContext ?? { channel: "web" });
-
-    await this.handleUserMessage(
-      formatEscalationResolutionMessage(resolvedEscalation, response.choice),
-      {
-        targetAgentId: resolvedEscalation.managerId,
-        sourceContext
-      }
-    );
-
-    this.logDebug("escalation:resolve", {
-      managerId: resolvedEscalation.managerId,
-      escalationId: resolvedEscalation.id,
-      isCustom: response.isCustom
-    });
-    this.emitEscalationUpdated(resolvedEscalation);
-
-    return resolvedEscalation;
-  }
-
-  async closeEscalationForManager(
-    managerId: string,
-    escalationId: string,
-    options?: {
-      comment?: string;
-    }
-  ): Promise<UserEscalation> {
-    const manager = this.assertManager(managerId, "manage escalations");
-    const normalizedEscalationId = escalationId.trim();
-    if (normalizedEscalationId.length === 0) {
-      throw new Error("escalation id must be a non-empty string");
-    }
-
-    const existingEscalation = this.escalationStorage.get(normalizedEscalationId);
-    if (!existingEscalation) {
-      throw new Error(`Unknown escalation: ${normalizedEscalationId}`);
-    }
-
-    if (existingEscalation.managerId !== manager.agentId) {
-      throw new Error(`Escalation ${existingEscalation.id} does not belong to manager ${manager.agentId}`);
-    }
-
-    if (existingEscalation.status === "resolved") {
-      return existingEscalation;
-    }
-
-    const normalizedComment = normalizeOptionalMetadataValue(options?.comment);
-    const response = normalizedComment
-      ? {
-          choice: normalizedComment,
-          isCustom: true
-        }
-      : undefined;
-    const resolvedEscalation = await this.escalationStorage.resolve(normalizedEscalationId, response);
-
-    this.logDebug("escalation:close", {
-      managerId: resolvedEscalation.managerId,
-      escalationId: resolvedEscalation.id,
-      hasComment: Boolean(normalizedComment)
-    });
-    this.emitEscalationUpdated(resolvedEscalation);
-
-    return resolvedEscalation;
-  }
-
-  private buildEscalationResponse(
-    escalation: UserEscalation,
-    choice: string,
-    isCustom: boolean
-  ): UserEscalationResponse {
-    const normalizedChoice = choice.trim();
-    if (normalizedChoice.length === 0) {
-      throw new Error("resolve_escalation choice must be a non-empty string");
-    }
-
-    if (!isCustom && !escalation.options.includes(normalizedChoice)) {
-      throw new Error("resolve_escalation choice must match one of the escalation options");
-    }
-
-    return {
-      choice: normalizedChoice,
-      isCustom
-    };
-  }
-
-  getAgent(agentId: string): AgentDescriptor | undefined {
-    const descriptor = this.descriptors.get(agentId);
-    if (!descriptor) {
-      return undefined;
-    }
-
-    return cloneDescriptor(descriptor);
-  }
-
-  async listDirectories(path?: string): Promise<DirectoryListingResult> {
-    return listDirectories(path, this.getCwdPolicy());
-  }
-
-  async validateDirectory(path: string): Promise<DirectoryValidationResult> {
-    return validateDirectoryInput(path, this.getCwdPolicy());
-  }
-
-  async pickDirectory(defaultPath?: string): Promise<string | null> {
-    const pickedPath = await pickNativeDirectory({
-      defaultPath,
-      prompt: "Select a manager working directory"
-    });
-
-    if (!pickedPath) {
-      return null;
-    }
-
-    return validateDirectoryPath(pickedPath, this.getCwdPolicy());
-  }
-
-  private resolveActivityManagerContextIds(...agents: AgentDescriptor[]): string[] {
-    const managerContextIds = new Set<string>();
-
-    for (const descriptor of agents) {
-      if (descriptor.role === "manager") {
-        managerContextIds.add(descriptor.agentId);
-        continue;
-      }
-
-      const managerId = descriptor.managerId.trim();
-      if (managerId.length > 0) {
-        managerContextIds.add(managerId);
-      }
-    }
-
-    return Array.from(managerContextIds);
-  }
-
-  async sendMessage(
-    fromAgentId: string,
-    targetAgentId: string,
-    message: string,
-    delivery: RequestedDeliveryMode = "auto",
-    options?: { origin?: "user" | "internal"; attachments?: ConversationAttachment[] }
-  ): Promise<SendMessageReceipt> {
-    const sender = this.descriptors.get(fromAgentId);
-    if (!sender || isNonRunningAgentStatus(sender.status)) {
-      throw new Error(`Unknown or unavailable sender agent: ${fromAgentId}`);
-    }
-
-    const target = this.descriptors.get(targetAgentId);
-    if (!target) {
-      throw new Error(`Unknown target agent: ${targetAgentId}`);
-    }
-    if (isNonRunningAgentStatus(target.status)) {
-      throw new Error(`Target agent is not running: ${targetAgentId}`);
-    }
-
-    if (sender.role === "manager" && target.role === "worker" && target.managerId !== sender.agentId) {
-      throw new Error(`Manager ${sender.agentId} does not own worker ${targetAgentId}`);
-    }
-
-    const managerContextIds = this.resolveActivityManagerContextIds(sender, target);
-    const runtime = await this.getOrCreateRuntimeForDescriptor(target);
-
-    const origin = options?.origin ?? "internal";
-    const attachments = normalizeConversationAttachments(options?.attachments);
-    const modelMessage = await this.prepareModelInboundMessage(
-      targetAgentId,
-      {
-        text: message,
-        attachments
-      },
-      origin
-    );
-    const receipt = await runtime.sendMessage(modelMessage, delivery);
-
-    this.logDebug("agent:send_message", {
-      fromAgentId,
-      targetAgentId,
-      origin,
-      requestedDelivery: delivery,
-      acceptedMode: receipt.acceptedMode,
-      textPreview: previewForLog(message),
-      attachmentCount: attachments.length,
-      modelTextPreview: previewForLog(extractRuntimeMessageText(modelMessage))
-    });
-
-    if (origin !== "user" && fromAgentId !== targetAgentId) {
-      for (const managerContextId of managerContextIds) {
-        this.emitAgentMessage({
-          type: "agent_message",
-          agentId: managerContextId,
-          timestamp: this.now(),
-          source: "agent_to_agent",
-          fromAgentId,
-          toAgentId: targetAgentId,
-          text: message,
-          requestedDelivery: delivery,
-          acceptedMode: receipt.acceptedMode,
-          attachmentCount: attachments.length > 0 ? attachments.length : undefined
-        });
-      }
-    }
-
-    return receipt;
-  }
-
-  private async prepareModelInboundMessage(
-    targetAgentId: string,
-    input: { text: string; attachments: ConversationAttachment[] },
-    origin: "user" | "internal"
-  ): Promise<string | RuntimeUserMessage> {
-    let text = input.text;
-
-    if (origin !== "user") {
-      if (text.trim().length > 0 && !/^system:/i.test(text.trimStart())) {
-        text = `${INTERNAL_MODEL_MESSAGE_PREFIX}${text}`;
-      }
-    }
-
-    const runtimeAttachments = await this.prepareRuntimeAttachments(targetAgentId, input.attachments);
-
-    if (runtimeAttachments.attachmentMessage.length > 0) {
-      text = text.trim().length > 0 ? `${text}\n\n${runtimeAttachments.attachmentMessage}` : runtimeAttachments.attachmentMessage;
-    }
-
-    if (runtimeAttachments.images.length === 0) {
-      return text;
-    }
-
-    return {
-      text,
-      images: runtimeAttachments.images
-    };
-  }
-
-  private async prepareRuntimeAttachments(
-    targetAgentId: string,
-    attachments: ConversationAttachment[]
-  ): Promise<{ images: RuntimeImageAttachment[]; attachmentMessage: string }> {
-    if (attachments.length === 0) {
-      return {
-        images: [],
-        attachmentMessage: ""
-      };
-    }
-
-    const images = toRuntimeImageAttachments(attachments);
-    const fileMessages: string[] = [];
-    const attachmentPathMessages: string[] = [];
-    let binaryAttachmentDir: string | undefined;
-
-    for (let index = 0; index < attachments.length; index += 1) {
-      const attachment = attachments[index];
-      const persistedPath = normalizeOptionalAttachmentPath(attachment.filePath);
-
-      if (isConversationImageAttachment(attachment)) {
-        continue;
-      }
-
-      if (persistedPath) {
-        attachmentPathMessages.push(`[Attached file saved to: ${persistedPath}]`);
-      }
-
-      if (isConversationTextAttachment(attachment)) {
-        fileMessages.push(formatTextAttachmentForPrompt(attachment, index + 1));
-        continue;
-      }
-
-      if (isConversationBinaryAttachment(attachment)) {
-        let storedPath = persistedPath;
-        if (!storedPath) {
-          const directory = binaryAttachmentDir ?? (await this.createBinaryAttachmentDir(targetAgentId));
-          binaryAttachmentDir = directory;
-          storedPath = await this.writeBinaryAttachmentToDisk(directory, attachment, index + 1, "bin");
-        }
-        fileMessages.push(formatBinaryAttachmentForPrompt(attachment, storedPath, index + 1));
-      }
-    }
-
-    if (fileMessages.length === 0 && attachmentPathMessages.length === 0) {
-      return {
-        images,
-        attachmentMessage: ""
-      };
-    }
-
-    const attachmentMessageSections: string[] = [];
-    if (fileMessages.length > 0) {
-      attachmentMessageSections.push("The user attached the following files:", "", ...fileMessages);
-    }
-    if (attachmentPathMessages.length > 0) {
-      if (attachmentMessageSections.length > 0) {
-        attachmentMessageSections.push("");
-      }
-      attachmentMessageSections.push(...attachmentPathMessages);
-    }
-
-    return {
-      images,
-      attachmentMessage: attachmentMessageSections.join("\n")
-    };
-  }
-
-  private async createBinaryAttachmentDir(targetAgentId: string): Promise<string> {
-    const agentSegment = sanitizePathSegment(targetAgentId, "agent");
-    const batchId = `${Date.now()}-${Math.random().toString(16).slice(2, 10)}`;
-    const directory = join(this.config.paths.dataDir, "attachments", agentSegment, batchId);
-    await mkdir(directory, { recursive: true });
-    return directory;
-  }
-
-  private async writeBinaryAttachmentToDisk(
-    directory: string,
-    attachment: Pick<ConversationBinaryAttachment, "data" | "fileName">,
-    attachmentIndex: number,
-    fallbackExtension: string
-  ): Promise<string> {
-    const safeName = sanitizeAttachmentFileName(
-      attachment.fileName,
-      `attachment-${attachmentIndex}.${fallbackExtension}`
-    );
-    const filePath = join(directory, `${String(attachmentIndex).padStart(2, "0")}-${safeName}`);
-    const buffer = Buffer.from(attachment.data, "base64");
-    await writeFile(filePath, buffer);
-    return filePath;
-  }
-
-  private async writeTextAttachmentToDisk(
-    directory: string,
-    attachment: ConversationTextAttachment,
-    attachmentIndex: number
-  ): Promise<string> {
-    const safeName = sanitizeAttachmentFileName(attachment.fileName, `attachment-${attachmentIndex}.txt`);
-    const filePath = join(directory, `${String(attachmentIndex).padStart(2, "0")}-${safeName}`);
-    await writeFile(filePath, attachment.text, "utf8");
-    return filePath;
-  }
-
-  private async persistConversationAttachmentsIfNeeded(
-    targetAgentId: string,
-    attachments: ConversationAttachment[]
-  ): Promise<ConversationAttachment[]> {
-    if (attachments.length === 0) {
-      return [];
-    }
-
-    const persisted: ConversationAttachment[] = [];
-    let attachmentDir: string | undefined;
-
-    for (let index = 0; index < attachments.length; index += 1) {
-      const attachment = attachments[index];
-      const attachmentIndex = index + 1;
-      const persistedPath = normalizeOptionalAttachmentPath(attachment.filePath);
-
-      if (persistedPath) {
-        persisted.push({
-          ...attachment,
-          filePath: persistedPath
-        });
-        continue;
-      }
-
-      const directory = attachmentDir ?? (await this.createBinaryAttachmentDir(targetAgentId));
-      attachmentDir = directory;
-
-      if (isConversationTextAttachment(attachment)) {
-        const filePath = await this.writeTextAttachmentToDisk(directory, attachment, attachmentIndex);
-        persisted.push({
-          ...attachment,
-          filePath
-        });
-        continue;
-      }
-
-      if (isConversationBinaryAttachment(attachment)) {
-        const filePath = await this.writeBinaryAttachmentToDisk(directory, attachment, attachmentIndex, "bin");
-        persisted.push({
-          ...attachment,
-          filePath
-        });
-        continue;
-      }
-
-      if (isConversationImageAttachment(attachment)) {
-        const filePath = await this.writeBinaryAttachmentToDisk(directory, attachment, attachmentIndex, "png");
-        persisted.push({
-          ...attachment,
-          filePath
-        });
-      }
-    }
-
-    return persisted;
-  }
-
-  async publishToUser(
-    agentId: string,
-    text: string,
-    source: "speak_to_user" | "system" = "speak_to_user",
-    targetContext?: MessageTargetContext
-  ): Promise<{ targetContext: MessageSourceContext }> {
-    let resolvedTargetContext: MessageSourceContext;
-
-    if (source === "speak_to_user") {
-      this.assertManager(agentId, "speak to user");
-      resolvedTargetContext = this.resolveReplyTargetContext(targetContext);
-    } else {
-      resolvedTargetContext = normalizeMessageSourceContext(targetContext ?? { channel: "web" });
-    }
-
-    const payload: ConversationMessageEvent = {
-      type: "conversation_message",
-      agentId,
-      role: source === "system" ? "system" : "assistant",
-      text,
-      timestamp: this.now(),
-      source,
-      sourceContext: resolvedTargetContext
-    };
-
-    this.emitConversationMessage(payload);
-    this.logDebug("manager:publish_to_user", {
-      source,
-      agentId,
-      targetContext: resolvedTargetContext,
-      textPreview: previewForLog(text)
-    });
-
-    return {
-      targetContext: resolvedTargetContext
-    };
-  }
-
-  async compactAgentContext(
-    agentId: string,
-    options?: {
-      customInstructions?: string;
-      sourceContext?: MessageSourceContext;
-      trigger?: "api" | "slash_command";
-    }
-  ): Promise<unknown> {
-    const descriptor = this.descriptors.get(agentId);
-    if (!descriptor) {
-      throw new Error(`Unknown target agent: ${agentId}`);
-    }
-
-    if (isNonRunningAgentStatus(descriptor.status)) {
-      throw new Error(`Target agent is not running: ${agentId}`);
-    }
-
-    if (descriptor.role !== "manager") {
-      throw new Error(`Compaction is only supported for manager agents: ${agentId}`);
-    }
-
-    const runtime = await this.getOrCreateRuntimeForDescriptor(descriptor);
-
-    const sourceContext = normalizeMessageSourceContext(options?.sourceContext ?? { channel: "web" });
-    const customInstructions = options?.customInstructions?.trim() || undefined;
-
-    this.logDebug("manager:compact:start", {
-      agentId,
-      trigger: options?.trigger ?? "api",
-      sourceContext,
-      customInstructionsPreview: previewForLog(customInstructions ?? "")
-    });
-
-    this.emitConversationMessage({
-      type: "conversation_message",
-      agentId,
-      role: "system",
-      text: "Compacting manager context...",
-      timestamp: this.now(),
-      source: "system",
-      sourceContext
-    });
-
-    try {
-      const result = await runtime.compact(customInstructions);
-
-      this.emitConversationMessage({
-        type: "conversation_message",
-        agentId,
-        role: "system",
-        text: "Compaction complete.",
-        timestamp: this.now(),
-        source: "system",
-        sourceContext
-      });
-
-      this.logDebug("manager:compact:complete", {
-        agentId,
-        trigger: options?.trigger ?? "api"
-      });
-
-      return result;
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-
-      this.emitConversationMessage({
-        type: "conversation_message",
-        agentId,
-        role: "system",
-        text: `Compaction failed: ${message}`,
-        timestamp: this.now(),
-        source: "system",
-        sourceContext
-      });
-
-      this.logDebug("manager:compact:error", {
-        agentId,
-        trigger: options?.trigger ?? "api",
-        message
-      });
-
-      throw error;
-    }
+    return ordered;
   }
 
   async handleUserMessage(
@@ -1346,1682 +565,1105 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       delivery?: RequestedDeliveryMode;
       attachments?: ConversationAttachment[];
       sourceContext?: MessageSourceContext;
-    }
+    },
   ): Promise<void> {
-    const trimmed = text.trim();
-    const attachments = normalizeConversationAttachments(options?.attachments);
-    if (!trimmed && attachments.length === 0) return;
-
-    const sourceContext = normalizeMessageSourceContext(options?.sourceContext ?? { channel: "web" });
-
-    const targetAgentId = options?.targetAgentId ?? this.resolvePreferredManagerId();
+    const targetAgentId = options?.targetAgentId ?? this.lifecycle.resolvePreferredManagerId();
     if (!targetAgentId) {
-      throw new Error("No manager is available. Create a manager first.");
-    }
-    const target = this.descriptors.get(targetAgentId);
-    if (!target) {
-      throw new Error(`Unknown target agent: ${targetAgentId}`);
-    }
-    if (isNonRunningAgentStatus(target.status)) {
-      throw new Error(`Target agent is not running: ${targetAgentId}`);
+      throw new Error("No target agent is available.");
     }
 
-    const persistedAttachments = await this.persistConversationAttachmentsIfNeeded(targetAgentId, attachments);
-    const attachmentMetadata = toConversationAttachmentMetadata(persistedAttachments);
+    const target = this.lifecycle.requireDescriptor(targetAgentId);
+    const attachments = options?.attachments ?? [];
+    await this.ensureAgentReadyForInput(target);
 
-    const compactCommand =
-      target.role === "manager" && persistedAttachments.length === 0 ? parseCompactSlashCommand(trimmed) : undefined;
-    if (compactCommand) {
-      this.logDebug("manager:user_message_compact_command", {
-        targetAgentId: target.agentId,
-        sourceContext,
-        customInstructionsPreview: previewForLog(compactCommand.customInstructions ?? "")
-      });
-      await this.compactAgentContext(target.agentId, {
-        customInstructions: compactCommand.customInstructions,
-        sourceContext,
-        trigger: "slash_command"
-      });
-      return;
-    }
+    const metadata = {
+      middleman: {
+        version: 1,
+        agentId: target.agentId,
+        managerId: target.managerId,
+        renderAs: "conversation_message",
+        source: "user_input",
+        sourceContext: options?.sourceContext,
+        attachments: buildAttachmentMetadata(attachments),
+      },
+    };
 
-    const managerContextId = target.role === "manager" ? target.agentId : target.managerId;
-    const receivedAt = this.now();
-
-    this.logDebug("manager:user_message_received", {
-      targetAgentId,
-      managerContextId,
-      sourceContext,
-      textPreview: previewForLog(trimmed),
-      attachmentCount: persistedAttachments.length
+    this.coreOrThrow().messageService.send(target.agentId, toContentParts(text, attachments), {
+      delivery: toSwarmdDeliveryMode(options?.delivery),
+      role: "user",
+      metadata,
     });
 
-    const userEvent: ConversationMessageEvent = {
+    this.emitConversationMessage({
       type: "conversation_message",
-      agentId: targetAgentId,
+      agentId: target.agentId,
       role: "user",
-      text: trimmed,
-      attachments: attachmentMetadata.length > 0 ? attachmentMetadata : undefined,
-      timestamp: receivedAt,
+      text,
+      attachments: buildAttachmentMetadata(attachments),
+      timestamp: this.now(),
       source: "user_input",
-      sourceContext
-    };
-    this.emitConversationMessage(userEvent);
+      sourceContext: options?.sourceContext,
+    });
+  }
 
-    if (target.role !== "manager") {
-      const requestedDelivery = options?.delivery ?? "auto";
-      let receipt: SendMessageReceipt;
-      try {
-        receipt = await this.sendMessage(managerContextId, targetAgentId, trimmed, requestedDelivery, {
-          origin: "user",
-          attachments: persistedAttachments
-        });
-      } catch (error) {
-        this.logDebug("manager:user_message_dispatch_error", {
-          managerContextId,
-          targetAgentId,
-          targetRole: target.role,
-          requestedDelivery,
-          sourceContext,
-          textPreview: previewForLog(trimmed),
-          attachmentCount: persistedAttachments.length,
-          message: error instanceof Error ? error.message : String(error),
-          stack: error instanceof Error ? error.stack : undefined
-        });
-        throw error;
-      }
+  async sendMessage(
+    fromAgentId: string,
+    targetAgentId: string,
+    message: string,
+    delivery: RequestedDeliveryMode = "auto",
+  ): Promise<SendMessageReceipt> {
+    const sender = this.lifecycle.requireDescriptor(fromAgentId);
+    const target = await this.ensureAgentReadyForInput(targetAgentId);
 
-      this.logDebug("manager:user_message_dispatch_complete", {
-        managerContextId,
-        targetAgentId,
-        targetRole: target.role,
-        requestedDelivery,
-        acceptedMode: receipt.acceptedMode,
-        sourceContext,
-        attachmentCount: persistedAttachments.length
-      });
-
-      this.emitAgentMessage({
-        type: "agent_message",
-        agentId: managerContextId,
-        timestamp: this.now(),
-        source: "user_to_agent",
-        toAgentId: targetAgentId,
-        text: trimmed,
-        sourceContext,
-        requestedDelivery,
-        acceptedMode: receipt.acceptedMode,
-        attachmentCount: persistedAttachments.length > 0 ? persistedAttachments.length : undefined
-      });
-      return;
-    }
-
-    let managerRuntime: SwarmAgentRuntime;
-    try {
-      managerRuntime = await this.getOrCreateRuntimeForDescriptor(target);
-    } catch (error) {
-      this.logDebug("manager:user_message_dispatch_error", {
-        managerContextId,
-        targetAgentId: managerContextId,
-        targetRole: target.role,
-        requestedDelivery: "steer",
-        sourceContext,
-        textPreview: previewForLog(trimmed),
-        attachmentCount: persistedAttachments.length,
-        message: error instanceof Error ? error.message : String(error),
-        stack: error instanceof Error ? error.stack : undefined
-      });
-      throw error;
-    }
-
-    const managerVisibleMessage = formatInboundUserMessageForManager(trimmed, sourceContext);
-
-    // User messages to managers should always steer in-flight work.
-    const runtimeMessage = await this.prepareModelInboundMessage(
-      managerContextId,
+    const receipt = this.coreOrThrow().messageService.send(
+      target.agentId,
+      toContentParts(message, []),
       {
-        text: managerVisibleMessage,
-        attachments: persistedAttachments
+        delivery: toSwarmdDeliveryMode(delivery),
+        role: "system",
+        metadata: {
+          middleman: {
+            version: 1,
+            agentId: target.agentId,
+            managerId: target.managerId,
+            visibility: "internal",
+            renderAs: "hidden",
+            source: "system",
+            routing: {
+              fromAgentId: sender.agentId,
+              toAgentId: target.agentId,
+              origin: "agent",
+              requestedDelivery: delivery,
+            },
+          },
+        },
       },
-      "user"
     );
 
-    this.logDebug("manager:user_message_dispatch_start", {
-      managerContextId,
-      targetAgentId: managerContextId,
-      targetRole: target.role,
-      requestedDelivery: "steer",
+    const agentMessageEvent: AgentMessageEvent = {
+      type: "agent_message",
+      agentId: target.role === "manager" ? target.agentId : target.managerId,
+      timestamp: this.now(),
+      source: "agent_to_agent",
+      fromAgentId: sender.agentId,
+      toAgentId: target.agentId,
+      text: message,
+      requestedDelivery: delivery,
+      acceptedMode: fromSwarmdDeliveryMode(receipt.acceptedDelivery, delivery),
+    };
+
+    this.emitAgentMessage(agentMessageEvent);
+
+    if (target.agentId !== agentMessageEvent.agentId) {
+      this.emitAgentMessage({
+        ...agentMessageEvent,
+        agentId: target.agentId,
+      });
+    }
+
+    if (
+      sender.role === "manager" &&
+      target.role === "manager" &&
+      sender.agentId !== target.agentId
+    ) {
+      this.emitAgentMessage({
+        ...agentMessageEvent,
+        agentId: sender.agentId,
+      });
+    }
+
+    return {
+      targetAgentId: target.agentId,
+      deliveryId: receipt.operationId,
+      acceptedMode: fromSwarmdDeliveryMode(receipt.acceptedDelivery, delivery),
+    };
+  }
+
+  async publishToUser(
+    agentId: string,
+    text: string,
+    source: "speak_to_user" | "system" = "speak_to_user",
+    targetContext?: MessageTargetContext,
+  ): Promise<{ targetContext: MessageSourceContext }> {
+    const descriptor = this.lifecycle.assertManager(agentId, "speak to user");
+    const resolvedTarget = targetContext ?? DEFAULT_REPLY_TARGET;
+    if (targetContext) {
+      this.agentRepoOrThrow().updateReplyTarget(agentId, targetContext);
+    }
+
+    const sourceContext: MessageSourceContext = {
+      ...resolvedTarget,
+      channel: resolvedTarget.channel,
+    };
+
+    this.emitConversationMessage({
+      type: "conversation_message",
+      agentId: descriptor.agentId,
+      role: source === "system" ? "system" : "assistant",
+      text,
+      timestamp: this.now(),
+      source,
       sourceContext,
-      textPreview: previewForLog(trimmed),
-      attachmentCount: persistedAttachments.length,
-      runtimeTextPreview: previewForLog(extractRuntimeMessageText(runtimeMessage)),
-      runtimeImageCount: typeof runtimeMessage === "string" ? 0 : (runtimeMessage.images?.length ?? 0)
     });
 
-    try {
-      const receipt = await managerRuntime.sendMessage(runtimeMessage, "steer");
-      this.logDebug("manager:user_message_dispatch_complete", {
-        managerContextId,
-        targetAgentId: managerContextId,
-        targetRole: target.role,
-        requestedDelivery: "steer",
-        acceptedMode: receipt.acceptedMode,
-        sourceContext,
-        attachmentCount: persistedAttachments.length
-      });
-    } catch (error) {
-      this.logDebug("manager:user_message_dispatch_error", {
-        managerContextId,
-        targetAgentId: managerContextId,
-        targetRole: target.role,
-        requestedDelivery: "steer",
-        sourceContext,
-        textPreview: previewForLog(trimmed),
-        attachmentCount: persistedAttachments.length,
-        runtimeTextPreview: previewForLog(extractRuntimeMessageText(runtimeMessage)),
-        runtimeImageCount: typeof runtimeMessage === "string" ? 0 : (runtimeMessage.images?.length ?? 0),
-        message: error instanceof Error ? error.message : String(error),
-        stack: error instanceof Error ? error.stack : undefined
-      });
-      throw error;
-    }
+    return { targetContext: sourceContext };
   }
 
   async resetManagerSession(
-    managerIdOrReason: string | "user_new_command" | "api_reset" = "api_reset",
-    maybeReason?: "user_new_command" | "api_reset"
+    managerId: string,
+    reason: "user_new_command" | "api_reset" = "api_reset",
   ): Promise<void> {
-    const parsed = this.parseResetManagerSessionArgs(managerIdOrReason, maybeReason);
-    const managerId = parsed.managerId;
-    const reason = parsed.reason;
-    const managerDescriptor = this.getRequiredManagerDescriptor(managerId);
-
-    this.logDebug("manager:reset:start", {
-      managerId,
-      reason,
-      sessionFile: managerDescriptor.sessionFile
-    });
-
-    const existingRuntime = this.runtimes.get(managerId);
-    if (existingRuntime) {
-      await existingRuntime.terminate({ abort: true });
-      this.runtimes.delete(managerId);
-    }
-
-    this.conversationProjector.resetConversationHistory(managerId);
-    await this.deleteManagerSessionFile(managerDescriptor.sessionFile);
-
-    managerDescriptor.status = transitionAgentStatus(managerDescriptor.status, "idle");
-    managerDescriptor.contextUsage = undefined;
-    managerDescriptor.updatedAt = this.now();
-    this.descriptors.set(managerId, managerDescriptor);
-    await this.saveStore();
-
-    const managerRuntime = await this.createRuntimeForDescriptor(
-      managerDescriptor,
-      this.resolveSystemPromptForDescriptor(managerDescriptor)
-    );
-    this.runtimes.set(managerId, managerRuntime);
-
-    const contextUsage = managerRuntime.getContextUsage();
-    managerDescriptor.contextUsage = contextUsage;
-
-    this.emitConversationReset(managerId, reason);
-    this.emitStatus(managerId, managerDescriptor.status, managerRuntime.getPendingCount(), contextUsage);
-    this.emitAgentsSnapshot();
-
-    this.logDebug("manager:reset:ready", {
-      managerId,
-      reason,
-      sessionFile: managerDescriptor.sessionFile
-    });
-  }
-
-  getConfig(): SwarmConfig {
-    return this.config;
-  }
-
-  async listSettingsEnv(): Promise<SkillEnvRequirement[]> {
-    return this.secretsEnvService.listSettingsEnv();
-  }
-
-  async updateSettingsEnv(values: Record<string, string>): Promise<void> {
-    await this.secretsEnvService.updateSettingsEnv(values);
-  }
-
-  async deleteSettingsEnv(name: string): Promise<void> {
-    await this.secretsEnvService.deleteSettingsEnv(name);
-  }
-
-  async listSettingsAuth(): Promise<SettingsAuthProvider[]> {
-    return this.secretsEnvService.listSettingsAuth();
-  }
-
-  async updateSettingsAuth(values: Record<string, string>): Promise<void> {
-    await this.secretsEnvService.updateSettingsAuth(values);
-  }
-
-  async deleteSettingsAuth(provider: string): Promise<void> {
-    await this.secretsEnvService.deleteSettingsAuth(provider);
-  }
-
-  private emitConversationMessage(event: ConversationMessageEvent): void {
-    this.conversationProjector.emitConversationMessage(event);
-  }
-
-  private emitConversationEscalation(event: ConversationEscalationEvent): void {
-    this.conversationProjector.emitConversationEscalation(event);
-  }
-
-  private emitAgentMessage(event: AgentMessageEvent): void {
-    this.conversationProjector.emitAgentMessage(event);
-  }
-
-  private emitConversationReset(agentId: string, reason: "user_new_command" | "api_reset"): void {
-    this.conversationProjector.emitConversationReset(agentId, reason);
-  }
-
-  private logDebug(message: string, details?: unknown): void {
-    if (!this.config.debug) return;
-
-    const prefix = `[swarm][${this.now()}] ${message}`;
-    if (details === undefined) {
-      console.log(prefix);
-      return;
-    }
-    console.log(prefix, details);
-  }
-
-  private getConfiguredManagerId(): string | undefined {
-    return normalizeOptionalAgentId(this.config.managerId);
-  }
-
-  private resolvePreferredManagerId(options?: { includeStoppedOnRestart?: boolean }): string | undefined {
-    const includeStoppedOnRestart = options?.includeStoppedOnRestart ?? false;
-    return this.getOrderedManagerDescriptors().find((descriptor) =>
-      this.isAvailableManagerDescriptor(descriptor, includeStoppedOnRestart)
-    )?.agentId;
-  }
-
-  private isAvailableManagerDescriptor(
-    descriptor: AgentDescriptor,
-    includeStoppedOnRestart: boolean
-  ): boolean {
+    const descriptor = this.lifecycle.requireDescriptor(managerId);
     if (descriptor.role !== "manager") {
-      return false;
+      throw new Error("Only manager sessions can be reset.");
     }
 
-    if (descriptor.status === "terminated" || descriptor.status === "error") {
-      return false;
-    }
-
-    if (!includeStoppedOnRestart && descriptor.status === "stopped") {
-      return false;
-    }
-
-    return true;
-  }
-
-  private sortedDescriptors(): AgentDescriptor[] {
-    const orderedManagers = this.getOrderedManagerDescriptors();
-    const orderedWorkers = Array.from(this.descriptors.values())
-      .filter((descriptor) => descriptor.role === "worker")
-      .sort(compareDescriptorsByCreatedAtThenId);
-
-    return [...orderedManagers, ...orderedWorkers];
-  }
-
-  private getOrderedManagerDescriptors(): AgentDescriptor[] {
-    const managers = this.getLegacyOrderedManagerDescriptors();
-    if (managers.length === 0) {
-      return [];
-    }
-
-    const orderedManagerIds = this.sanitizeManagerOrder(this.managerOrder, managers);
-    const managerById = new Map(managers.map((descriptor) => [descriptor.agentId, descriptor]));
-
-    return orderedManagerIds
-      .map((managerId) => managerById.get(managerId))
-      .filter((descriptor): descriptor is AgentDescriptor => descriptor !== undefined);
-  }
-
-  private getLegacyOrderedManagerDescriptors(): AgentDescriptor[] {
-    const configuredManagerId = this.getConfiguredManagerId();
-
-    return Array.from(this.descriptors.values())
-      .filter((descriptor) => descriptor.role === "manager")
-      .sort((left, right) => {
-        if (configuredManagerId) {
-          if (left.agentId === configuredManagerId) return -1;
-          if (right.agentId === configuredManagerId) return 1;
-        }
-
-        return compareDescriptorsByCreatedAtThenId(left, right);
-      });
-  }
-
-  private sanitizeManagerOrder(
-    managerOrder: string[],
-    managers = this.getLegacyOrderedManagerDescriptors()
-  ): string[] {
-    const managerIds = new Set(managers.map((descriptor) => descriptor.agentId));
-    const nextManagerOrder: string[] = [];
-    const seenManagerIds = new Set<string>();
-
-    for (const managerId of managerOrder) {
-      if (!managerIds.has(managerId) || seenManagerIds.has(managerId)) {
-        continue;
-      }
-
-      nextManagerOrder.push(managerId);
-      seenManagerIds.add(managerId);
-    }
-
-    for (const descriptor of managers) {
-      if (seenManagerIds.has(descriptor.agentId)) {
-        continue;
-      }
-
-      nextManagerOrder.push(descriptor.agentId);
-      seenManagerIds.add(descriptor.agentId);
-    }
-
-    return nextManagerOrder;
-  }
-
-  private async sendManagerBootstrapMessage(managerId: string): Promise<void> {
-    const manager = this.descriptors.get(managerId);
-    if (!manager || manager.role !== "manager") {
-      return;
-    }
-
-    if (isNonRunningAgentStatus(manager.status)) {
-      return;
-    }
-
-    if (!this.runtimes.has(managerId)) {
-      return;
-    }
-
-    try {
-      await this.sendMessage(managerId, managerId, MANAGER_BOOTSTRAP_INTERVIEW_MESSAGE, "auto", {
-        origin: "internal"
-      });
-      this.logDebug("manager:bootstrap_message:sent", { managerId });
-    } catch (error) {
-      this.logDebug("manager:bootstrap_message:error", {
-        managerId,
-        message: error instanceof Error ? error.message : String(error)
-      });
-    }
-  }
-
-  private normalizeStreamingStatusesForBoot(): void {
-    const normalizedAgentIds: string[] = [];
-
-    for (const descriptor of this.descriptors.values()) {
-      if (descriptor.status !== "streaming") {
-        continue;
-      }
-
-      descriptor.status = transitionAgentStatus(descriptor.status, "idle");
-      descriptor.updatedAt = this.now();
-      this.descriptors.set(descriptor.agentId, descriptor);
-      normalizedAgentIds.push(descriptor.agentId);
-    }
-
-    if (normalizedAgentIds.length > 0) {
-      this.logDebug("boot:normalize_streaming_statuses", { normalizedAgentIds });
-    }
-  }
-
-  private async restoreRuntimesForBoot(): Promise<void> {
-    let shouldPersist = false;
-    const configuredManagerId = this.getConfiguredManagerId();
-
-    for (const descriptor of this.sortedDescriptors()) {
-      if (!this.shouldRestoreRuntimeForDescriptor(descriptor)) {
-        continue;
-      }
-
-      try {
-        await this.getOrCreateRuntimeForDescriptor(descriptor);
-      } catch (error) {
-        if (
-          descriptor.role === "manager" &&
-          configuredManagerId &&
-          descriptor.agentId === configuredManagerId
-        ) {
-          throw error;
-        }
-
-        const idleStatus = descriptor.status === "streaming"
-          ? transitionAgentStatus(descriptor.status, "idle")
-          : descriptor.status;
-        descriptor.status = transitionAgentStatus(idleStatus, "stopped");
-        descriptor.contextUsage = undefined;
-        descriptor.updatedAt = this.now();
-        this.descriptors.set(descriptor.agentId, descriptor);
-        shouldPersist = true;
-
-        this.emitStatus(descriptor.agentId, descriptor.status, 0);
-        this.logDebug("boot:restore_runtime:error", {
-          agentId: descriptor.agentId,
-          role: descriptor.role,
-          message: error instanceof Error ? error.message : String(error)
-        });
-      }
-    }
-
-    if (shouldPersist) {
-      await this.saveStore();
-    }
-
-    if (configuredManagerId) {
-      const primaryManager = this.descriptors.get(configuredManagerId);
-      if (
-        primaryManager &&
-        primaryManager.role === "manager" &&
-        primaryManager.status === "streaming" &&
-        !this.runtimes.has(configuredManagerId)
-      ) {
-        throw new Error("Primary manager runtime is not initialized");
-      }
-    }
-  }
-
-  private shouldRestoreRuntimeForDescriptor(descriptor: AgentDescriptor): boolean {
-    return descriptor.status === "streaming";
-  }
-
-  private async getOrCreateRuntimeForDescriptor(descriptor: AgentDescriptor): Promise<SwarmAgentRuntime> {
-    const existingRuntime = this.runtimes.get(descriptor.agentId);
-    if (existingRuntime) {
-      return existingRuntime;
-    }
-
-    const runtime = await this.createRuntimeForDescriptor(descriptor, this.resolveSystemPromptForDescriptor(descriptor));
-
-    const latestDescriptor = this.descriptors.get(descriptor.agentId);
-    if (!latestDescriptor || isNonRunningAgentStatus(latestDescriptor.status)) {
-      await runtime.terminate({ abort: true });
-      throw new Error(`Target agent is not running: ${descriptor.agentId}`);
-    }
-
-    const concurrentRuntime = this.runtimes.get(descriptor.agentId);
-    if (concurrentRuntime) {
-      await runtime.terminate({ abort: true });
-      return concurrentRuntime;
-    }
-
-    this.runtimes.set(descriptor.agentId, runtime);
-    const contextUsage = runtime.getContextUsage();
-    latestDescriptor.contextUsage = contextUsage;
-    this.descriptors.set(descriptor.agentId, latestDescriptor);
-    this.emitStatus(descriptor.agentId, latestDescriptor.status, runtime.getPendingCount(), contextUsage);
-    return runtime;
-  }
-
-  private getBootLogManagerDescriptor(): AgentDescriptor | undefined {
-    const configuredManagerId = this.getConfiguredManagerId();
-    if (configuredManagerId) {
-      const configuredManager = this.descriptors.get(configuredManagerId);
-      if (configuredManager && configuredManager.role === "manager" && configuredManager.status !== "terminated") {
-        return configuredManager;
-      }
-    }
-
-    return Array.from(this.descriptors.values()).find(
-      (descriptor) => descriptor.role === "manager" && descriptor.status !== "terminated"
-    );
-  }
-
-  private getRequiredManagerDescriptor(managerId: string): AgentDescriptor {
-    const descriptor = this.descriptors.get(managerId);
-    if (!descriptor || descriptor.role !== "manager") {
+    const existingRow = this.agentRepoOrThrow().get(managerId);
+    if (!existingRow) {
       throw new Error(`Unknown manager: ${managerId}`);
     }
 
-    return descriptor;
-  }
-
-  private resolveDefaultModelDescriptor(): AgentModelDescriptor {
-    return resolveModelDescriptorFromPreset(this.defaultModelPreset);
-  }
-
-  private normalizePersistedModelDescriptor(
-    descriptor: Pick<AgentModelDescriptor, "provider" | "modelId"> | undefined
-  ): AgentModelDescriptor {
-    return normalizeSwarmModelDescriptor(descriptor, this.defaultModelPreset);
-  }
-
-  private resolveSpawnModel(
-    requested: SpawnAgentInput["model"] | undefined,
-    fallback: AgentModelDescriptor
-  ): AgentModelDescriptor {
-    const requestedPreset = parseSwarmModelPreset(requested, "spawn_agent.model");
-    if (requestedPreset) {
-      return resolveModelDescriptorFromPreset(requestedPreset);
-    }
-
-    return this.normalizePersistedModelDescriptor(fallback);
-  }
-
-  private resolveSpawnWorkerArchetypeId(
-    input: SpawnAgentInput,
-    normalizedAgentId: string
-  ): string | undefined {
-    if (input.archetypeId !== undefined) {
-      const explicit = normalizeArchetypeId(input.archetypeId);
-      if (!explicit) {
-        throw new Error("spawn_agent archetypeId must include at least one letter or number");
-      }
-      if (!this.archetypePromptRegistry.resolvePrompt(explicit)) {
-        throw new Error(`Unknown archetypeId: ${explicit}`);
-      }
-      return explicit;
-    }
-
-    if (
-      normalizedAgentId === MERGER_ARCHETYPE_ID ||
-      normalizedAgentId.startsWith(`${MERGER_ARCHETYPE_ID}-`)
-    ) {
-      return MERGER_ARCHETYPE_ID;
-    }
-
-    return undefined;
-  }
-
-  private resolveSystemPromptForDescriptor(descriptor: AgentDescriptor): string {
-    if (descriptor.role === "manager") {
-      return this.resolveRequiredArchetypePrompt(MANAGER_ARCHETYPE_ID);
-    }
-
-    if (descriptor.archetypeId) {
-      const archetypePrompt = this.archetypePromptRegistry.resolvePrompt(descriptor.archetypeId);
-      if (archetypePrompt) {
-        return archetypePrompt;
-      }
-    }
-
-    return DEFAULT_WORKER_SYSTEM_PROMPT;
-  }
-
-  private resolveRequiredArchetypePrompt(archetypeId: string): string {
-    const prompt = this.archetypePromptRegistry.resolvePrompt(archetypeId);
-    if (!prompt) {
-      throw new Error(`Missing archetype prompt: ${archetypeId}`);
-    }
-    return prompt;
-  }
-
-  private async resolveAndValidateCwd(cwd: string): Promise<string> {
-    return validateDirectoryPath(cwd, this.getCwdPolicy());
-  }
-
-  private getCwdPolicy(): { rootDir: string; allowlistRoots: string[] } {
-    return {
-      rootDir: this.config.paths.rootDir,
-      allowlistRoots: normalizeAllowlistRoots(this.config.cwdAllowlistRoots)
-    };
-  }
-
-  private generateUniqueAgentId(source: string): string {
-    const base = normalizeAgentId(source);
-
-    if (!base) {
-      throw new Error("spawn_agent agentId must include at least one letter or number");
-    }
-
-    const configuredManagerId = this.getConfiguredManagerId();
-    if (configuredManagerId && base === configuredManagerId) {
-      throw new Error(`spawn_agent agentId \"${configuredManagerId}\" is reserved`);
-    }
-
-    if (!this.descriptors.has(base)) {
-      return base;
-    }
-
-    let index = 2;
-    while (this.descriptors.has(`${base}-${index}`)) {
-      index += 1;
-    }
-
-    return `${base}-${index}`;
-  }
-
-  private generateUniqueManagerId(source: string): string {
-    const base = normalizeAgentId(source);
-    if (!base) {
-      throw new Error("create_manager name must include at least one letter or number");
-    }
-
-    if (!this.descriptors.has(base)) {
-      return base;
-    }
-
-    let index = 2;
-    while (this.descriptors.has(`${base}-${index}`)) {
-      index += 1;
-    }
-
-    return `${base}-${index}`;
-  }
-
-  private assertManager(agentId: string, action: string): AgentDescriptor {
-    const descriptor = this.descriptors.get(agentId);
-    if (!descriptor || descriptor.role !== "manager") {
-      throw new Error(`Only manager can ${action}`);
-    }
-
-    if (isNonRunningAgentStatus(descriptor.status)) {
-      throw new Error(`Manager is not running: ${agentId}`);
-    }
-
-    return descriptor;
-  }
-
-  private hasRunningManagers(): boolean {
-    for (const descriptor of this.descriptors.values()) {
-      if (descriptor.role !== "manager") {
-        continue;
-      }
-
-      if (isNonRunningAgentStatus(descriptor.status)) {
-        continue;
-      }
-
-      return true;
-    }
-
-    return false;
-  }
-
-  private resolveReplyTargetContext(explicitTargetContext?: MessageTargetContext): MessageSourceContext {
-    if (!explicitTargetContext) {
-      return { channel: "web" };
-    }
-
-    const normalizedExplicitTarget = normalizeMessageTargetContext(explicitTargetContext);
-
-    if (
-      (normalizedExplicitTarget.channel === "slack" ||
-        normalizedExplicitTarget.channel === "telegram") &&
-      !normalizedExplicitTarget.channelId
-    ) {
-      throw new Error(
-        'speak_to_user target.channelId is required when target.channel is "slack" or "telegram"'
-      );
-    }
-
-    return normalizeMessageSourceContext(normalizedExplicitTarget);
-  }
-
-  private parseResetManagerSessionArgs(
-    managerIdOrReason: string | "user_new_command" | "api_reset",
-    maybeReason?: "user_new_command" | "api_reset"
-  ): { managerId: string; reason: "user_new_command" | "api_reset" } {
-    if (managerIdOrReason === "user_new_command" || managerIdOrReason === "api_reset") {
-      const managerId = this.resolvePreferredManagerId({ includeStoppedOnRestart: true });
-      if (!managerId) {
-        throw new Error("No manager is available.");
-      }
-
-      return {
+    const basePrompt = this.runtimeContext.resolveSystemPromptForDescriptor({
+      role: "manager",
+      archetypeId: existingRow.archetypeId ?? MANAGER_ARCHETYPE_ID,
+    });
+    const resources = await this.runtimeContext.resolveRuntimeContextResources({
+      agentId: managerId,
+      role: "manager",
+      managerId,
+      cwd: descriptor.cwd,
+      model: descriptor.model,
+      memoryOwnerAgentId: existingRow.memoryOwnerSessionId,
+    });
+    const runtimeConfig = this.runtimeContext.buildRuntimeConfig(
+      {
+        agentId: managerId,
+        role: "manager",
         managerId,
-        reason: managerIdOrReason
-      };
-    }
-
-    return {
-      managerId: managerIdOrReason,
-      reason: maybeReason ?? "api_reset"
-    };
-  }
-
-  private async terminateDescriptor(
-    descriptor: AgentDescriptor,
-    options: { abort: boolean; emitStatus: boolean }
-  ): Promise<void> {
-    const runtime = this.runtimes.get(descriptor.agentId);
-    if (runtime) {
-      await runtime.terminate({ abort: options.abort });
-      this.runtimes.delete(descriptor.agentId);
-    }
-
-    descriptor.status = transitionAgentStatus(descriptor.status, "terminated");
-    descriptor.contextUsage = undefined;
-    descriptor.updatedAt = this.now();
-    this.descriptors.set(descriptor.agentId, descriptor);
-
-    if (options.emitStatus) {
-      this.emitStatus(descriptor.agentId, descriptor.status, 0);
-    }
-  }
-
-  protected async getMemoryRuntimeResources(descriptor: AgentDescriptor): Promise<{
-    memoryContextFile: { path: string; content: string };
-    additionalSkillPaths: string[];
-  }> {
-    await this.ensureAgentMemoryFile(descriptor.agentId);
-
-    const memoryOwnerAgentId = this.resolveMemoryOwnerAgentId(descriptor);
-    const memoryFilePath = this.getAgentMemoryPath(memoryOwnerAgentId);
-    await this.ensureAgentMemoryFile(memoryOwnerAgentId);
-
-    await this.skillMetadataService.ensureSkillMetadataLoaded();
-
-    const memoryContextFile = {
-      path: memoryFilePath,
-      content: await readFile(memoryFilePath, "utf8")
-    };
-
-    return {
-      memoryContextFile,
-      additionalSkillPaths: this.skillMetadataService.getAdditionalSkillPaths()
-    };
-  }
-
-  private async reloadSkillMetadata(): Promise<void> {
-    await this.skillMetadataService.reloadSkillMetadata();
-  }
-
-  private async loadSecretsStore(): Promise<void> {
-    await this.secretsEnvService.loadSecretsStore();
-  }
-
-  protected async getSwarmContextFiles(cwd: string): Promise<Array<{ path: string; content: string }>> {
-    const contextFiles: Array<{ path: string; content: string }> = [];
-    const seenPaths = new Set<string>();
-    const rootDir = resolve("/");
-    let currentDir = resolve(cwd);
-
-    while (true) {
-      const candidatePath = join(currentDir, SWARM_CONTEXT_FILE_NAME);
-      if (!seenPaths.has(candidatePath) && existsSync(candidatePath)) {
-        try {
-          contextFiles.unshift({
-            path: candidatePath,
-            content: await readFile(candidatePath, "utf8")
-          });
-          seenPaths.add(candidatePath);
-        } catch (error) {
-          this.logDebug("runtime:swarm_context:read:error", {
-            cwd,
-            path: candidatePath,
-            message: error instanceof Error ? error.message : String(error)
-          });
-        }
-      }
-
-      if (currentDir === rootDir) {
-        break;
-      }
-
-      const parentDir = resolve(currentDir, "..");
-      if (parentDir === currentDir) {
-        break;
-      }
-      currentDir = parentDir;
-    }
-
-    return contextFiles;
-  }
-
-  private mergeRuntimeContextFiles(
-    baseAgentsFiles: Array<{ path: string; content: string }>,
-    options: {
-      memoryContextFile: { path: string; content: string };
-      swarmContextFiles: Array<{ path: string; content: string }>;
-    }
-  ): Array<{ path: string; content: string }> {
-    const swarmContextPaths = new Set(options.swarmContextFiles.map((entry) => entry.path));
-    const withoutSwarmAndMemory = baseAgentsFiles.filter(
-      (entry) => entry.path !== options.memoryContextFile.path && !swarmContextPaths.has(entry.path)
+        cwd: descriptor.cwd,
+        model: descriptor.model,
+        memoryOwnerAgentId: existingRow.memoryOwnerSessionId,
+      },
+      resources,
+    );
+    const systemPrompt = this.runtimeContext.buildSessionSystemPrompt(
+      basePrompt,
+      runtimeConfig.backend,
+      resources,
     );
 
-    return [...withoutSwarmAndMemory, ...options.swarmContextFiles, options.memoryContextFile];
+    await this.lifecycle.stopSession(managerId);
+    this.coreOrThrow().sessionService.reset(managerId, {
+      systemPrompt,
+      runtimeConfig: {
+        backendConfig: runtimeConfig.backendConfig,
+      },
+      updatedAt: this.now(),
+    });
+    await this.coreOrThrow().sessionService.start(managerId);
+
+    const recreated = this.lifecycle.requireDescriptor(managerId);
+
+    this.emit("conversation_reset", {
+      type: "conversation_reset",
+      agentId: recreated.agentId,
+      timestamp: this.now(),
+      reason,
+    } satisfies {
+      type: "conversation_reset";
+      agentId: string;
+      timestamp: string;
+      reason: "user_new_command" | "api_reset";
+    });
+    this.emitStatus(recreated.agentId, recreated.status, 0);
   }
 
-  protected async createRuntimeForDescriptor(
-    descriptor: AgentDescriptor,
-    systemPrompt: string
-  ): Promise<SwarmAgentRuntime> {
-    return this.runtimeFactory.createRuntimeForDescriptor(descriptor, systemPrompt);
+  async listSchedulesForManager(managerId: string): Promise<ScheduledTask[]> {
+    this.lifecycle.assertManager(managerId, "list schedules");
+    return this.scheduleRepoOrThrow().listForManager(managerId);
   }
 
-  private async handleRuntimeStatus(
-    agentId: string,
-    status: AgentStatus,
-    pendingCount: number,
-    contextUsage?: AgentContextUsage
-  ): Promise<void> {
-    const descriptor = this.descriptors.get(agentId);
-    if (!descriptor) return;
+  async createScheduleForManager(
+    managerId: string,
+    input: CreateScheduledTaskInput,
+  ): Promise<ScheduledTask> {
+    this.lifecycle.assertManager(managerId, "manage schedules");
+    const cron = normalizeScheduleText(input.cron, "Schedule cron");
+    const message = normalizeScheduleText(input.message, "Schedule message");
+    const timezone = normalizeScheduleTimezone(input.timezone);
+    const now = this.now();
+    const createdAt = now;
+    const schedule: ScheduledTask = {
+      id: randomUUID(),
+      managerId,
+      name: resolveScheduleName({
+        name: input.name,
+        description: input.description,
+        message,
+      }),
+      description: normalizeOptionalScheduleText(input.description),
+      cron,
+      message,
+      enabled: input.enabled ?? true,
+      oneShot: input.oneShot ?? false,
+      timezone,
+      createdAt,
+      updatedAt: createdAt,
+      nextFireAt: computeNextFireAt(cron, timezone, new Date(createdAt)),
+    };
 
-    const normalizedContextUsage = normalizeContextUsage(contextUsage);
-    let shouldPersist = false;
+    const created = this.scheduleRepoOrThrow().create(schedule);
+    this.emit("schedule_changed", { managerId });
+    return created;
+  }
 
-    if (!areContextUsagesEqual(descriptor.contextUsage, normalizedContextUsage)) {
-      descriptor.contextUsage = normalizedContextUsage;
+  async updateScheduleForManager(
+    managerId: string,
+    schedule: ScheduledTask,
+  ): Promise<ScheduledTask> {
+    this.lifecycle.assertManager(managerId, "manage schedules");
+    if (schedule.managerId !== managerId) {
+      throw new Error(`Schedule ${schedule.id} does not belong to manager ${managerId}.`);
     }
 
-    const nextStatus = transitionAgentStatus(descriptor.status, status);
-    if (descriptor.status !== nextStatus) {
-      descriptor.status = nextStatus;
-      descriptor.updatedAt = this.now();
-      shouldPersist = true;
-    }
+    return this.scheduleRepoOrThrow().update(schedule);
+  }
 
-    if (isNonRunningAgentStatus(nextStatus) && descriptor.contextUsage) {
-      descriptor.contextUsage = undefined;
-      shouldPersist = true;
-    }
+  async removeScheduleForManager(managerId: string, scheduleId: string): Promise<ScheduledTask> {
+    this.lifecycle.assertManager(managerId, "manage schedules");
+    const removed = this.scheduleRepoOrThrow().remove(managerId, scheduleId);
+    this.emit("schedule_changed", { managerId });
+    return removed;
+  }
 
-    this.descriptors.set(agentId, descriptor);
+  async listSettingsEnv(): Promise<SkillEnvRequirement[]> {
+    return await this.secretsEnvServiceOrThrow().listSettingsEnv();
+  }
 
-    if (shouldPersist) {
-      await this.saveStore();
-    }
+  async updateSettingsEnv(values: Record<string, string>): Promise<void> {
+    await this.secretsEnvServiceOrThrow().updateSettingsEnv(values);
+  }
 
-    this.emitStatus(agentId, status, pendingCount, descriptor.contextUsage);
-    this.logDebug("runtime:status", {
-      agentId,
-      status,
-      pendingCount,
-      contextUsage: descriptor.contextUsage
+  async deleteSettingsEnv(name: string): Promise<void> {
+    await this.secretsEnvServiceOrThrow().deleteSettingsEnv(name);
+  }
+
+  async listSettingsAuth(): Promise<SettingsAuthProvider[]> {
+    return await this.secretsEnvServiceOrThrow().listSettingsAuth();
+  }
+
+  async updateSettingsAuth(values: Record<string, string>): Promise<void> {
+    await this.secretsEnvServiceOrThrow().updateSettingsAuth(values);
+  }
+
+  async deleteSettingsAuth(provider: string): Promise<void> {
+    await this.secretsEnvServiceOrThrow().deleteSettingsAuth(provider);
+  }
+
+  async listDirectories(path?: string): Promise<DirectoryListingResult> {
+    return await listDirectories(path, {
+      rootDir: this.config.defaultCwd,
+      allowlistRoots: this.cwdAllowlistRoots,
     });
   }
 
-  private async handleRuntimeSessionEvent(agentId: string, event: RuntimeSessionEvent): Promise<void> {
-    this.captureConversationEventFromRuntime(agentId, event);
+  async validateDirectory(path: string): Promise<DirectoryValidationResult> {
+    return await validateDirectory(path, {
+      rootDir: this.config.defaultCwd,
+      allowlistRoots: this.cwdAllowlistRoots,
+    });
+  }
 
-    if (!this.config.debug) return;
+  async pickDirectory(defaultPath?: string): Promise<string | null> {
+    return await pickNativeDirectory(defaultPath ? { defaultPath } : undefined);
+  }
 
-    const descriptor = this.descriptors.get(agentId);
-    if (!descriptor || descriptor.role !== "manager") {
+  private installCoreEventProjection(): void {
+    if (this.unsubscribeCoreEvents) {
       return;
     }
 
-    switch (event.type) {
-      case "agent_start":
-      case "agent_end":
-      case "turn_start":
-        this.logDebug(`manager:event:${event.type}`);
-        return;
-
-      case "turn_end":
-        this.logDebug("manager:event:turn_end", {
-          toolResults: event.toolResults.length
-        });
-        return;
-
-      case "tool_execution_start":
-        this.logDebug("manager:tool:start", {
-          toolName: event.toolName,
-          toolCallId: event.toolCallId,
-          args: previewForLog(safeJson(event.args), 240)
-        });
-        return;
-
-      case "tool_execution_end":
-        this.logDebug("manager:tool:end", {
-          toolName: event.toolName,
-          toolCallId: event.toolCallId,
-          isError: event.isError,
-          result: previewForLog(safeJson(event.result), 240)
-        });
-        return;
-
-      case "message_start":
-      case "message_end":
-        this.logDebug(`manager:event:${event.type}`, {
-          role: extractRole(event.message),
-          textPreview: previewForLog(extractMessageText(event.message) ?? "")
-        });
-        return;
-
-      case "message_update":
-      case "tool_execution_update":
-      case "auto_compaction_start":
-      case "auto_compaction_end":
-      case "auto_retry_start":
-      case "auto_retry_end":
-        return;
-    }
+    this.unsubscribeCoreEvents = this.coreOrThrow().eventBus.subscribe((event) => {
+      this.handleCoreEvent(event);
+    });
   }
 
-  private async handleRuntimeError(agentId: string, error: RuntimeErrorEvent): Promise<void> {
-    const descriptor = this.descriptors.get(agentId);
+  private handleCoreEvent(event: EventEnvelope): void {
+    const descriptor = this.getAgent(event.sessionId);
     if (!descriptor) {
       return;
     }
 
-    const message = error.message.trim().length > 0 ? error.message.trim() : "Unknown runtime error";
-    const attempt = readPositiveIntegerDetail(error.details, "attempt");
-    const maxAttempts = readPositiveIntegerDetail(error.details, "maxAttempts");
-    const droppedPendingCount = readPositiveIntegerDetail(error.details, "droppedPendingCount");
-
-    this.logDebug("runtime:error", {
-      agentId,
-      runtime: descriptor.model.provider.includes("codex-app")
-        ? "codex-app-server"
-        : descriptor.model.provider.includes("anthropic-claude-code")
-          ? "anthropic-claude-code"
-          : "pi",
-      phase: error.phase,
-      message,
-      stack: error.stack,
-      details: error.details
-    });
-
-    const retryLabel =
-      attempt && maxAttempts && maxAttempts > 1 ? ` (attempt ${attempt}/${maxAttempts})` : "";
-
-    const text =
-      error.phase === "compaction"
-        ? `⚠️ Compaction error${retryLabel}: ${message}. Continuing without compaction.`
-        : droppedPendingCount && droppedPendingCount > 0
-          ? `⚠️ Agent error${retryLabel}: ${message}. ${droppedPendingCount} queued message${droppedPendingCount === 1 ? "" : "s"} could not be delivered and were dropped. Please resend.`
-          : `⚠️ Agent error${retryLabel}: ${message}. Message may need to be resent.`;
-
-    this.emitConversationMessage({
-      type: "conversation_message",
-      agentId,
-      role: "system",
-      text,
-      timestamp: this.now(),
-      source: "system"
-    });
-
-    // Also surface dropped-message errors to the owning manager's conversation
-    // feed so the manager's model context can see them. Without this, delivery
-    // failures are invisible to the manager and it assumes the message was
-    // processed (see orchestration-gap investigation, Finding 2).
-    if (
-      droppedPendingCount &&
-      droppedPendingCount > 0 &&
-      descriptor.role === "worker" &&
-      descriptor.managerId?.trim()
-    ) {
-      const managerId = descriptor.managerId.trim();
-      const managerDescriptor = this.descriptors.get(managerId);
-      if (managerDescriptor && !isNonRunningAgentStatus(managerDescriptor.status)) {
-        this.emitConversationMessage({
-          type: "conversation_message",
-          agentId: managerId,
-          role: "system",
-          text: `⚠️ Worker ${agentId}: ${text}`,
-          timestamp: this.now(),
-          source: "system"
-        });
+    if (event.type === "session.status.changed") {
+      const status = readString(readObject(event.payload)?.status);
+      const contextUsage = normalizeContextUsage(readObject(event.payload)?.contextUsage);
+      if (isAgentStatus(status)) {
+        // Live status/context usage changes do not require rebuilding the full
+        // agent snapshot for every subscribed client.
+        this.emitStatus(descriptor.agentId, status, 0, contextUsage);
+        if (descriptor.role === "worker") {
+          if (status === "idle") {
+            this.clearToolProgressBroadcastStateForAgent(descriptor.agentId);
+            void this.maybeEmitWorkerCompletionSummary(descriptor.agentId);
+          } else if (
+            (status === "starting" || status === "busy") &&
+            this.suppressNextWorkerCompletionReportAgentIds.has(descriptor.agentId)
+          ) {
+            this.suppressNextWorkerCompletionReportAgentIds.delete(descriptor.agentId);
+          }
+        }
       }
+      return;
+    }
+
+    switch (event.type) {
+      case "session.errored": {
+        this.clearToolProgressBroadcastStateForAgent(descriptor.agentId);
+        if (descriptor.role === "worker") {
+          this.pendingWorkerCompletionReportAgentIds.delete(descriptor.agentId);
+          this.suppressNextWorkerCompletionReportAgentIds.delete(descriptor.agentId);
+        }
+        const runtimeErrorMessage = this.resolveRuntimeErrorMessage(descriptor, event.payload);
+        const runtimeErrorEvent: ConversationLogEvent = {
+          type: "conversation_log",
+          agentId: descriptor.agentId,
+          timestamp: event.timestamp,
+          source: "runtime_log",
+          kind: "message_end",
+          text: runtimeErrorMessage,
+          isError: true,
+        };
+        this.persistConversationLog(runtimeErrorEvent);
+        this.emitConversationLog(runtimeErrorEvent);
+        if (descriptor.role === "worker") {
+          void this.maybeEmitWorkerErrorReport(descriptor.agentId, runtimeErrorMessage);
+        }
+        return;
+      }
+      case "message.started": {
+        const messageStartedEvent: ConversationLogEvent = {
+          type: "conversation_log",
+          agentId: descriptor.agentId,
+          timestamp: event.timestamp,
+          source: "runtime_log",
+          kind: "message_start",
+          role: readRole(readObject(event.payload)?.role),
+          text: extractEventText(event.payload) ?? "",
+        };
+        this.persistConversationLog(messageStartedEvent);
+        this.emitConversationLog(messageStartedEvent);
+        return;
+      }
+      case "message.completed": {
+        const role = this.resolveCompletedMessageRole(descriptor.agentId, event.payload);
+        const messageCompletedEvent: ConversationLogEvent = {
+          type: "conversation_log",
+          agentId: descriptor.agentId,
+          timestamp: event.timestamp,
+          source: "runtime_log",
+          kind: "message_end",
+          role,
+          text: extractEventText(event.payload) ?? "",
+        };
+        this.persistConversationLog(messageCompletedEvent);
+        this.emitConversationLog(messageCompletedEvent);
+        if (descriptor.role === "worker" && (role === "assistant" || role === "system")) {
+          this.pendingWorkerCompletionReportAgentIds.add(descriptor.agentId);
+          void this.maybeEmitWorkerCompletionSummary(descriptor.agentId);
+        }
+        return;
+      }
+      case "tool.started": {
+        const toolStartedEvent: AgentToolCallEvent = {
+          type: "agent_tool_call",
+          agentId: descriptor.agentId,
+          actorAgentId: descriptor.agentId,
+          timestamp: event.timestamp,
+          kind: "tool_execution_start",
+          toolName: readString(readObject(event.payload)?.toolName),
+          toolCallId: readString(readObject(event.payload)?.toolCallId),
+          text: safeJson(readObject(event.payload)?.input),
+        };
+        this.resetToolProgressBroadcastState(toolStartedEvent);
+        this.persistAgentToolCall(toolStartedEvent);
+        this.emitAgentToolCall(toolStartedEvent);
+        return;
+      }
+      case "tool.progress": {
+        const toolProgressEvent: AgentToolCallEvent = {
+          type: "agent_tool_call",
+          agentId: descriptor.agentId,
+          actorAgentId: descriptor.agentId,
+          timestamp: event.timestamp,
+          kind: "tool_execution_update",
+          toolName: readString(readObject(event.payload)?.toolName),
+          toolCallId: readString(readObject(event.payload)?.toolCallId),
+          text: safeJson(readObject(event.payload)?.progress),
+        };
+        if (this.shouldBroadcastToolProgress(toolProgressEvent)) {
+          this.emitAgentToolCall(toolProgressEvent);
+        }
+        return;
+      }
+      case "tool.completed": {
+        const toolCompletedEvent: AgentToolCallEvent = {
+          type: "agent_tool_call",
+          agentId: descriptor.agentId,
+          actorAgentId: descriptor.agentId,
+          timestamp: event.timestamp,
+          kind: "tool_execution_end",
+          toolName: readString(readObject(event.payload)?.toolName),
+          toolCallId: readString(readObject(event.payload)?.toolCallId),
+          text: safeJson(readObject(event.payload)?.result),
+          isError: readObject(event.payload)?.ok === false,
+        };
+        this.resetToolProgressBroadcastState(toolCompletedEvent);
+        this.persistAgentToolCall(toolCompletedEvent);
+        this.emitAgentToolCall(toolCompletedEvent);
+        return;
+      }
+      default:
+        return;
     }
   }
 
-  private captureConversationEventFromRuntime(agentId: string, event: RuntimeSessionEvent): void {
-    this.conversationProjector.captureConversationEventFromRuntime(agentId, event);
+  private resolveRuntimeErrorMessage(descriptor: AgentDescriptor, payload: unknown): string {
+    const configuredAuthProvider = inferSettingsAuthProviderFromDescriptor(descriptor.model);
+    const isMissingConfiguredAuth =
+      configuredAuthProvider &&
+      this.secretsEnvService &&
+      !this.secretsEnvService.hasSettingsAuth(configuredAuthProvider);
+    if (isMissingConfiguredAuth) {
+      return `Missing authentication for ${configuredAuthProvider}. Configure credentials in Settings.`;
+    }
+
+    const payloadObject = readObject(payload);
+    const errorObject = readObject(payloadObject?.error);
+    const message =
+      readString(errorObject?.message)?.trim() ?? readString(payloadObject?.message)?.trim() ?? "";
+
+    if (message.length > 0) {
+      return message;
+    }
+
+    return "Agent runtime failed.";
   }
 
-  private emitStatus(
+  private async handleHostCall(sessionId: string, request: HostCallRequest): Promise<unknown> {
+    if (request.method !== "tool_call") {
+      throw new Error(`Unsupported host call method: ${request.method}`);
+    }
+
+    const descriptor = this.lifecycle.requireDescriptor(sessionId);
+    const tool = buildSwarmTools(this, descriptor, {
+      availableArchetypeIds: this.archetypePromptRegistry.listArchetypeIds(),
+    }).find((definition) => definition.name === request.payload.toolName);
+    if (!tool) {
+      throw new Error(`Unknown tool: ${request.payload.toolName}`);
+    }
+
+    return await tool.execute(request.requestId, request.payload.args);
+  }
+
+  private async ensureAgentReadyForInput(
+    agent: string | AgentDescriptor,
+  ): Promise<AgentDescriptor> {
+    const descriptor = typeof agent === "string" ? this.lifecycle.requireDescriptor(agent) : agent;
+    const core = this.coreOrThrow();
+
+    if (descriptor.status === "terminated") {
+      if (descriptor.role === "manager") {
+        const session = core.sessionService.getById(descriptor.agentId);
+        if (!session) {
+          throw new Error(
+            `Agent ${descriptor.agentId} has been terminated and cannot be restored.`,
+          );
+        }
+
+        core.sessionService.applyRuntimeStatus(
+          descriptor.agentId,
+          "stopped",
+          null,
+          session.contextUsage,
+        );
+        await core.sessionService.start(descriptor.agentId);
+        return this.lifecycle.requireDescriptor(descriptor.agentId);
+      }
+
+      throw new Error(
+        `Agent ${descriptor.agentId} has been terminated and cannot receive messages.`,
+      );
+    }
+
+    if (descriptor.status === "stopping") {
+      throw new Error(
+        `Agent ${descriptor.agentId} is stopping. Wait for it to stop before sending another message.`,
+      );
+    }
+
+    if (this.isAgentCompacting(descriptor.agentId)) {
+      throw new Error(
+        `Agent ${descriptor.agentId} is compacting. Wait for compaction to finish before sending another message.`,
+      );
+    }
+
+    if (descriptor.status === "errored") {
+      await core.sessionService.stop(descriptor.agentId);
+      await core.sessionService.start(descriptor.agentId);
+      return this.lifecycle.requireDescriptor(descriptor.agentId);
+    }
+
+    if (descriptor.status === "created" || descriptor.status === "stopped") {
+      await core.sessionService.start(descriptor.agentId);
+      return this.lifecycle.requireDescriptor(descriptor.agentId);
+    }
+
+    return descriptor;
+  }
+
+  private resolveCompletedMessageRole(
     agentId: string,
-    status: AgentStatus,
-    pendingCount: number,
-    contextUsage?: AgentContextUsage
-  ): void {
-    const resolvedContextUsage = normalizeContextUsage(contextUsage ?? this.descriptors.get(agentId)?.contextUsage);
-    const payload: AgentStatusEvent = {
-      type: "agent_status",
-      agentId,
-      status,
-      pendingCount,
-      ...(resolvedContextUsage ? { contextUsage: resolvedContextUsage } : {})
+    payload: unknown,
+  ): "assistant" | "system" | "user" | undefined {
+    const payloadObject = readObject(payload);
+    const role = readRole(payloadObject?.role);
+    if (role) {
+      return role;
+    }
+
+    const sourceMessageId = readString(payloadObject?.messageId);
+    if (!sourceMessageId) {
+      return undefined;
+    }
+
+    // Codex and Claude completed-message events omit role; recover it from the
+    // stored message captured earlier in the same event dispatch.
+    return readRole(
+      this.coreOrThrow().messageStore.getLatestBySourceMessageId(agentId, sourceMessageId)?.role,
+    );
+  }
+
+  private persistConversationLog(event: ConversationLogEvent): void {
+    this.coreOrThrow().messageStore.append(event.agentId, {
+      source: "system",
+      kind: "middleman_event",
+      role: "system",
+      content: {
+        text: event.text,
+      },
+      createdAt: event.timestamp,
+      metadata: {
+        middleman: {
+          version: 1,
+          renderAs: "conversation_log",
+          event,
+        },
+      },
+    });
+  }
+
+  private persistAgentToolCall(event: AgentToolCallEvent): void {
+    const persistedEvent: Omit<AgentToolCallEvent, "text"> = {
+      type: event.type,
+      agentId: event.agentId,
+      actorAgentId: event.actorAgentId,
+      timestamp: event.timestamp,
+      kind: event.kind,
+      ...(event.toolName === undefined ? {} : { toolName: event.toolName }),
+      ...(event.toolCallId === undefined ? {} : { toolCallId: event.toolCallId }),
+      ...(event.isError === undefined ? {} : { isError: event.isError }),
     };
 
-    this.emit("agent_status", payload satisfies ServerEvent);
+    this.coreOrThrow().messageStore.append(event.actorAgentId, {
+      source: "system",
+      kind: "middleman_event",
+      role: "system",
+      content: {
+        text: event.text,
+      },
+      createdAt: event.timestamp,
+      metadata: {
+        middleman: {
+          version: 1,
+          renderAs: "agent_tool_call",
+          event: persistedEvent,
+        },
+      },
+    });
   }
 
-  private emitAgentsSnapshot(): void {
-    const payload: AgentsSnapshotEvent = {
-      type: "agents_snapshot",
-      agents: this.listAgents()
-    };
+  private async maybeEmitWorkerCompletionSummary(agentId: string): Promise<void> {
+    if (!this.pendingWorkerCompletionReportAgentIds.has(agentId)) {
+      return;
+    }
 
-    this.emit("agents_snapshot", payload satisfies ServerEvent);
+    const session = this.coreOrThrow().sessionService.getById(agentId);
+    if (!session || session.status !== "idle") {
+      return;
+    }
+
+    const descriptor = this.lifecycle.getAgent(agentId);
+    if (!descriptor || descriptor.role !== "worker") {
+      this.pendingWorkerCompletionReportAgentIds.delete(agentId);
+      return;
+    }
+
+    const manager = this.lifecycle.getAgent(descriptor.managerId);
+    if (!manager || manager.role !== "manager") {
+      this.pendingWorkerCompletionReportAgentIds.delete(agentId);
+      return;
+    }
+
+    if (this.suppressNextWorkerCompletionReportAgentIds.has(agentId)) {
+      this.pendingWorkerCompletionReportAgentIds.delete(agentId);
+      this.suppressNextWorkerCompletionReportAgentIds.delete(agentId);
+      return;
+    }
+
+    const report = buildWorkerCompletionReport(
+      descriptor,
+      this.getConversationHistory(agentId),
+      this.lastWorkerCompletionReportTimestampByAgentId.get(agentId),
+    );
+
+    this.pendingWorkerCompletionReportAgentIds.delete(agentId);
+
+    try {
+      await this.sendMessage(agentId, manager.agentId, report.message, "auto");
+      if (report.summaryTimestamp) {
+        this.lastWorkerCompletionReportTimestampByAgentId.set(agentId, report.summaryTimestamp);
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`[swarm] Failed to send worker completion summary for ${agentId}: ${message}`);
+    }
   }
 
-  private emitEscalationCreated(escalation: UserEscalation): void {
-    this.emit("escalation_created", {
-      type: "escalation_created",
-      escalation
-    } satisfies ServerEvent);
-  }
-
-  private emitEscalationUpdated(escalation: UserEscalation): void {
-    this.emit("escalation_updated", {
-      type: "escalation_updated",
-      escalation
-    } satisfies ServerEvent);
-  }
-
-  private emitEscalationsDeleted(escalationIds: string[]): void {
-    this.emit("escalations_deleted", {
-      type: "escalations_deleted",
-      escalationIds
-    } satisfies ServerEvent);
-  }
-
-  private async handleRuntimeAgentEnd(agentId: string): Promise<void> {
-    // Notify the owning manager so its model context knows the worker is idle.
-    // Without this the manager has no automatic signal when a worker finishes
-    // and must rely entirely on the worker calling back — which fails silently
-    // when a steer is dropped (see orchestration-gap investigation).
-    const descriptor = this.descriptors.get(agentId);
+  private async maybeEmitWorkerErrorReport(agentId: string, errorMessage: string): Promise<void> {
+    const descriptor = this.lifecycle.getAgent(agentId);
     if (!descriptor || descriptor.role !== "worker") {
       return;
     }
 
-    const managerId = descriptor.managerId?.trim();
-    if (!managerId) {
-      return;
-    }
-
-    const managerDescriptor = this.descriptors.get(managerId);
-    if (!managerDescriptor || isNonRunningAgentStatus(managerDescriptor.status)) {
+    const manager = this.lifecycle.getAgent(descriptor.managerId);
+    if (!manager || manager.role !== "manager") {
       return;
     }
 
     try {
       await this.sendMessage(
         agentId,
-        managerId,
-        `SYSTEM: Worker ${agentId} has completed its turn and is now idle.`,
-        "auto"
+        manager.agentId,
+        `SYSTEM: Worker ${agentId} errored: ${errorMessage}`,
+        "auto",
       );
     } catch (error) {
-      this.logDebug("agent:end_notify:error", {
-        agentId,
-        managerId,
-        error: error instanceof Error ? error.message : String(error)
-      });
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`[swarm] Failed to send worker error report for ${agentId}: ${message}`);
     }
   }
 
-  private startStaleStreamingWatchdog(): void {
-    this.staleStreamingWatchdogTimer = setInterval(() => {
-      this.checkForStaleStreamingAgents();
-    }, SwarmManager.STALE_STREAMING_CHECK_INTERVAL_MS);
-
-    // Allow the process to exit even if this timer is still running.
-    if (this.staleStreamingWatchdogTimer.unref) {
-      this.staleStreamingWatchdogTimer.unref();
-    }
+  private clearWorkerCompletionReportTracking(agentId: string): void {
+    this.pendingWorkerCompletionReportAgentIds.delete(agentId);
+    this.lastWorkerCompletionReportTimestampByAgentId.delete(agentId);
+    this.suppressNextWorkerCompletionReportAgentIds.delete(agentId);
   }
 
-  private checkForStaleStreamingAgents(): void {
-    const nowMs = Date.now();
+  private async interruptSessionIfActive(agentId: string): Promise<boolean> {
+    const core = this.coreOrThrow();
+    const session = core.sessionService.getById(agentId);
+    const compacting = this.isAgentCompacting(agentId);
+    if (
+      !session ||
+      session.status === "created" ||
+      (session.status === "idle" && !compacting) ||
+      session.status === "stopped" ||
+      session.status === "errored" ||
+      session.status === "terminated"
+    ) {
+      return false;
+    }
 
-    for (const [agentId, descriptor] of this.descriptors) {
-      if (descriptor.status !== "streaming") {
-        // Clear any prior stale warning so we re-warn if the agent gets stuck again.
-        this.staleStreamingWarnedAgentIds.delete(agentId);
-        continue;
-      }
+    const supervisor = core.supervisor;
+    if (supervisor.hasWorker(agentId)) {
+      core.messageService.interrupt(agentId);
+      return true;
+    }
 
-      if (this.staleStreamingWarnedAgentIds.has(agentId)) {
-        continue; // Already warned; don't spam.
-      }
+    core.sessionService.applyRuntimeStatus(agentId, "idle", null, session.contextUsage);
+    return true;
+  }
 
-      const streamingSinceMs = nowMs - new Date(descriptor.updatedAt).getTime();
-      if (streamingSinceMs < SwarmManager.STALE_STREAMING_THRESHOLD_MS) {
-        continue;
-      }
+  private isAgentCompacting(agentId: string): boolean {
+    if (this.compactingAgentIds.has(agentId)) {
+      return true;
+    }
 
-      const staleMinutes = Math.round(streamingSinceMs / 60_000);
-      this.staleStreamingWarnedAgentIds.add(agentId);
+    return this.core?.sessionService.getById(agentId)?.status === "compacting";
+  }
 
-      const agentText = `⚠️ Agent ${agentId} has been in streaming state for ${staleMinutes} minutes without a status update. It may be stuck on a long-running shell command (e.g. backgrounded server + wait). Consider interrupting it.`;
+  private async waitForOperationCompletion(
+    sessionId: string,
+    operationId: string,
+  ): Promise<unknown> {
+    const core = this.coreOrThrow();
 
-      this.emitConversationMessage({
-        type: "conversation_message",
-        agentId,
-        role: "system",
-        text: agentText,
-        timestamp: this.now(),
-        source: "system"
-      });
+    return await new Promise((resolve, reject) => {
+      let settled = false;
 
-      // Also surface to the owning manager so the manager agent can react.
-      const managerId = descriptor.managerId?.trim();
-      if (managerId && descriptor.role === "worker") {
-        const managerDescriptor = this.descriptors.get(managerId);
-        if (managerDescriptor && !isNonRunningAgentStatus(managerDescriptor.status)) {
-          this.emitConversationMessage({
-            type: "conversation_message",
-            agentId: managerId,
-            role: "system",
-            text: `⚠️ Worker ${agentId} has been streaming for ${staleMinutes} minutes. It may be stuck on a compound shell command. Consider interrupting it and reassigning the task.`,
-            timestamp: this.now(),
-            source: "system"
-          });
+      const settle = (callback: () => void) => {
+        if (settled) {
+          return;
         }
-      }
 
-      this.logDebug("watchdog:stale_streaming", {
-        agentId,
-        staleMinutes,
-        updatedAt: descriptor.updatedAt
+        settled = true;
+        clearTimeout(timeout);
+        unsubscribe();
+        callback();
+      };
+
+      const resolveIfCompleted = () => {
+        const operation = core.operationService.getById(operationId);
+        if (!operation || operation.status === "pending") {
+          return false;
+        }
+
+        if (operation.status === "completed") {
+          let result: unknown = {};
+          if (operation.resultJson) {
+            try {
+              result = JSON.parse(operation.resultJson);
+            } catch {
+              result = operation.resultJson;
+            }
+          }
+
+          settle(() => resolve(result));
+          return true;
+        }
+
+        let errorMessage = `Operation ${operationId} failed.`;
+        if (operation.errorJson) {
+          try {
+            const parsedError = JSON.parse(operation.errorJson);
+            errorMessage = readString(readObject(parsedError)?.message) ?? errorMessage;
+          } catch {
+            errorMessage = operation.errorJson;
+          }
+        }
+
+        settle(() => reject(new Error(errorMessage)));
+        return true;
+      };
+
+      const unsubscribe = core.eventBus.subscribe((event) => {
+        if (event.type === "operation.completed") {
+          const payload = readObject(event.payload);
+          if (readString(payload?.operationId) !== operationId) {
+            return;
+          }
+
+          resolveIfCompleted();
+          return;
+        }
+
+        if (event.sessionId !== sessionId) {
+          return;
+        }
+
+        if (event.type === "session.errored") {
+          const errorMessage =
+            readString(readObject(readObject(event.payload)?.error)?.message) ??
+            `Agent ${sessionId} errored before compaction finished.`;
+          settle(() => reject(new Error(errorMessage)));
+          return;
+        }
+
+        if (event.type === "session.stopped") {
+          settle(() => reject(new Error(`Agent ${sessionId} stopped before compaction finished.`)));
+        }
       });
+
+      const timeout = setTimeout(() => {
+        settle(() =>
+          reject(new Error(`Timed out waiting for compaction to finish for ${sessionId}.`)),
+        );
+      }, COMPACT_OPERATION_TIMEOUT_MS);
+
+      if (resolveIfCompleted()) {
+        return;
+      }
+    });
+  }
+
+  private suppressExpectedShutdownErrors(): void {
+    const core = this.coreOrThrow();
+    core.db
+      .prepare<{ sigint_pattern: string; sigterm_pattern: string }>(
+        `UPDATE messages
+         SET metadata_json = json_set(metadata_json, '$.middleman.suppressed', json('true'))
+         WHERE json_extract(metadata_json, '$.middleman.renderAs') = 'conversation_log'
+           AND coalesce(json_extract(metadata_json, '$.middleman.suppressed'), 0) != 1
+           AND (
+             json_extract(metadata_json, '$.middleman.event.text') LIKE @sigint_pattern
+             OR json_extract(metadata_json, '$.middleman.event.text') LIKE @sigterm_pattern
+           )`,
+      )
+      .run({
+        sigint_pattern: "Worker exited with code null, signal SIGINT%",
+        sigterm_pattern: "Worker exited with code null, signal SIGTERM%",
+      });
+  }
+
+  private emitConversationMessage(event: ConversationMessageEvent): void {
+    this.emit("conversation_message", event);
+  }
+
+  private emitConversationLog(event: ConversationLogEvent): void {
+    this.emit("conversation_log", event);
+  }
+
+  private emitAgentMessage(event: AgentMessageEvent): void {
+    this.emit("agent_message", event);
+  }
+
+  private emitAgentToolCall(event: AgentToolCallEvent): void {
+    this.emit("agent_tool_call", event);
+  }
+
+  private shouldBroadcastToolProgress(event: AgentToolCallEvent): boolean {
+    const key = this.getToolProgressBroadcastKey(event);
+    if (!key) {
+      return true;
+    }
+
+    const currentTimestampMs = Date.parse(event.timestamp);
+    if (!Number.isFinite(currentTimestampMs)) {
+      return true;
+    }
+
+    const lastBroadcastAt = this.lastToolProgressBroadcastAtByKey.get(key);
+    if (
+      lastBroadcastAt !== undefined &&
+      currentTimestampMs - lastBroadcastAt < TOOL_PROGRESS_BROADCAST_INTERVAL_MS
+    ) {
+      return false;
+    }
+
+    this.lastToolProgressBroadcastAtByKey.set(key, currentTimestampMs);
+    return true;
+  }
+
+  private resetToolProgressBroadcastState(event: AgentToolCallEvent): void {
+    const key = this.getToolProgressBroadcastKey(event);
+    if (!key) {
+      return;
+    }
+
+    this.lastToolProgressBroadcastAtByKey.delete(key);
+  }
+
+  private clearToolProgressBroadcastStateForAgent(agentId: string): void {
+    for (const key of this.lastToolProgressBroadcastAtByKey.keys()) {
+      if (key.startsWith(`${agentId}:`)) {
+        this.lastToolProgressBroadcastAtByKey.delete(key);
+      }
     }
   }
 
-  private async ensureDirectories(): Promise<void> {
-    await this.persistenceService.ensureDirectories();
-  }
-
-  private getAgentMemoryPath(agentId: string): string {
-    return getAgentMemoryPathForDataDir(this.config.paths.dataDir, agentId);
-  }
-
-  private resolveMemoryOwnerAgentId(descriptor: AgentDescriptor): string {
-    if (descriptor.role === "manager") {
-      return descriptor.agentId;
+  private getToolProgressBroadcastKey(event: AgentToolCallEvent): string | null {
+    const toolCallId = event.toolCallId?.trim();
+    if (!toolCallId) {
+      return null;
     }
 
-    const managerId = normalizeOptionalAgentId(descriptor.managerId);
-    if (managerId) {
-      return managerId;
+    return `${event.actorAgentId}:${toolCallId}`;
+  }
+
+  private emitStatus(
+    agentId: string,
+    status: AgentStatus,
+    pendingCount: number,
+    contextUsage?: AgentContextUsage | null,
+  ): void {
+    const resolvedContextUsage =
+      contextUsage === undefined ? (this.getAgent(agentId)?.contextUsage ?? null) : contextUsage;
+    this.emit("agent_status", {
+      type: "agent_status",
+      agentId,
+      status,
+      pendingCount,
+      contextUsage: resolvedContextUsage,
+    });
+  }
+
+  private emitAgentsSnapshot(): void {
+    this.emit("agents_snapshot", {
+      type: "agents_snapshot",
+      agents: this.listAgents(),
+    } satisfies AgentsSnapshotEvent);
+  }
+
+  private coreOrThrow(): SwarmdCoreHandle {
+    if (!this.core) {
+      throw new Error("SwarmManager has not been bootstrapped.");
     }
-
-    return this.resolvePreferredManagerId({ includeStoppedOnRestart: true }) ?? descriptor.agentId;
+    return this.core;
   }
 
-  private async ensureMemoryFilesForBoot(): Promise<void> {
-    await this.persistenceService.ensureMemoryFilesForBoot();
+  private agentRepoOrThrow(): MiddlemanAgentRepo {
+    if (!this.agentRepo) {
+      throw new Error("Agent repo is not initialized.");
+    }
+    return this.agentRepo;
   }
 
-  private async ensureAgentMemoryFile(agentId: string): Promise<void> {
-    await this.persistenceService.ensureAgentMemoryFile(agentId);
+  private managerOrderRepoOrThrow(): MiddlemanManagerOrderRepo {
+    if (!this.managerOrderRepo) {
+      throw new Error("Manager order repo is not initialized.");
+    }
+    return this.managerOrderRepo;
   }
 
-  private async deleteManagerSessionFile(sessionFile: string): Promise<void> {
-    await this.persistenceService.deleteManagerSessionFile(sessionFile);
+  private scheduleRepoOrThrow(): MiddlemanScheduleRepo {
+    if (!this.scheduleRepo) {
+      throw new Error("Schedule repo is not initialized.");
+    }
+    return this.scheduleRepo;
   }
 
-  private async deleteManagerSchedulesFile(managerId: string): Promise<void> {
-    await this.persistenceService.deleteManagerSchedulesFile(managerId);
+  private settingsRepoOrThrow(): MiddlemanSettingsRepo {
+    if (!this.settingsRepo) {
+      throw new Error("Settings repo is not initialized.");
+    }
+    return this.settingsRepo;
   }
 
-  private async loadStore(): Promise<AgentsStoreFile> {
-    return this.persistenceService.loadStore();
-  }
-
-  private async loadManagerOrder(): Promise<string[]> {
-    return this.persistenceService.loadManagerOrder();
-  }
-
-  private loadConversationHistoriesFromStore(): void {
-    this.conversationProjector.loadConversationHistoriesFromStore();
-  }
-
-  private async saveStore(): Promise<void> {
-    this.managerOrder = this.sanitizeManagerOrder(this.managerOrder);
-    await this.persistenceService.saveStore();
-    await this.persistenceService.saveManagerOrder();
-  }
-}
-
-const VALID_PERSISTED_AGENT_ROLES = new Set(["manager", "worker"]);
-const VALID_PERSISTED_AGENT_STATUSES = new Set([
-  "idle",
-  "streaming",
-  "terminated",
-  "stopped",
-  "error",
-  "stopped_on_restart"
-]);
-
-function validateAgentDescriptor(value: unknown): AgentDescriptor | string {
-  if (!isRecord(value)) {
-    return "descriptor must be an object";
-  }
-
-  if (!isNonEmptyString(value.agentId)) {
-    return "agentId must be a non-empty string";
-  }
-
-  if (typeof value.displayName !== "string") {
-    return "displayName must be a string";
-  }
-
-  if (!isNonEmptyString(value.role) || !VALID_PERSISTED_AGENT_ROLES.has(value.role)) {
-    return "role must be one of manager|worker";
-  }
-
-  if (!isNonEmptyString(value.managerId)) {
-    return "managerId must be a non-empty string";
-  }
-
-  if (!isNonEmptyString(value.status) || !VALID_PERSISTED_AGENT_STATUSES.has(value.status)) {
-    return "status must be one of idle|streaming|terminated|stopped|error|stopped_on_restart";
-  }
-  const normalizedStatus = normalizeAgentStatus(value.status as AgentStatusInput);
-
-  if (!isNonEmptyString(value.createdAt)) {
-    return "createdAt must be a non-empty string";
-  }
-
-  if (!isNonEmptyString(value.updatedAt)) {
-    return "updatedAt must be a non-empty string";
-  }
-
-  if (!isNonEmptyString(value.cwd)) {
-    return "cwd must be a non-empty string";
-  }
-
-  if (!isNonEmptyString(value.sessionFile)) {
-    return "sessionFile must be a non-empty string";
-  }
-
-  const model = value.model;
-  if (!isRecord(model)) {
-    return "model must be an object";
-  }
-
-  if (!isNonEmptyString(model.provider)) {
-    return "model.provider must be a non-empty string";
-  }
-
-  if (!isNonEmptyString(model.modelId)) {
-    return "model.modelId must be a non-empty string";
-  }
-
-  if (!isNonEmptyString(model.thinkingLevel)) {
-    return "model.thinkingLevel must be a non-empty string";
-  }
-
-  if (value.archetypeId !== undefined && typeof value.archetypeId !== "string") {
-    return "archetypeId must be a string when provided";
-  }
-
-  const descriptor = value as unknown as AgentDescriptor;
-  if (descriptor.status === normalizedStatus) {
-    return descriptor;
-  }
-
-  return {
-    ...descriptor,
-    status: normalizedStatus
-  };
-}
-
-function extractDescriptorAgentId(value: unknown): string | undefined {
-  if (!isRecord(value)) {
-    return undefined;
-  }
-
-  return isNonEmptyString(value.agentId) ? value.agentId.trim() : undefined;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function isNonEmptyString(value: unknown): value is string {
-  return typeof value === "string" && value.trim().length > 0;
-}
-
-function normalizeAgentId(input: string): string {
-  return input
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 48);
-}
-
-function normalizeOptionalAgentId(input: string | undefined): string | undefined {
-  if (typeof input !== "string") {
-    return undefined;
-  }
-
-  const trimmed = input.trim();
-  return trimmed.length > 0 ? trimmed : undefined;
-}
-
-function previewForLog(text: string, maxLength = 160): string {
-  const normalized = text.replace(/\s+/g, " ").trim();
-  if (normalized.length <= maxLength) return normalized;
-  return `${normalized.slice(0, maxLength)}...`;
-}
-
-function safeJson(value: unknown): string {
-  try {
-    return JSON.stringify(value);
-  } catch {
-    return String(value);
+  private secretsEnvServiceOrThrow(): SecretsEnvService {
+    if (!this.secretsEnvService) {
+      throw new Error("Settings service is not initialized.");
+    }
+    return this.secretsEnvService;
   }
 }
 
-function readPositiveIntegerDetail(details: Record<string, unknown> | undefined, key: string): number | undefined {
-  if (!details) {
-    return undefined;
-  }
-
-  const value = details[key];
-  if (typeof value !== "number" || !Number.isInteger(value) || value <= 0) {
-    return undefined;
-  }
-
-  return value;
-}
-
-function normalizeConversationAttachments(
-  attachments: ConversationAttachment[] | undefined
-): ConversationAttachment[] {
-  if (!attachments || attachments.length === 0) {
-    return [];
-  }
-
-  const normalized: ConversationAttachment[] = [];
+function toContentParts(text: string, attachments: ConversationAttachment[]): ContentPart[] {
+  const parts: ContentPart[] = [{ type: "text", text }];
 
   for (const attachment of attachments) {
-    if (!attachment || typeof attachment !== "object") {
+    if ("filePath" in attachment && attachment.filePath) {
+      parts.push({
+        type: "file",
+        mimeType: attachment.mimeType,
+        fileName: attachment.fileName,
+        path: attachment.filePath,
+      });
       continue;
     }
 
-    const mimeType = typeof attachment.mimeType === "string" ? attachment.mimeType.trim() : "";
-    const fileName = typeof attachment.fileName === "string" ? attachment.fileName.trim() : "";
-    const filePath = typeof attachment.filePath === "string" ? attachment.filePath.trim() : "";
-
     if (attachment.type === "text") {
-      const text = typeof attachment.text === "string" ? attachment.text : "";
-      if (!mimeType || text.trim().length === 0) {
-        continue;
-      }
-
-      normalized.push({
-        type: "text",
-        mimeType,
-        text,
-        fileName: fileName || undefined,
-        filePath: filePath || undefined
+      parts.push({
+        type: "file",
+        mimeType: attachment.mimeType,
+        fileName: attachment.fileName,
+        data: Buffer.from(attachment.text, "utf8").toString("base64"),
       });
       continue;
     }
 
     if (attachment.type === "binary") {
-      const data = typeof attachment.data === "string" ? attachment.data.trim() : "";
-      if (!mimeType || data.length === 0) {
-        continue;
-      }
-
-      normalized.push({
-        type: "binary",
-        mimeType,
-        data,
-        fileName: fileName || undefined,
-        filePath: filePath || undefined
+      parts.push({
+        type: "file",
+        mimeType: attachment.mimeType,
+        fileName: attachment.fileName,
+        data: attachment.data,
       });
       continue;
     }
 
-    const data = typeof attachment.data === "string" ? attachment.data.trim() : "";
-    if (!mimeType || !mimeType.startsWith("image/") || !data) {
-      continue;
-    }
-
-    normalized.push({
-      mimeType,
-      data,
-      fileName: fileName || undefined,
-      filePath: filePath || undefined
+    parts.push({
+      type: "image",
+      mimeType: attachment.mimeType,
+      data: attachment.data,
     });
   }
 
-  return normalized;
+  return parts;
 }
 
-function toConversationAttachmentMetadata(attachments: ConversationAttachment[]): ConversationAttachmentMetadata[] {
-  const metadata: ConversationAttachmentMetadata[] = [];
+function buildWorkerCompletionReport(
+  descriptor: Pick<AgentDescriptor, "agentId">,
+  history: ConversationEntryEvent[],
+  lastReportedSummaryTimestamp?: string,
+): { message: string; summaryTimestamp?: string } {
+  const latestSummary = findLatestWorkerCompletionSummary(history);
 
-  for (const attachment of attachments) {
-    if (!attachment || typeof attachment !== "object") {
-      continue;
-    }
-
-    const normalizedPath = normalizeOptionalAttachmentPath(attachment.filePath);
-    const normalizedName = normalizeOptionalMetadataValue(attachment.fileName);
-    const sizeBytes = computeAttachmentSizeBytes(attachment);
-
-    if (isConversationTextAttachment(attachment)) {
-      metadata.push({
-        type: "text",
-        mimeType: attachment.mimeType,
-        fileName: normalizedName,
-        filePath: normalizedPath,
-        sizeBytes
-      });
-      continue;
-    }
-
-    if (isConversationBinaryAttachment(attachment)) {
-      metadata.push({
-        type: "binary",
-        mimeType: attachment.mimeType,
-        fileName: normalizedName,
-        filePath: normalizedPath,
-        sizeBytes
-      });
-      continue;
-    }
-
-    if (isConversationImageAttachment(attachment)) {
-      metadata.push({
-        type: "image",
-        mimeType: attachment.mimeType,
-        fileName: normalizedName,
-        filePath: normalizedPath,
-        sizeBytes
-      });
-    }
+  if (!latestSummary || latestSummary.timestamp === lastReportedSummaryTimestamp) {
+    return {
+      message: `SYSTEM: Worker ${descriptor.agentId} completed its turn.`,
+    };
   }
 
-  return metadata;
+  const summaryText = latestSummary.text.trim();
+  const attachmentCount = latestSummary.attachments?.length ?? 0;
+  const attachmentLine =
+    attachmentCount > 0
+      ? `\n\nAttachments: ${attachmentCount} generated attachment${attachmentCount === 1 ? "" : "s"}.`
+      : "";
+
+  if (summaryText.length > 0) {
+    return {
+      message:
+        [
+          `SYSTEM: Worker ${descriptor.agentId} completed its turn.`,
+          "",
+          `${latestSummary.role === "system" ? "Last system message" : "Last assistant message"}:`,
+          summaryText,
+        ].join("\n") + attachmentLine,
+      summaryTimestamp: latestSummary.timestamp,
+    };
+  }
+
+  return {
+    message: `SYSTEM: Worker ${descriptor.agentId} completed its turn and generated ${attachmentCount} attachment${attachmentCount === 1 ? "" : "s"}.`,
+    summaryTimestamp: latestSummary.timestamp,
+  };
 }
 
-function computeAttachmentSizeBytes(attachment: ConversationAttachment): number | undefined {
-  if (isConversationTextAttachment(attachment)) {
-    return Buffer.byteLength(attachment.text, "utf8");
-  }
+function findLatestWorkerCompletionSummary(
+  history: ConversationEntryEvent[],
+): ConversationMessageEvent | undefined {
+  for (let index = history.length - 1; index >= 0; index -= 1) {
+    const entry = history[index];
+    if (entry.type !== "conversation_message") {
+      continue;
+    }
 
-  if (isConversationBinaryAttachment(attachment) || isConversationImageAttachment(attachment)) {
-    return decodeBase64ByteLength(attachment.data);
+    if (entry.role !== "assistant" && entry.role !== "system") {
+      continue;
+    }
+
+    const trimmedText = entry.text.trim();
+    const attachmentCount = entry.attachments?.length ?? 0;
+    if (trimmedText.length === 0 && attachmentCount === 0) {
+      continue;
+    }
+
+    return entry;
   }
 
   return undefined;
 }
 
-function decodeBase64ByteLength(value: string): number {
-  const trimmed = value.trim();
-  if (trimmed.length === 0) {
-    return 0;
+function toSwarmdDeliveryMode(delivery?: RequestedDeliveryMode): SwarmdDeliveryMode {
+  switch (delivery) {
+    case "followUp":
+      return "queue";
+    case "steer":
+      return "interrupt";
+    case "auto":
+    case undefined:
+    default:
+      return "auto";
   }
-
-  let padding = 0;
-  if (trimmed.endsWith("==")) {
-    padding = 2;
-  } else if (trimmed.endsWith("=")) {
-    padding = 1;
-  }
-
-  return Math.max(0, Math.floor((trimmed.length * 3) / 4) - padding);
-}
-
-function toRuntimeImageAttachments(attachments: ConversationAttachment[]): RuntimeImageAttachment[] {
-  const images: RuntimeImageAttachment[] = [];
-
-  for (const attachment of attachments) {
-    if (!isConversationImageAttachment(attachment)) {
-      continue;
-    }
-
-    images.push({
-      mimeType: attachment.mimeType,
-      data: attachment.data
-    });
-  }
-
-  return images;
-}
-
-function formatTextAttachmentForPrompt(attachment: ConversationTextAttachment, index: number): string {
-  const fileName = attachment.fileName?.trim() || `attachment-${index}.txt`;
-
-  return [
-    `[Attachment ${index}]`,
-    `Name: ${fileName}`,
-    `MIME type: ${attachment.mimeType}`,
-    "Content:",
-    "----- BEGIN FILE -----",
-    attachment.text,
-    "----- END FILE -----"
-  ].join("\n");
-}
-
-function formatBinaryAttachmentForPrompt(
-  attachment: ConversationBinaryAttachment,
-  storedPath: string,
-  index: number
-): string {
-  const fileName = attachment.fileName?.trim() || `attachment-${index}.bin`;
-
-  return [
-    `[Attachment ${index}]`,
-    `Name: ${fileName}`,
-    `MIME type: ${attachment.mimeType}`,
-    `Saved to: ${storedPath}`,
-    "Use read/bash tools to inspect the file directly from disk."
-  ].join("\n");
-}
-
-function sanitizeAttachmentFileName(fileName: string | undefined, fallback: string): string {
-  const fallbackName = fallback.trim() || "attachment.bin";
-  const trimmed = typeof fileName === "string" ? fileName.trim() : "";
-
-  if (!trimmed) {
-    return fallbackName;
-  }
-
-  const cleaned = trimmed
-    .replace(/[\\/]+/g, "-")
-    .replace(/[\0-\x1f\x7f]+/g, "")
-    .replace(/\s+/g, " ")
-    .replace(/^\.+/, "")
-    .slice(0, 120);
-
-  return cleaned || fallbackName;
-}
-
-function sanitizePathSegment(value: string, fallback: string): string {
-  const cleaned = value
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9._-]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 64);
-
-  return cleaned || fallback;
-}
-
-function normalizeOptionalAttachmentPath(path: string | undefined): string | undefined {
-  if (typeof path !== "string") {
-    return undefined;
-  }
-
-  const trimmed = path.trim();
-  return trimmed.length > 0 ? trimmed : undefined;
-}
-
-function extractRuntimeMessageText(message: string | RuntimeUserMessage): string {
-  if (typeof message === "string") {
-    return message;
-  }
-
-  return message.text;
-}
-
-function formatInboundUserMessageForManager(text: string, sourceContext: MessageSourceContext): string {
-  const sourceMetadataLine = `[sourceContext] ${JSON.stringify(sourceContext)}`;
-  const trimmed = text.trim();
-
-  if (trimmed.length === 0) {
-    return sourceMetadataLine;
-  }
-
-  return `${sourceMetadataLine}\n\n${trimmed}`;
-}
-
-function formatEscalationResolutionMessage(escalation: UserEscalation, choice: string): string {
-  return `Escalation resolved: [${escalation.id}] — Question: "${escalation.title}" — Response: "${choice}"`;
-}
-
-function parseCompactSlashCommand(text: string): { customInstructions?: string } | undefined {
-  const match = text.trim().match(/^\/compact(?:\s+([\s\S]+))?$/i);
-  if (!match) {
-    return undefined;
-  }
-
-  const customInstructions = match[1]?.trim();
-  if (!customInstructions) {
-    return {};
-  }
-
-  return {
-    customInstructions
-  };
-}
-
-function normalizeMessageTargetContext(input: MessageTargetContext): MessageTargetContext {
-  return {
-    channel:
-      input.channel === "slack" || input.channel === "telegram"
-        ? input.channel
-        : "web",
-    channelId: normalizeOptionalMetadataValue(input.channelId),
-    userId: normalizeOptionalMetadataValue(input.userId),
-    threadTs: normalizeOptionalMetadataValue(input.threadTs),
-    integrationProfileId: normalizeOptionalMetadataValue(input.integrationProfileId)
-  };
-}
-
-function normalizeMessageSourceContext(input: MessageSourceContext): MessageSourceContext {
-  return {
-    channel:
-      input.channel === "slack" || input.channel === "telegram"
-        ? input.channel
-        : "web",
-    channelId: normalizeOptionalMetadataValue(input.channelId),
-    userId: normalizeOptionalMetadataValue(input.userId),
-    messageId: normalizeOptionalMetadataValue(input.messageId),
-    threadTs: normalizeOptionalMetadataValue(input.threadTs),
-    integrationProfileId: normalizeOptionalMetadataValue(input.integrationProfileId),
-    channelType:
-      input.channelType === "dm" ||
-      input.channelType === "channel" ||
-      input.channelType === "group" ||
-      input.channelType === "mpim"
-        ? input.channelType
-        : undefined,
-    teamId: normalizeOptionalMetadataValue(input.teamId)
-  };
-}
-
-function normalizeOptionalMetadataValue(value: string | undefined): string | undefined {
-  if (typeof value !== "string") {
-    return undefined;
-  }
-
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : undefined;
 }

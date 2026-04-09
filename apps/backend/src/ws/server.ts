@@ -1,40 +1,37 @@
-import { createServer, type IncomingMessage, type Server as HttpServer, type ServerResponse } from "node:http";
+import { serve } from "@hono/node-server";
+import { Hono, type Context } from "hono";
+import type { Server as HttpServer } from "node:http";
+import { readFile, stat } from "node:fs/promises";
+import { extname, resolve, sep } from "node:path";
 import { WebSocketServer } from "ws";
-import type { IntegrationRegistryService } from "../integrations/registry.js";
 import type { ServerEvent } from "@middleman/protocol";
+import { getControlPidFilePath } from "../reboot/control-pid.js";
 import type { SwarmManager } from "../swarm/swarm-manager.js";
-import { applyCorsHeaders, resolveRequestUrl, sendJson } from "./http-utils.js";
-import { createAgentHttpRoutes } from "./routes/agent-routes.js";
+import { resolveReadFileContentType } from "./http-utils.js";
+import { type NodeServerEnv } from "./hono-utils.js";
 import { createFileRoutes } from "./routes/file-routes.js";
 import { createHealthRoutes } from "./routes/health-routes.js";
-import type { HttpRoute } from "./routes/http-route.js";
-import { createIntegrationRoutes } from "./routes/integration-routes.js";
+import { createNotesHttpRoutes } from "./routes/notes-routes.js";
 import { createSchedulerRoutes } from "./routes/scheduler-routes.js";
 import { createSettingsRoutes, type SettingsRouteBundle } from "./routes/settings-routes.js";
-import { createEscalationHttpRoutes } from "./routes/escalation-routes.js";
-import { createTranscriptionRoutes } from "./routes/transcription-routes.js";
 import { WsHandler } from "./ws-handler.js";
 
 export class SwarmWebSocketServer {
   private readonly swarmManager: SwarmManager;
   private readonly host: string;
   private readonly port: number;
-  private readonly integrationRegistry: IntegrationRegistryService | null;
+  private readonly uiDir: string;
+  private uiDirAvailable = false;
 
   private httpServer: HttpServer | null = null;
   private wss: WebSocketServer | null = null;
 
+  private readonly httpApp: Hono<NodeServerEnv>;
   private readonly wsHandler: WsHandler;
   private readonly settingsRoutes: SettingsRouteBundle;
-  private readonly httpRoutes: HttpRoute[];
 
   private readonly onConversationMessage = (event: ServerEvent): void => {
     if (event.type !== "conversation_message") return;
-    this.wsHandler.broadcastToSubscribed(event);
-  };
-
-  private readonly onConversationEscalation = (event: ServerEvent): void => {
-    if (event.type !== "conversation_escalation") return;
     this.wsHandler.broadcastToSubscribed(event);
   };
 
@@ -68,65 +65,18 @@ export class SwarmWebSocketServer {
     this.wsHandler.broadcastToSubscribed(event);
   };
 
-  private readonly onSlackStatus = (event: ServerEvent): void => {
-    if (event.type !== "slack_status") return;
-    this.wsHandler.broadcastToSubscribed(event);
-  };
-
-  private readonly onTelegramStatus = (event: ServerEvent): void => {
-    if (event.type !== "telegram_status") return;
-    this.wsHandler.broadcastToSubscribed(event);
-  };
-
-  private readonly onEscalationCreated = (event: ServerEvent): void => {
-    if (event.type !== "escalation_created") return;
-    this.wsHandler.broadcastToSubscribed(event);
-  };
-
-  private readonly onEscalationUpdated = (event: ServerEvent): void => {
-    if (event.type !== "escalation_updated") return;
-    this.wsHandler.broadcastToSubscribed(event);
-  };
-
-  private readonly onEscalationsDeleted = (event: ServerEvent): void => {
-    if (event.type !== "escalations_deleted") return;
-    this.wsHandler.broadcastToSubscribed(event);
-  };
-
-  constructor(options: {
-    swarmManager: SwarmManager;
-    host: string;
-    port: number;
-    allowNonManagerSubscriptions: boolean;
-    integrationRegistry?: IntegrationRegistryService;
-  }) {
+  constructor(options: { swarmManager: SwarmManager; host: string; port: number; uiDir?: string }) {
     this.swarmManager = options.swarmManager;
     this.host = options.host;
     this.port = options.port;
-    this.integrationRegistry = options.integrationRegistry ?? null;
+    this.uiDir = options.uiDir ?? this.swarmManager.getConfig().paths.uiDir;
 
     this.wsHandler = new WsHandler({
       swarmManager: this.swarmManager,
-      integrationRegistry: this.integrationRegistry,
-      allowNonManagerSubscriptions: options.allowNonManagerSubscriptions
     });
 
     this.settingsRoutes = createSettingsRoutes({ swarmManager: this.swarmManager });
-    this.httpRoutes = [
-      ...createHealthRoutes({
-        resolveRepoRoot: () => this.swarmManager.getConfig().paths.rootDir
-      }),
-      ...createFileRoutes({ swarmManager: this.swarmManager }),
-      ...createTranscriptionRoutes({ swarmManager: this.swarmManager }),
-      ...createSchedulerRoutes({ swarmManager: this.swarmManager }),
-      ...createAgentHttpRoutes({ swarmManager: this.swarmManager }),
-      ...createEscalationHttpRoutes({ swarmManager: this.swarmManager }),
-      ...this.settingsRoutes.routes,
-      ...createIntegrationRoutes({
-        swarmManager: this.swarmManager,
-        integrationRegistry: this.integrationRegistry
-      })
-    ];
+    this.httpApp = this.createHttpApp();
   }
 
   async start(): Promise<void> {
@@ -134,11 +84,11 @@ export class SwarmWebSocketServer {
       return;
     }
 
-    const httpServer = createServer((request, response) => {
-      void this.handleHttpRequest(request, response);
-    });
+    this.uiDirAvailable = await isDirectory(this.uiDir);
+
+    const httpServer = await this.startHttpServer();
     const wss = new WebSocketServer({
-      server: httpServer
+      server: httpServer,
     });
 
     this.httpServer = httpServer;
@@ -146,56 +96,23 @@ export class SwarmWebSocketServer {
 
     this.wsHandler.attach(wss);
 
-    await new Promise<void>((resolve, reject) => {
-      const onListening = (): void => {
-        cleanup();
-        resolve();
-      };
-
-      const onError = (error: Error): void => {
-        cleanup();
-        reject(error);
-      };
-
-      const cleanup = (): void => {
-        httpServer.off("listening", onListening);
-        httpServer.off("error", onError);
-      };
-
-      httpServer.on("listening", onListening);
-      httpServer.on("error", onError);
-      httpServer.listen(this.port, this.host);
-    });
-
     this.swarmManager.on("conversation_message", this.onConversationMessage);
-    this.swarmManager.on("conversation_escalation", this.onConversationEscalation);
     this.swarmManager.on("conversation_log", this.onConversationLog);
     this.swarmManager.on("agent_message", this.onAgentMessage);
     this.swarmManager.on("agent_tool_call", this.onAgentToolCall);
     this.swarmManager.on("conversation_reset", this.onConversationReset);
     this.swarmManager.on("agent_status", this.onAgentStatus);
     this.swarmManager.on("agents_snapshot", this.onAgentsSnapshot);
-    this.swarmManager.on("escalation_created", this.onEscalationCreated);
-    this.swarmManager.on("escalation_updated", this.onEscalationUpdated);
-    this.swarmManager.on("escalations_deleted", this.onEscalationsDeleted);
-    this.integrationRegistry?.on("slack_status", this.onSlackStatus);
-    this.integrationRegistry?.on("telegram_status", this.onTelegramStatus);
   }
 
   async stop(): Promise<void> {
     this.swarmManager.off("conversation_message", this.onConversationMessage);
-    this.swarmManager.off("conversation_escalation", this.onConversationEscalation);
     this.swarmManager.off("conversation_log", this.onConversationLog);
     this.swarmManager.off("agent_message", this.onAgentMessage);
     this.swarmManager.off("agent_tool_call", this.onAgentToolCall);
     this.swarmManager.off("conversation_reset", this.onConversationReset);
     this.swarmManager.off("agent_status", this.onAgentStatus);
     this.swarmManager.off("agents_snapshot", this.onAgentsSnapshot);
-    this.swarmManager.off("escalation_created", this.onEscalationCreated);
-    this.swarmManager.off("escalation_updated", this.onEscalationUpdated);
-    this.swarmManager.off("escalations_deleted", this.onEscalationsDeleted);
-    this.integrationRegistry?.off("slack_status", this.onSlackStatus);
-    this.integrationRegistry?.off("telegram_status", this.onTelegramStatus);
 
     const currentWss = this.wss;
     const currentHttpServer = this.httpServer;
@@ -215,60 +132,184 @@ export class SwarmWebSocketServer {
     }
   }
 
-  private async handleHttpRequest(request: IncomingMessage, response: ServerResponse): Promise<void> {
-    const requestUrl = resolveRequestUrl(request, `${this.host}:${this.port}`);
-    const route = this.httpRoutes.find((candidate) => candidate.matches(requestUrl.pathname));
+  private createHttpApp(): Hono<NodeServerEnv> {
+    const app = new Hono<NodeServerEnv>();
+    app.notFound((c) => c.text("Not Found", 404));
+    app.onError((error, c) => this.handleHttpError(error, c));
 
-    if (!route) {
-      response.statusCode = 404;
-      response.end("Not Found");
-      return;
+    app.route(
+      "/",
+      createHealthRoutes({
+        resolveControlPidFile: () =>
+          getControlPidFilePath(this.swarmManager.getConfig().paths.runDir),
+      }),
+    );
+    app.route("/", createFileRoutes({ swarmManager: this.swarmManager }));
+    app.route("/", createSchedulerRoutes({ swarmManager: this.swarmManager }));
+    app.route("/", createNotesHttpRoutes({ swarmManager: this.swarmManager }));
+    app.route("/", this.settingsRoutes.app);
+    app.on(["GET", "HEAD"], "*", async (c) => this.handleStaticRequest(c));
+
+    return app;
+  }
+
+  private async startHttpServer(): Promise<HttpServer> {
+    return await new Promise<HttpServer>((resolvePromise, rejectPromise) => {
+      let httpServer: HttpServer;
+
+      const onListening = (): void => {
+        cleanup();
+        resolvePromise(httpServer);
+      };
+
+      const onError = (error: Error): void => {
+        cleanup();
+        rejectPromise(error);
+      };
+
+      const cleanup = (): void => {
+        httpServer.off("error", onError);
+      };
+
+      httpServer = serve(
+        {
+          fetch: this.httpApp.fetch,
+          hostname: this.host,
+          port: this.port,
+        },
+        onListening,
+      ) as HttpServer;
+
+      httpServer.on("error", onError);
+    });
+  }
+
+  private handleHttpError(error: unknown, c: Context<NodeServerEnv>): Response {
+    const message = error instanceof Error ? error.message : String(error);
+    const statusCode =
+      message.includes("must be") ||
+      message.includes("Invalid") ||
+      message.includes("Missing") ||
+      message.includes("too large")
+        ? 400
+        : 500;
+
+    if (c.req.path.startsWith("/api/")) {
+      return c.json({ error: message }, statusCode);
     }
 
-    try {
-      await route.handle(request, response, requestUrl);
-    } catch (error) {
-      if (response.writableEnded || response.headersSent) {
-        return;
-      }
+    return c.text(message, statusCode);
+  }
 
-      const message = error instanceof Error ? error.message : String(error);
-      const statusCode =
-        message.includes("must be") ||
-        message.includes("Invalid") ||
-        message.includes("Missing") ||
-        message.includes("too large")
-          ? 400
-          : 500;
-
-      applyCorsHeaders(request, response, route.methods);
-      sendJson(response, statusCode, { error: message });
+  private async handleStaticRequest(c: Context<NodeServerEnv>): Promise<Response> {
+    if (!this.uiDirAvailable || c.req.path.startsWith("/api/")) {
+      return c.notFound();
     }
+
+    const assetPath = await this.resolveStaticAssetPath(c.req.path);
+    if (!assetPath) {
+      return c.notFound();
+    }
+
+    const headers = new Headers({
+      "Cache-Control": isUiAssetRoute(c.req.path)
+        ? "public, max-age=31536000, immutable"
+        : "no-store",
+      "Content-Type": resolveReadFileContentType(assetPath),
+    });
+
+    if (c.req.method === "HEAD") {
+      return new Response(null, {
+        status: 200,
+        headers,
+      });
+    }
+
+    const body = await readFile(assetPath);
+    headers.set("Content-Length", String(body.byteLength));
+
+    return new Response(body, {
+      status: 200,
+      headers,
+    });
+  }
+
+  private async resolveStaticAssetPath(pathname: string): Promise<string | null> {
+    const normalizedPath = pathname === "/" ? "/_shell.html" : pathname;
+    const candidateFilePath = this.resolveUiPath(normalizedPath);
+    if (candidateFilePath && (await isFile(candidateFilePath))) {
+      return candidateFilePath;
+    }
+
+    if (extname(pathname).length > 0) {
+      return null;
+    }
+
+    const shellPath = this.resolveUiPath("/_shell.html");
+    if (shellPath && (await isFile(shellPath))) {
+      return shellPath;
+    }
+
+    return null;
+  }
+
+  private resolveUiPath(pathname: string): string | null {
+    const relativePath = pathname.replace(/^\/+/, "");
+    const uiRoot = resolve(this.uiDir);
+    const candidatePath = resolve(uiRoot, relativePath);
+
+    if (candidatePath === uiRoot || candidatePath.startsWith(`${uiRoot}${sep}`)) {
+      return candidatePath;
+    }
+
+    return null;
   }
 }
 
+async function isFile(path: string): Promise<boolean> {
+  try {
+    const fileStats = await stat(path);
+    return fileStats.isFile();
+  } catch {
+    return false;
+  }
+}
+
+async function isDirectory(path: string): Promise<boolean> {
+  try {
+    const fileStats = await stat(path);
+    return fileStats.isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+function isUiAssetRoute(pathname: string): boolean {
+  return pathname.startsWith("/assets/");
+}
+
 async function closeWebSocketServer(server: WebSocketServer): Promise<void> {
-  await new Promise<void>((resolve, reject) => {
+  await new Promise<void>((resolvePromise, rejectPromise) => {
     server.close((error) => {
       if (error) {
-        reject(error);
+        rejectPromise(error);
         return;
       }
 
-      resolve();
+      resolvePromise();
     });
   });
 }
 
 async function closeHttpServer(server: HttpServer): Promise<void> {
-  await new Promise<void>((resolve, reject) => {
+  await new Promise<void>((resolvePromise, rejectPromise) => {
     server.close((error) => {
       if (error) {
-        reject(error);
+        rejectPromise(error);
         return;
       }
 
-      resolve();
+      resolvePromise();
     });
   });
 }

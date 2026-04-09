@@ -1,304 +1,236 @@
-import {
-  useCallback,
-  useState,
-  type Dispatch,
-  type FormEvent,
-  type MutableRefObject,
-  type SetStateAction,
-} from 'react'
-import { resolveApiEndpoint } from '@/lib/api-endpoint'
-import { ManagerWsClient } from '@/lib/ws-client'
-import type { ManagerWsState } from '@/lib/ws-state'
-import type {
-  AgentDescriptor,
-  ManagerModelPreset,
-} from '@middleman/protocol'
-import type { AppRouteState } from './use-route-state'
+import { useCallback, useState, type FormEvent, type MutableRefObject } from "react";
+import { useAtomValue } from "jotai";
+import { ManagerWsClient } from "@/lib/ws-client";
+import { activeAgentAtom, agentsAtom } from "@/lib/ws-state";
+import type { AgentDescriptor, CreateManagerModelPreset } from "@middleman/protocol";
+import type { AppRouteState } from "./use-route-state";
 
 interface UseManagerActionsOptions {
-  wsUrl: string
-  clientRef: MutableRefObject<ManagerWsClient | null>
-  agents: AgentDescriptor[]
-  activeAgent: AgentDescriptor | null
-  activeAgentId: string | null
-  isActiveManager: boolean
-  defaultManagerModel: ManagerModelPreset
-  navigateToRoute: (nextRouteState: AppRouteState, replace?: boolean) => void
-  setState: Dispatch<SetStateAction<ManagerWsState>>
-  clearPendingResponseForAgent: (agentId: string) => void
+  clientRef: MutableRefObject<ManagerWsClient | null>;
+  defaultManagerModel: CreateManagerModelPreset;
+  navigateToRoute: (nextRouteState: AppRouteState, replace?: boolean) => void;
 }
 
 export function useManagerActions({
-  wsUrl,
   clientRef,
-  agents,
-  activeAgent,
-  activeAgentId,
-  isActiveManager,
   defaultManagerModel,
   navigateToRoute,
-  setState,
-  clearPendingResponseForAgent,
 }: UseManagerActionsOptions): {
-  isCreateManagerDialogOpen: boolean
-  newManagerName: string
-  newManagerCwd: string
-  newManagerModel: ManagerModelPreset
-  createManagerError: string | null
-  browseError: string | null
-  isCreatingManager: boolean
-  isValidatingDirectory: boolean
-  isPickingDirectory: boolean
-  handleNewManagerNameChange: (value: string) => void
-  handleNewManagerCwdChange: (value: string) => void
-  handleNewManagerModelChange: (value: ManagerModelPreset) => void
-  handleOpenCreateManagerDialog: () => void
-  handleCreateManagerDialogOpenChange: (open: boolean) => void
-  handleBrowseDirectory: () => Promise<void>
-  handleCreateManager: (event: FormEvent<HTMLFormElement>) => Promise<void>
-  managerToDelete: AgentDescriptor | null
-  deleteManagerError: string | null
-  isDeletingManager: boolean
-  handleRequestDeleteManager: (managerId: string) => void
-  handleConfirmDeleteManager: () => Promise<void>
-  handleCloseDeleteManagerDialog: () => void
-  isCompactingManager: boolean
-  handleCompactManager: (customInstructions?: string) => Promise<void>
-  isStoppingAllAgents: boolean
-  handleStopAllAgents: () => Promise<void>
+  isCreateManagerDialogOpen: boolean;
+  newManagerName: string;
+  newManagerCwd: string;
+  newManagerModel: CreateManagerModelPreset;
+  createManagerError: string | null;
+  browseError: string | null;
+  isCreatingManager: boolean;
+  isValidatingDirectory: boolean;
+  isPickingDirectory: boolean;
+  handleNewManagerNameChange: (value: string) => void;
+  handleNewManagerCwdChange: (value: string) => void;
+  handleNewManagerModelChange: (value: CreateManagerModelPreset) => void;
+  handleOpenCreateManagerDialog: () => void;
+  handleCreateManagerDialogOpenChange: (open: boolean) => void;
+  handleBrowseDirectory: () => Promise<void>;
+  handleCreateManager: (event: FormEvent<HTMLFormElement>) => Promise<void>;
+  managerToDelete: AgentDescriptor | null;
+  deleteManagerError: string | null;
+  isDeletingManager: boolean;
+  handleRequestDeleteManager: (managerId: string) => void;
+  handleConfirmDeleteManager: () => Promise<void>;
+  handleCloseDeleteManagerDialog: () => void;
 } {
-  const [isCreateManagerDialogOpen, setIsCreateManagerDialogOpen] = useState(false)
-  const [newManagerName, setNewManagerName] = useState('')
-  const [newManagerCwd, setNewManagerCwd] = useState('')
-  const [newManagerModel, setNewManagerModel] = useState<ManagerModelPreset>(defaultManagerModel)
-  const [createManagerError, setCreateManagerError] = useState<string | null>(null)
-  const [isCreatingManager, setIsCreatingManager] = useState(false)
-  const [isValidatingDirectory, setIsValidatingDirectory] = useState(false)
+  const [isCreateManagerDialogOpen, setIsCreateManagerDialogOpen] = useState(false);
+  const [newManagerName, setNewManagerName] = useState("");
+  const [newManagerCwd, setNewManagerCwd] = useState("");
+  const [newManagerModel, setNewManagerModel] =
+    useState<CreateManagerModelPreset>(defaultManagerModel);
+  const [createManagerError, setCreateManagerError] = useState<string | null>(null);
+  const [isCreatingManager, setIsCreatingManager] = useState(false);
+  const [isValidatingDirectory, setIsValidatingDirectory] = useState(false);
 
-  const [browseError, setBrowseError] = useState<string | null>(null)
-  const [isPickingDirectory, setIsPickingDirectory] = useState(false)
+  const [browseError, setBrowseError] = useState<string | null>(null);
+  const [isPickingDirectory, setIsPickingDirectory] = useState(false);
 
-  const [managerToDelete, setManagerToDelete] = useState<AgentDescriptor | null>(null)
-  const [deleteManagerError, setDeleteManagerError] = useState<string | null>(null)
-  const [isDeletingManager, setIsDeletingManager] = useState(false)
+  const [managerToDelete, setManagerToDelete] = useState<AgentDescriptor | null>(null);
+  const [deleteManagerError, setDeleteManagerError] = useState<string | null>(null);
+  const [isDeletingManager, setIsDeletingManager] = useState(false);
 
-  const [isCompactingManager, setIsCompactingManager] = useState(false)
-  const [isStoppingAllAgents, setIsStoppingAllAgents] = useState(false)
+  const agents = useAtomValue(agentsAtom);
+  const activeAgent = useAtomValue(activeAgentAtom);
 
   const handleNewManagerNameChange = useCallback((value: string) => {
-    setNewManagerName(value)
-  }, [])
+    setNewManagerName(value);
+  }, []);
 
   const handleNewManagerCwdChange = useCallback((value: string) => {
-    setNewManagerCwd(value)
-    setCreateManagerError(null)
-  }, [])
+    setNewManagerCwd(value);
+    setCreateManagerError(null);
+  }, []);
 
-  const handleNewManagerModelChange = useCallback((value: ManagerModelPreset) => {
-    setNewManagerModel(value)
-    setCreateManagerError(null)
-  }, [])
-
-  const handleCompactManager = useCallback(async (customInstructions?: string) => {
-    if (!isActiveManager || !activeAgentId) {
-      return
-    }
-
-    setIsCompactingManager(true)
-
-    try {
-      await requestManagerCompaction(wsUrl, activeAgentId, customInstructions)
-      setState((previous) => ({
-        ...previous,
-        lastError: null,
-      }))
-    } catch (error) {
-      setState((previous) => ({
-        ...previous,
-        lastError: `Failed to compact manager context: ${toErrorMessage(error)}`,
-      }))
-    } finally {
-      setIsCompactingManager(false)
-    }
-  }, [activeAgentId, isActiveManager, setState, wsUrl])
-
-  const handleStopAllAgents = useCallback(async () => {
-    const client = clientRef.current
-    if (!client || activeAgent?.role !== 'manager') {
-      return
-    }
-
-    setIsStoppingAllAgents(true)
-
-    try {
-      await client.stopAllAgents(activeAgent.agentId)
-      clearPendingResponseForAgent(activeAgent.agentId)
-      setState((previous) => ({
-        ...previous,
-        lastError: null,
-      }))
-    } catch (error) {
-      setState((previous) => ({
-        ...previous,
-        lastError: `Failed to stop manager and workers: ${toErrorMessage(error)}`,
-      }))
-    } finally {
-      setIsStoppingAllAgents(false)
-    }
-  }, [activeAgent, clearPendingResponseForAgent, clientRef, setState])
+  const handleNewManagerModelChange = useCallback((value: CreateManagerModelPreset) => {
+    setNewManagerModel(value);
+    setCreateManagerError(null);
+  }, []);
 
   const handleOpenCreateManagerDialog = useCallback(() => {
     const defaultCwd =
-      activeAgent?.cwd ??
-      agents.find((agent) => agent.role === 'manager')?.cwd ??
-      ''
+      activeAgent?.cwd ?? agents.find((agent) => agent.role === "manager")?.cwd ?? "";
 
-    setNewManagerName('')
-    setNewManagerCwd(defaultCwd)
-    setNewManagerModel(defaultManagerModel)
-    setBrowseError(null)
-    setCreateManagerError(null)
-    setIsCreateManagerDialogOpen(true)
-  }, [activeAgent, agents, defaultManagerModel])
+    setNewManagerName("");
+    setNewManagerCwd(defaultCwd);
+    setNewManagerModel(defaultManagerModel);
+    setBrowseError(null);
+    setCreateManagerError(null);
+    setIsCreateManagerDialogOpen(true);
+  }, [activeAgent, agents, defaultManagerModel]);
 
-  const handleCreateManagerDialogOpenChange = useCallback((open: boolean) => {
-    if (!open && isCreatingManager) {
-      return
-    }
+  const handleCreateManagerDialogOpenChange = useCallback(
+    (open: boolean) => {
+      if (!open && isCreatingManager) {
+        return;
+      }
 
-    setIsCreateManagerDialogOpen(open)
-  }, [isCreatingManager])
+      setIsCreateManagerDialogOpen(open);
+    },
+    [isCreatingManager],
+  );
 
   const handleBrowseDirectory = useCallback(async () => {
-    const client = clientRef.current
+    const client = clientRef.current;
     if (!client) {
-      return
+      return;
     }
 
-    setBrowseError(null)
-    setIsPickingDirectory(true)
+    setBrowseError(null);
+    setIsPickingDirectory(true);
 
     try {
-      const pickedPath = await client.pickDirectory(newManagerCwd)
+      const pickedPath = await client.pickDirectory(newManagerCwd);
       if (!pickedPath) {
-        return
+        return;
       }
 
-      setNewManagerCwd(pickedPath)
-      setCreateManagerError(null)
+      setNewManagerCwd(pickedPath);
+      setCreateManagerError(null);
     } catch (error) {
-      setBrowseError(toErrorMessage(error))
+      setBrowseError(toErrorMessage(error));
     } finally {
-      setIsPickingDirectory(false)
+      setIsPickingDirectory(false);
     }
-  }, [clientRef, newManagerCwd])
+  }, [clientRef, newManagerCwd]);
 
-  const handleCreateManager = useCallback(async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault()
+  const handleCreateManager = useCallback(
+    async (event: FormEvent<HTMLFormElement>) => {
+      event.preventDefault();
 
-    const client = clientRef.current
-    if (!client) {
-      return
-    }
-
-    const name = newManagerName.trim()
-    const cwd = newManagerCwd.trim()
-
-    if (!name) {
-      setCreateManagerError('Manager name is required.')
-      return
-    }
-
-    if (!cwd) {
-      setCreateManagerError('Manager working directory is required.')
-      return
-    }
-
-    setCreateManagerError(null)
-    setIsCreatingManager(true)
-
-    try {
-      setIsValidatingDirectory(true)
-      const validation = await client.validateDirectory(cwd)
-      setIsValidatingDirectory(false)
-
-      if (!validation.valid) {
-        setCreateManagerError(validation.message ?? 'Directory is not valid.')
-        return
+      const client = clientRef.current;
+      if (!client) {
+        return;
       }
 
-      const manager = await client.createManager({
-        name,
-        cwd: validation.path || cwd,
-        model: newManagerModel,
-      })
+      const name = newManagerName.trim();
+      const cwd = newManagerCwd.trim();
 
-      navigateToRoute({ view: 'chat', agentId: manager.agentId })
-      client.subscribeToAgent(manager.agentId)
+      if (!name) {
+        setCreateManagerError("Manager name is required.");
+        return;
+      }
 
-      setIsCreateManagerDialogOpen(false)
-      setNewManagerName('')
-      setNewManagerCwd('')
-      setNewManagerModel(defaultManagerModel)
-      setBrowseError(null)
-      setCreateManagerError(null)
-    } catch (error) {
-      setCreateManagerError(toErrorMessage(error))
-    } finally {
-      setIsValidatingDirectory(false)
-      setIsCreatingManager(false)
-    }
-  }, [
-    clientRef,
-    defaultManagerModel,
-    navigateToRoute,
-    newManagerCwd,
-    newManagerModel,
-    newManagerName,
-  ])
+      if (!cwd) {
+        setCreateManagerError("Manager working directory is required.");
+        return;
+      }
 
-  const handleRequestDeleteManager = useCallback((managerId: string) => {
-    const manager = agents.find(
-      (agent) => agent.agentId === managerId && agent.role === 'manager',
-    )
-    if (!manager) {
-      return
-    }
+      setCreateManagerError(null);
+      setIsCreatingManager(true);
 
-    setDeleteManagerError(null)
-    setManagerToDelete(manager)
-  }, [agents])
+      try {
+        setIsValidatingDirectory(true);
+        const validation = await client.validateDirectory(cwd);
+        setIsValidatingDirectory(false);
+
+        if (!validation.valid) {
+          setCreateManagerError(validation.message ?? "Directory is not valid.");
+          return;
+        }
+
+        const manager = await client.createManager({
+          name,
+          cwd: validation.path || cwd,
+          model: newManagerModel,
+        });
+
+        navigateToRoute({ view: "chat", agentId: manager.agentId });
+        client.subscribeToAgent(manager.agentId);
+
+        setIsCreateManagerDialogOpen(false);
+        setNewManagerName("");
+        setNewManagerCwd("");
+        setNewManagerModel(defaultManagerModel);
+        setBrowseError(null);
+        setCreateManagerError(null);
+      } catch (error) {
+        setCreateManagerError(toErrorMessage(error));
+      } finally {
+        setIsValidatingDirectory(false);
+        setIsCreatingManager(false);
+      }
+    },
+    [
+      clientRef,
+      defaultManagerModel,
+      navigateToRoute,
+      newManagerCwd,
+      newManagerModel,
+      newManagerName,
+    ],
+  );
+
+  const handleRequestDeleteManager = useCallback(
+    (managerId: string) => {
+      const manager = agents.find(
+        (agent) => agent.agentId === managerId && agent.role === "manager",
+      );
+      if (!manager) {
+        return;
+      }
+
+      setDeleteManagerError(null);
+      setManagerToDelete(manager);
+    },
+    [agents],
+  );
 
   const handleConfirmDeleteManager = useCallback(async () => {
-    const manager = managerToDelete
-    const client = clientRef.current
+    const manager = managerToDelete;
+    const client = clientRef.current;
     if (!manager || !client) {
-      return
+      return;
     }
 
-    setDeleteManagerError(null)
-    setIsDeletingManager(true)
+    setDeleteManagerError(null);
+    setIsDeletingManager(true);
 
     try {
-      await client.deleteManager(manager.agentId)
+      await client.deleteManager(manager.agentId);
 
-      setManagerToDelete(null)
-      setDeleteManagerError(null)
+      setManagerToDelete(null);
+      setDeleteManagerError(null);
     } catch (error) {
-      setDeleteManagerError(toErrorMessage(error))
+      setDeleteManagerError(toErrorMessage(error));
     } finally {
-      setIsDeletingManager(false)
+      setIsDeletingManager(false);
     }
-  }, [clientRef, managerToDelete])
+  }, [clientRef, managerToDelete]);
 
   const handleCloseDeleteManagerDialog = useCallback(() => {
     if (isDeletingManager) {
-      return
+      return;
     }
 
-    setManagerToDelete(null)
-    setDeleteManagerError(null)
-  }, [isDeletingManager])
+    setManagerToDelete(null);
+    setDeleteManagerError(null);
+  }, [isDeletingManager]);
 
   return {
     isCreateManagerDialogOpen,
@@ -323,56 +255,13 @@ export function useManagerActions({
     handleRequestDeleteManager,
     handleConfirmDeleteManager,
     handleCloseDeleteManagerDialog,
-    isCompactingManager,
-    handleCompactManager,
-    isStoppingAllAgents,
-    handleStopAllAgents,
-  }
-}
-
-async function requestManagerCompaction(
-  wsUrl: string,
-  agentId: string,
-  customInstructions?: string,
-): Promise<void> {
-  const endpoint = resolveApiEndpoint(
-    wsUrl,
-    `/api/agents/${encodeURIComponent(agentId)}/compact`,
-  )
-
-  const response = await fetch(endpoint, {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-    },
-    body: JSON.stringify(
-      customInstructions && customInstructions.trim().length > 0
-        ? { customInstructions: customInstructions.trim() }
-        : {},
-    ),
-  })
-
-  if (response.ok) {
-    return
-  }
-
-  let errorMessage: string | undefined
-  try {
-    const payload = (await response.json()) as { error?: unknown }
-    if (typeof payload.error === 'string' && payload.error.trim().length > 0) {
-      errorMessage = payload.error.trim()
-    }
-  } catch {
-    // Ignore JSON parsing errors and fall back to status-based error text.
-  }
-
-  throw new Error(errorMessage ?? `Compaction request failed with status ${response.status}`)
+  };
 }
 
 function toErrorMessage(error: unknown): string {
   if (error instanceof Error) {
-    return error.message
+    return error.message;
   }
 
-  return 'An unexpected error occurred.'
+  return "An unexpected error occurred.";
 }

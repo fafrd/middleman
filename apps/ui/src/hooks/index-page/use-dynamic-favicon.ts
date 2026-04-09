@@ -1,24 +1,14 @@
-import { useEffect, useMemo } from 'react'
-import { resolveManagerFaviconEmoji, setDocumentFavicon } from '@/lib/favicon'
-import type { AgentContextUsage, AgentDescriptor, AgentStatus } from '@middleman/protocol'
+import { useEffect } from "react";
+import { useAtomValue } from "jotai";
+import { resolveWorkspaceFaviconEmoji, setDocumentFavicon } from "@/lib/favicon";
+import { agentsAtom, statusesAtom } from "@/lib/ws-state";
 
-interface UseDynamicFaviconOptions {
-  managerId: string | null
-  agents: AgentDescriptor[]
-  statuses: Record<string, { status: AgentStatus; pendingCount: number; contextUsage?: AgentContextUsage }>
-}
-
-export function useDynamicFavicon({
-  managerId,
-  agents,
-  statuses,
-}: UseDynamicFaviconOptions): void {
-  const faviconEmoji = useMemo(
-    () => resolveManagerFaviconEmoji(managerId, agents, statuses),
-    [agents, managerId, statuses],
-  )
+export function useDynamicFavicon(): void {
+  const agents = useAtomValue(agentsAtom);
+  const statuses = useAtomValue(statusesAtom);
+  const faviconEmoji = resolveWorkspaceFaviconEmoji(agents, statuses);
 
   useEffect(() => {
-    setDocumentFavicon(faviconEmoji)
-  }, [faviconEmoji])
+    setDocumentFavicon(faviconEmoji);
+  }, [faviconEmoji]);
 }

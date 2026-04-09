@@ -1,30 +1,51 @@
-import { mkdir, mkdtemp, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
-import { describe, expect, it } from 'vitest'
-import { loadArchetypePromptRegistry } from '../swarm/archetypes/archetype-prompt-registry.js'
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { describe, expect, it } from "vitest";
+import { loadArchetypePromptRegistry } from "../swarm/archetypes/archetype-prompt-registry.js";
 
-describe('loadArchetypePromptRegistry', () => {
-  it('loads built-in manager and merger prompts', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'swarm-archetype-prompt-test-'))
-    const repoOverridesDir = join(root, '.swarm', 'archetypes')
+const BUILT_IN_ARCHETYPES_DIR = resolve(
+  dirname(fileURLToPath(import.meta.url)),
+  "..",
+  "swarm",
+  "archetypes",
+  "builtins",
+);
 
-    const registry = await loadArchetypePromptRegistry({ repoOverridesDir })
+describe("loadArchetypePromptRegistry", () => {
+  it("loads built-in manager and merger prompts", async () => {
+    const root = await mkdtemp(join(tmpdir(), "swarm-archetype-prompt-test-"));
+    const projectOverridesDir = join(root, ".swarm", "archetypes");
 
-    expect(registry.resolvePrompt('manager')).toContain('You are the manager agent in a multi-agent swarm.')
-    expect(registry.resolvePrompt('merger')).toContain('You are the merger agent in a multi-agent swarm.')
-  })
+    const registry = await loadArchetypePromptRegistry({
+      builtInDir: BUILT_IN_ARCHETYPES_DIR,
+      projectOverridesDir,
+    });
 
-  it('applies repo markdown overrides with precedence by archetype id', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'swarm-archetype-prompt-test-'))
-    const repoOverridesDir = join(root, '.swarm', 'archetypes')
-    await mkdir(repoOverridesDir, { recursive: true })
+    expect(registry.resolvePrompt("manager")).toContain(
+      "You are the manager agent in a multi-agent swarm.",
+    );
+    expect(registry.resolvePrompt("merger")).toContain(
+      "You are the merger agent in a multi-agent swarm.",
+    );
+  });
 
-    await writeFile(join(repoOverridesDir, 'manager.md'), 'repo manager override\n', 'utf8')
+  it("applies repo markdown overrides with precedence by archetype id", async () => {
+    const root = await mkdtemp(join(tmpdir(), "swarm-archetype-prompt-test-"));
+    const projectOverridesDir = join(root, ".swarm", "archetypes");
+    await mkdir(projectOverridesDir, { recursive: true });
 
-    const registry = await loadArchetypePromptRegistry({ repoOverridesDir })
+    await writeFile(join(projectOverridesDir, "manager.md"), "repo manager override\n", "utf8");
 
-    expect(registry.resolvePrompt('manager')).toBe('repo manager override')
-    expect(registry.resolvePrompt('merger')).toContain('You are the merger agent in a multi-agent swarm.')
-  })
-})
+    const registry = await loadArchetypePromptRegistry({
+      builtInDir: BUILT_IN_ARCHETYPES_DIR,
+      projectOverridesDir,
+    });
+
+    expect(registry.resolvePrompt("manager")).toBe("repo manager override");
+    expect(registry.resolvePrompt("merger")).toContain(
+      "You are the merger agent in a multi-agent swarm.",
+    );
+  });
+});
