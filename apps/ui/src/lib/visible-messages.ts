@@ -74,6 +74,13 @@ function isManagerScopedTranscriptEntry(
   return isUserTranscriptEntry(entry) && scopedAgentIds.has(entry.agentId);
 }
 
+function isManagerScopedAgentToolCall(
+  entry: ConversationEntry,
+  scopedAgentIds: ReadonlySet<string>,
+): entry is Extract<ConversationEntry, { type: "agent_tool_call" }> {
+  return entry.type === "agent_tool_call" && scopedAgentIds.has(entry.actorAgentId);
+}
+
 export interface VisibleMessagesInput {
   messages: ConversationEntry[];
   activityMessages: ConversationEntry[];
@@ -99,10 +106,14 @@ export function deriveVisibleMessages({
       ? buildManagerScopedAgentIds(agents, activeAgentId)
       : null;
   const managerScopedActivityMessages =
-    activeAgentRole === "manager" && activeAgentId && showInternalChatter
+    activeAgentRole === "manager" && activeAgentId && managerScopedAgentIds && showInternalChatter
       ? activityMessages.filter(
-          (entry): entry is Extract<ConversationEntry, { type: "agent_message" }> =>
-            entry.type === "agent_message" && isManagerInvolvedAgentMessage(entry, activeAgentId),
+          (
+            entry,
+          ): entry is Extract<ConversationEntry, { type: "agent_message" | "agent_tool_call" }> =>
+            (entry.type === "agent_message" &&
+              isManagerInvolvedAgentMessage(entry, activeAgentId)) ||
+            isManagerScopedAgentToolCall(entry, managerScopedAgentIds),
         )
       : [];
 

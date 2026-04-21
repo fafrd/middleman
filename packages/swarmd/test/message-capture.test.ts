@@ -5,6 +5,7 @@ import {
   MessageCapture,
   MessageRepo,
   MessageStore,
+  PiEventMapper,
   SessionRepo,
   messageCompletedEvent,
   messageDeltaEvent,
@@ -231,6 +232,91 @@ describe("MessageCapture", () => {
           input: { query: "swarmd" },
           result: { hits: 1 },
         },
+      }),
+    ]);
+  });
+
+  it("does not persist Pi thinking/toolcall deltas as assistant text", () => {
+    vi.useFakeTimers();
+    const context = createTestContext();
+    contexts.push(context);
+
+    vi.setSystemTime(new Date("2026-03-13T19:00:00.000Z"));
+    const mapper = new PiEventMapper({
+      sessionId: context.session.id,
+      threadId: null,
+    });
+    const assistantMessage = {
+      role: "assistant" as const,
+      content: [{ type: "text" as const, text: "Done" }],
+      provider: "anthropic",
+      model: "claude-opus-4-7",
+      api: "openai-responses",
+      usage: {
+        input: 1,
+        output: 1,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 2,
+        cost: {
+          input: 0,
+          output: 0,
+          cacheRead: 0,
+          cacheWrite: 0,
+          total: 0,
+        },
+      },
+      stopReason: "stop" as const,
+      timestamp: Date.now(),
+    };
+
+    const normalized = [
+      ...mapper.mapEvent({ type: "message_start", message: assistantMessage }),
+      ...mapper.mapEvent({
+        type: "message_update",
+        message: assistantMessage,
+        assistantMessageEvent: {
+          type: "thinking_delta",
+          contentIndex: 0,
+          delta: "internal reasoning",
+          partial: assistantMessage,
+        },
+      }),
+      ...mapper.mapEvent({
+        type: "message_update",
+        message: assistantMessage,
+        assistantMessageEvent: {
+          type: "toolcall_delta",
+          contentIndex: 0,
+          delta: '{"command":"pwd"}',
+          partial: assistantMessage,
+        },
+      }),
+      ...mapper.mapEvent({
+        type: "message_update",
+        message: assistantMessage,
+        assistantMessageEvent: {
+          type: "text_delta",
+          contentIndex: 0,
+          delta: "Done",
+          partial: assistantMessage,
+        },
+      }),
+      ...mapper.mapEvent({ type: "message_end", message: assistantMessage }),
+    ];
+
+    for (const event of normalized) {
+      publish(context.eventBus, event);
+    }
+
+    expect(context.messageStore.list(context.session.id)).toEqual([
+      expect.objectContaining({
+        sessionId: context.session.id,
+        source: "assistant",
+        role: "assistant",
+        content: expect.objectContaining({
+          text: "Done",
+        }),
       }),
     ]);
   });

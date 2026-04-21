@@ -274,6 +274,68 @@ describe("SwarmManager core event projection", () => {
     expect(harness.appendedMessages).toHaveLength(3);
   });
 
+  it("also emits worker tool activity to the owning manager subscription", () => {
+    const managerDescriptor = makeDescriptor({
+      agentId: "manager-1",
+      managerId: "manager-1",
+      role: "manager",
+    });
+    const workerDescriptor = makeDescriptor({
+      agentId: "worker-1",
+      managerId: "manager-1",
+      role: "worker",
+    });
+    const harness = createManagerHarness(workerDescriptor);
+
+    (harness.manager.getAgent as ReturnType<typeof vi.fn>).mockImplementation((agentId: string) =>
+      [managerDescriptor, workerDescriptor].find((descriptor) => descriptor.agentId === agentId),
+    );
+    (harness.manager.listAgents as ReturnType<typeof vi.fn>).mockImplementation(() => [
+      managerDescriptor,
+      workerDescriptor,
+    ]);
+
+    (harness.manager as any).handleCoreEvent({
+      id: "evt-manager-tool-1",
+      sessionId: "worker-1",
+      threadId: null,
+      source: "worker",
+      type: "tool.completed",
+      timestamp: "2026-03-15T00:00:06.000Z",
+      payload: {
+        toolName: "bash",
+        toolCallId: "tool-1",
+        ok: true,
+        result: { stdout: "/tmp/project" },
+      },
+    });
+
+    expect(harness.toolCalls).toEqual([
+      {
+        type: "agent_tool_call",
+        agentId: "worker-1",
+        actorAgentId: "worker-1",
+        timestamp: "2026-03-15T00:00:06.000Z",
+        kind: "tool_execution_end",
+        toolName: "bash",
+        toolCallId: "tool-1",
+        text: '{"stdout":"/tmp/project"}',
+        isError: false,
+      },
+      {
+        type: "agent_tool_call",
+        agentId: "manager-1",
+        actorAgentId: "worker-1",
+        timestamp: "2026-03-15T00:00:06.000Z",
+        kind: "tool_execution_end",
+        toolName: "bash",
+        toolCallId: "tool-1",
+        text: '{"stdout":"/tmp/project"}',
+        isError: false,
+      },
+    ]);
+  });
+
   it("samples rapid tool progress updates without persisting them", () => {
     const descriptor = makeDescriptor({
       agentId: "worker-1",

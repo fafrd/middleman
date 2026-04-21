@@ -173,7 +173,7 @@ describe("PiEventMapper", () => {
     });
   });
 
-  it("ignores message_update events that do not contain deltas", () => {
+  it("ignores thinking and toolcall message_update deltas when capturing assistant text", () => {
     const assistantMessage = {
       role: "assistant" as const,
       content: [],
@@ -205,6 +205,30 @@ describe("PiEventMapper", () => {
         assistantMessageEvent: {
           type: "text_start",
           contentIndex: 0,
+          partial: assistantMessage,
+        },
+      }),
+    ).toBeNull();
+    expect(
+      extractPiMessageDelta({
+        type: "message_update",
+        message: assistantMessage,
+        assistantMessageEvent: {
+          type: "thinking_delta",
+          contentIndex: 0,
+          delta: "internal reasoning",
+          partial: assistantMessage,
+        },
+      }),
+    ).toBeNull();
+    expect(
+      extractPiMessageDelta({
+        type: "message_update",
+        message: assistantMessage,
+        assistantMessageEvent: {
+          type: "toolcall_delta",
+          contentIndex: 0,
+          delta: '{"command":"pwd"}',
           partial: assistantMessage,
         },
       }),

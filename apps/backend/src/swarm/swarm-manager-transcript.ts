@@ -41,8 +41,11 @@ interface VisibleSessionPageOptions {
 }
 
 interface VisibleSessionEntriesResult {
-  entries: Array<ConversationMessageEvent | ConversationLogEvent | AgentMessageEvent>;
+  entries: Array<
+    ConversationMessageEvent | ConversationLogEvent | AgentMessageEvent | AgentToolCallEvent
+  >;
   hasPersistedRuntimeError: boolean;
+  seenMessageIds: Set<string>;
 }
 
 export class SwarmTranscriptService {
@@ -62,7 +65,9 @@ export class SwarmTranscriptService {
   getVisibleTranscript(
     agentId?: string,
     options?: { limit?: number },
-  ): Array<ConversationMessageEvent | ConversationLogEvent | AgentMessageEvent> {
+  ): Array<
+    ConversationMessageEvent | ConversationLogEvent | AgentMessageEvent | AgentToolCallEvent
+  > {
     return this.getVisibleTranscriptPage(agentId, { limit: options?.limit }).entries;
   }
 
@@ -70,7 +75,7 @@ export class SwarmTranscriptService {
     agentId: string | undefined,
     options: { before?: string; limit?: number },
   ): ConversationHistoryPageResult<
-    ConversationMessageEvent | ConversationLogEvent | AgentMessageEvent
+    ConversationMessageEvent | ConversationLogEvent | AgentMessageEvent | AgentToolCallEvent
   > {
     const resolvedAgentId = agentId?.trim() || this.options.resolvePreferredManagerId();
     if (!resolvedAgentId) {
@@ -97,12 +102,19 @@ export class SwarmTranscriptService {
             includeSendMessageToolResults: true,
           }
         : {};
-    const { entries: visibleEntries, hasPersistedRuntimeError } =
-      this.collectVisibleEntriesForSession(core, resolvedAgentId, projectionOptions, options);
+    const {
+      entries: visibleEntries,
+      hasPersistedRuntimeError,
+      seenMessageIds,
+    } = this.collectVisibleEntriesForSession(core, resolvedAgentId, projectionOptions, options);
 
     if (resolvedDescriptor?.role === "manager") {
       visibleEntries.push(
-        ...this.collectManagerScopedVisibleAgentMessages(core, resolvedDescriptor.agentId),
+        ...this.collectManagerScopedVisibleActivityEntries(
+          core,
+          resolvedDescriptor.agentId,
+          seenMessageIds,
+        ),
       );
     }
 
@@ -130,21 +142,29 @@ export class SwarmTranscriptService {
     return this.pageEntries(visibleEntries, options);
   }
 
-  private collectManagerScopedAgentMessages(
+  private collectManagerScopedActivityEntries(
     core: SwarmdCoreHandle,
     managerId: string,
-    seenMessageIds: ReadonlySet<string>,
-  ): AgentMessageEvent[] {
-    const entries: AgentMessageEvent[] = [];
+    seenMessageIds?: ReadonlySet<string>,
+  ): Array<AgentMessageEvent | AgentToolCallEvent> {
+    const entries: Array<AgentMessageEvent | AgentToolCallEvent> = [];
 
     for (const session of core.sessionService.list()) {
       for (const message of core.messageStore.list(session.id)) {
-        if (seenMessageIds.has(message.id)) {
+        if (seenMessageIds?.has(message.id)) {
           continue;
         }
 
         const projected = projectStoredMessage(message);
-        if (!isManagerScopedAgentMessage(projected, managerId)) {
+        if (isManagerScopedAgentMessage(projected, managerId)) {
+          entries.push({
+            ...projected,
+            agentId: managerId,
+          });
+          continue;
+        }
+
+        if (!isManagerScopedAgentToolCall(projected, managerId, this.options.getAgent)) {
           continue;
         }
 
@@ -197,7 +217,11 @@ export class SwarmTranscriptService {
 
     if (resolvedDescriptor?.role === "manager") {
       entries.push(
-        ...this.collectManagerScopedAgentMessages(core, resolvedDescriptor.agentId, seenMessageIds),
+        ...this.collectManagerScopedActivityEntries(
+          core,
+          resolvedDescriptor.agentId,
+          seenMessageIds,
+        ),
       );
     }
 
@@ -226,25 +250,12 @@ export class SwarmTranscriptService {
     return entries;
   }
 
-  private collectManagerScopedVisibleAgentMessages(
+  private collectManagerScopedVisibleActivityEntries(
     core: SwarmdCoreHandle,
     managerId: string,
-  ): AgentMessageEvent[] {
-    const entries: AgentMessageEvent[] = [];
-
-    for (const message of core.messageStore.listManagerScopedHiddenMessages(managerId)) {
-      const projected = projectStoredMessage(message);
-      if (!isManagerScopedAgentMessage(projected, managerId)) {
-        continue;
-      }
-
-      entries.push({
-        ...projected,
-        agentId: managerId,
-      });
-    }
-
-    return entries;
+    seenMessageIds: ReadonlySet<string>,
+  ): Array<AgentMessageEvent | AgentToolCallEvent> {
+    return this.collectManagerScopedActivityEntries(core, managerId, seenMessageIds);
   }
 
   private listVisibleMessagesForSession(
@@ -269,7 +280,10 @@ export class SwarmTranscriptService {
     projectionOptions: ProjectStoredMessageOptions,
     options: VisibleSessionPageOptions,
   ): VisibleSessionEntriesResult {
-    const entries: Array<ConversationMessageEvent | ConversationLogEvent | AgentMessageEvent> = [];
+    const entries: Array<
+      ConversationMessageEvent | ConversationLogEvent | AgentMessageEvent | AgentToolCallEvent
+    > = [];
+    const seenMessageIds = new Set<string>();
     const batchLimit = options.limit !== undefined ? options.limit + 1 : undefined;
     let beforeOrderKey = resolveBeforeOrderKeyForSession(options.before, sessionId);
     let hasPersistedRuntimeError = false;
@@ -291,6 +305,7 @@ export class SwarmTranscriptService {
 
       beforeOrderKey = messages[0]?.orderKey;
       for (const message of messages) {
+        seenMessageIds.add(message.id);
         const projected = projectStoredMessage(message, projectionOptions);
         if (!isVisibleTranscriptEntry(projected)) {
           continue;
@@ -311,6 +326,7 @@ export class SwarmTranscriptService {
     return {
       entries: batchLimit ? entries.slice(-batchLimit) : entries,
       hasPersistedRuntimeError,
+      seenMessageIds,
     };
   }
 
@@ -404,12 +420,34 @@ function isManagerScopedAgentMessage(
   return entry.fromAgentId === managerId || entry.toAgentId === managerId;
 }
 
+function isManagerScopedAgentToolCall(
+  entry: ConversationEntryEvent | null,
+  managerId: string,
+  getAgent: (agentId: string) => AgentDescriptor | undefined,
+): entry is AgentToolCallEvent {
+  if (entry?.type !== "agent_tool_call") {
+    return false;
+  }
+
+  if (entry.actorAgentId === managerId) {
+    return true;
+  }
+
+  const actor = getAgent(entry.actorAgentId);
+  return actor?.role === "worker" && actor.managerId === managerId;
+}
+
 function isVisibleTranscriptEntry(
   entry: ConversationEntryEvent | null,
-): entry is ConversationMessageEvent | ConversationLogEvent | AgentMessageEvent {
+): entry is
+  | ConversationMessageEvent
+  | ConversationLogEvent
+  | AgentMessageEvent
+  | AgentToolCallEvent {
   return (
     entry?.type === "conversation_message" ||
     entry?.type === "agent_message" ||
+    entry?.type === "agent_tool_call" ||
     (entry?.type === "conversation_log" && entry.isError === true)
   );
 }

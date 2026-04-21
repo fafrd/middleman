@@ -963,6 +963,119 @@ describe("SwarmTranscriptService", () => {
     ]);
   });
 
+  it("includes subordinate worker tool activity in manager-visible transcript history", () => {
+    const manager = makeDescriptor({
+      agentId: "manager-1",
+      managerId: "manager-1",
+      role: "manager",
+    });
+    const worker = makeDescriptor({
+      agentId: "worker-1",
+      managerId: "manager-1",
+      role: "worker",
+    });
+    const managerSession = makeSession({
+      id: "manager-1",
+      backend: "codex",
+      status: "idle",
+    });
+    const workerSession = makeSession({
+      id: "worker-1",
+      backend: "codex",
+      status: "idle",
+    });
+    const messagesBySession = new Map<string, SwarmdMessage[]>([
+      [
+        managerSession.id,
+        [
+          makeMessage({
+            id: "manager-user",
+            sessionId: "manager-1",
+            source: "user",
+            kind: "text",
+            role: "user",
+            createdAt: "2026-03-15T00:00:01.000Z",
+            content: { text: "hello" },
+            metadata: {
+              middleman: {
+                renderAs: "conversation_message",
+                agentId: "manager-1",
+                source: "user_input",
+              },
+            },
+          }),
+        ],
+      ],
+      [
+        workerSession.id,
+        [
+          makeMessage({
+            id: "worker-tool-1",
+            sessionId: "worker-1",
+            source: "system",
+            kind: "middleman_event",
+            role: "system",
+            createdAt: "2026-03-15T00:00:02.000Z",
+            content: { text: '{"command":"pwd"}' },
+            metadata: {
+              middleman: {
+                renderAs: "agent_tool_call",
+                event: {
+                  type: "agent_tool_call",
+                  agentId: "worker-1",
+                  actorAgentId: "worker-1",
+                  timestamp: "2026-03-15T00:00:02.000Z",
+                  kind: "tool_execution_start",
+                  toolName: "bash",
+                  toolCallId: "tool-1",
+                },
+              },
+            },
+          }),
+        ],
+      ],
+    ]);
+
+    const core = createTranscriptCore({
+      sessions: [managerSession, workerSession],
+      messagesBySession,
+    });
+    const transcript = new SwarmTranscriptService({
+      getCore: () => core,
+      getAgent: (agentId) => [manager, worker].find((descriptor) => descriptor.agentId === agentId),
+      resolvePreferredManagerId: () => "manager-1",
+      resolveRuntimeErrorMessage: () => "ignored",
+    });
+
+    expect(transcript.projectConversationEntries("manager-1")).toEqual([
+      expect.objectContaining({
+        type: "conversation_message",
+        text: "hello",
+      }),
+      expect.objectContaining({
+        type: "agent_tool_call",
+        agentId: "manager-1",
+        actorAgentId: "worker-1",
+        toolName: "bash",
+        text: '{"command":"pwd"}',
+      }),
+    ]);
+
+    expect(transcript.getVisibleTranscript("manager-1")).toEqual([
+      expect.objectContaining({
+        type: "conversation_message",
+        text: "hello",
+      }),
+      expect.objectContaining({
+        type: "agent_tool_call",
+        agentId: "manager-1",
+        actorAgentId: "worker-1",
+        toolName: "bash",
+        text: '{"command":"pwd"}',
+      }),
+    ]);
+  });
+
   it("limits transcript results to the most recent entries and handles missing sessions", () => {
     const worker = makeDescriptor({
       agentId: "worker-1",
@@ -1068,12 +1181,34 @@ describe("SwarmTranscriptService", () => {
         },
       }),
       makeMessage({
+        id: "worker-tool-1",
+        sessionId: "worker-1",
+        source: "system",
+        kind: "middleman_event",
+        role: "system",
+        createdAt: "2026-03-15T00:00:02.000Z",
+        content: { text: '{"path":"README.md"}' },
+        metadata: {
+          middleman: {
+            renderAs: "agent_tool_call",
+            event: {
+              agentId: "worker-1",
+              actorAgentId: "worker-1",
+              timestamp: "2026-03-15T00:00:02.000Z",
+              kind: "tool_execution_start",
+              toolName: "read",
+              toolCallId: "tool-1",
+            },
+          },
+        },
+      }),
+      makeMessage({
         id: "worker-to-manager",
         sessionId: "worker-1",
         source: "tool",
         kind: "tool_result",
         role: "tool",
-        createdAt: "2026-03-15T00:00:02.000Z",
+        createdAt: "2026-03-15T00:00:02.500Z",
         content: {
           toolName: "send_message_to_agent",
           input: {
@@ -1132,34 +1267,56 @@ describe("SwarmTranscriptService", () => {
       resolveRuntimeErrorMessage: () => "worker exploded",
     });
 
-    expect(transcript.getVisibleTranscript("worker-1")).toEqual([
-      expect.objectContaining({
-        type: "agent_message",
-        agentId: "worker-1",
-        fromAgentId: "manager-1",
-        toAgentId: "worker-1",
-        text: "Investigate the failing deploy",
-      }),
-      expect.objectContaining({
-        type: "agent_message",
-        agentId: "worker-1",
-        fromAgentId: "worker-1",
-        toAgentId: "manager-1",
-        text: "I found the broken migration and patched it.",
-      }),
-      expect.objectContaining({
-        type: "conversation_message",
-        agentId: "worker-1",
-        role: "assistant",
-        text: "I also added coverage for the failure case.",
-      }),
-      expect.objectContaining({
-        type: "conversation_log",
-        agentId: "worker-1",
-        text: "worker exploded",
-        isError: true,
-      }),
-    ]);
+    const visibleTranscript = transcript.getVisibleTranscript("worker-1");
+
+    expect(
+      visibleTranscript.some(
+        (entry) =>
+          entry.type === "agent_message" &&
+          entry.agentId === "worker-1" &&
+          entry.fromAgentId === "manager-1" &&
+          entry.toAgentId === "worker-1" &&
+          entry.text === "Investigate the failing deploy",
+      ),
+    ).toBe(true);
+    expect(
+      visibleTranscript.some(
+        (entry) =>
+          entry.type === "agent_tool_call" &&
+          entry.agentId === "worker-1" &&
+          entry.actorAgentId === "worker-1" &&
+          entry.toolName === "read" &&
+          entry.text === '{"path":"README.md"}',
+      ),
+    ).toBe(true);
+    expect(
+      visibleTranscript.some(
+        (entry) =>
+          entry.type === "agent_message" &&
+          entry.agentId === "worker-1" &&
+          entry.fromAgentId === "worker-1" &&
+          entry.toAgentId === "manager-1" &&
+          entry.text === "I found the broken migration and patched it.",
+      ),
+    ).toBe(true);
+    expect(
+      visibleTranscript.some(
+        (entry) =>
+          entry.type === "conversation_message" &&
+          entry.agentId === "worker-1" &&
+          entry.role === "assistant" &&
+          entry.text === "I also added coverage for the failure case.",
+      ),
+    ).toBe(true);
+    expect(
+      visibleTranscript.some(
+        (entry) =>
+          entry.type === "conversation_log" &&
+          entry.agentId === "worker-1" &&
+          entry.text === "worker exploded" &&
+          entry.isError === true,
+      ),
+    ).toBe(true);
   });
 
   it("pages visible transcript entries without stopping on malformed visible candidates", () => {

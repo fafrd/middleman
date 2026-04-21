@@ -183,6 +183,28 @@ describe("MessageStore", () => {
       },
       createdAt: "2026-03-13T00:04:00.000Z",
     });
+    const toolCallEvent = messageStore.append(session.id, {
+      source: "system",
+      kind: "middleman_event",
+      role: "system",
+      content: {
+        text: '{"command":"pwd"}',
+      },
+      metadata: {
+        middleman: {
+          renderAs: "agent_tool_call",
+          event: {
+            agentId: session.id,
+            actorAgentId: session.id,
+            timestamp: "2026-03-13T00:04:30.000Z",
+            kind: "tool_execution_start",
+            toolName: "bash",
+            toolCallId: "tool-1",
+          },
+        },
+      },
+      createdAt: "2026-03-13T00:04:30.000Z",
+    });
     messageStore.append(session.id, {
       source: "tool",
       kind: "tool_result",
@@ -195,14 +217,20 @@ describe("MessageStore", () => {
 
     expect(
       messageStore.listVisibleTranscriptMessages(session.id).map((message) => message.id),
-    ).toEqual([userMessage.id, assistantMessage.id, speakToUserResult.id]);
+    ).toEqual([userMessage.id, assistantMessage.id, speakToUserResult.id, toolCallEvent.id]);
     expect(
       messageStore
         .listVisibleTranscriptMessages(session.id, {
           includeSendMessageToolResults: true,
         })
         .map((message) => message.id),
-    ).toEqual([userMessage.id, assistantMessage.id, speakToUserResult.id, sendMessageResult.id]);
+    ).toEqual([
+      userMessage.id,
+      assistantMessage.id,
+      speakToUserResult.id,
+      sendMessageResult.id,
+      toolCallEvent.id,
+    ]);
     expect(
       messageStore
         .listVisibleTranscriptMessages(session.id, {
@@ -210,7 +238,7 @@ describe("MessageStore", () => {
           limit: 2,
         })
         .map((message) => message.id),
-    ).toEqual([speakToUserResult.id, sendMessageResult.id]);
+    ).toEqual([sendMessageResult.id, toolCallEvent.id]);
     expect(
       messageStore
         .listVisibleTranscriptMessages(session.id, {

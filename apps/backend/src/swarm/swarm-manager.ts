@@ -283,7 +283,9 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   getVisibleTranscript(
     agentId?: string,
     options?: { limit?: number },
-  ): Array<ConversationMessageEvent | ConversationLogEvent | AgentMessageEvent> {
+  ): Array<
+    ConversationMessageEvent | ConversationLogEvent | AgentMessageEvent | AgentToolCallEvent
+  > {
     return this.transcript.getVisibleTranscript(agentId, options);
   }
 
@@ -291,7 +293,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     agentId: string | undefined,
     options: { before?: string; limit?: number },
   ): ConversationHistoryPageResult<
-    ConversationMessageEvent | ConversationLogEvent | AgentMessageEvent
+    ConversationMessageEvent | ConversationLogEvent | AgentMessageEvent | AgentToolCallEvent
   > {
     return this.transcript.getVisibleTranscriptPage(agentId, options);
   }
@@ -987,6 +989,10 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         this.resetToolProgressBroadcastState(toolStartedEvent);
         this.persistAgentToolCall(toolStartedEvent);
         this.emitAgentToolCall(toolStartedEvent);
+        if (descriptor.role === "worker") {
+          this.pendingWorkerCompletionReportAgentIds.add(descriptor.agentId);
+          this.emitManagerScopedAgentToolCall(descriptor.managerId, toolStartedEvent);
+        }
         return;
       }
       case "tool.progress": {
@@ -1002,6 +1008,9 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         };
         if (this.shouldBroadcastToolProgress(toolProgressEvent)) {
           this.emitAgentToolCall(toolProgressEvent);
+          if (descriptor.role === "worker") {
+            this.emitManagerScopedAgentToolCall(descriptor.managerId, toolProgressEvent);
+          }
         }
         return;
       }
@@ -1020,6 +1029,10 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         this.resetToolProgressBroadcastState(toolCompletedEvent);
         this.persistAgentToolCall(toolCompletedEvent);
         this.emitAgentToolCall(toolCompletedEvent);
+        if (descriptor.role === "worker") {
+          this.pendingWorkerCompletionReportAgentIds.add(descriptor.agentId);
+          this.emitManagerScopedAgentToolCall(descriptor.managerId, toolCompletedEvent);
+        }
         return;
       }
       default:
@@ -1431,6 +1444,18 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     this.emit("agent_tool_call", event);
   }
 
+  private emitManagerScopedAgentToolCall(managerId: string, event: AgentToolCallEvent): void {
+    const manager = this.getAgent(managerId);
+    if (!manager || manager.role !== "manager") {
+      return;
+    }
+
+    this.emitAgentToolCall({
+      ...event,
+      agentId: managerId,
+    });
+  }
+
   private shouldBroadcastToolProgress(event: AgentToolCallEvent): boolean {
     const key = this.getToolProgressBroadcastKey(event);
     if (!key) {
@@ -1597,15 +1622,29 @@ function buildWorkerCompletionReport(
   lastReportedSummaryTimestamp?: string,
 ): { message: string; summaryTimestamp?: string } {
   const latestSummary = findLatestWorkerCompletionSummary(history);
+  const latestToolActivity = findLatestWorkerToolActivitySummary(history);
+  const latestSignal = selectLatestWorkerCompletionSignal(latestSummary, latestToolActivity);
 
-  if (!latestSummary || latestSummary.timestamp === lastReportedSummaryTimestamp) {
+  if (!latestSignal || latestSignal.timestamp === lastReportedSummaryTimestamp) {
     return {
       message: `SYSTEM: Worker ${descriptor.agentId} completed its turn.`,
     };
   }
 
-  const summaryText = latestSummary.text.trim();
-  const attachmentCount = latestSummary.attachments?.length ?? 0;
+  if (latestSignal.type === "tool_activity") {
+    return {
+      message: [
+        `SYSTEM: Worker ${descriptor.agentId} completed its turn.`,
+        "",
+        "Recent tool activity:",
+        ...latestSignal.lines,
+      ].join("\n"),
+      summaryTimestamp: latestSignal.timestamp,
+    };
+  }
+
+  const summaryText = latestSignal.text.trim();
+  const attachmentCount = latestSignal.attachments?.length ?? 0;
   const attachmentLine =
     attachmentCount > 0
       ? `\n\nAttachments: ${attachmentCount} generated attachment${attachmentCount === 1 ? "" : "s"}.`
@@ -1617,16 +1656,16 @@ function buildWorkerCompletionReport(
         [
           `SYSTEM: Worker ${descriptor.agentId} completed its turn.`,
           "",
-          `${latestSummary.role === "system" ? "Last system message" : "Last assistant message"}:`,
+          `${latestSignal.role === "system" ? "Last system message" : "Last assistant message"}:`,
           summaryText,
         ].join("\n") + attachmentLine,
-      summaryTimestamp: latestSummary.timestamp,
+      summaryTimestamp: latestSignal.timestamp,
     };
   }
 
   return {
     message: `SYSTEM: Worker ${descriptor.agentId} completed its turn and generated ${attachmentCount} attachment${attachmentCount === 1 ? "" : "s"}.`,
-    summaryTimestamp: latestSummary.timestamp,
+    summaryTimestamp: latestSignal.timestamp,
   };
 }
 
@@ -1653,6 +1692,131 @@ function findLatestWorkerCompletionSummary(
   }
 
   return undefined;
+}
+
+interface WorkerToolActivitySummary {
+  type: "tool_activity";
+  timestamp: string;
+  lines: string[];
+}
+
+function findLatestWorkerToolActivitySummary(
+  history: ConversationEntryEvent[],
+): WorkerToolActivitySummary | undefined {
+  const tailEvents: AgentToolCallEvent[] = [];
+
+  for (let index = history.length - 1; index >= 0; index -= 1) {
+    const entry = history[index];
+    if (entry?.type === "agent_tool_call") {
+      tailEvents.unshift(entry);
+      continue;
+    }
+
+    if (tailEvents.length > 0) {
+      break;
+    }
+  }
+
+  if (tailEvents.length === 0) {
+    return undefined;
+  }
+
+  const lines = summarizeWorkerToolActivity(tailEvents);
+  if (lines.length === 0) {
+    return undefined;
+  }
+
+  return {
+    type: "tool_activity",
+    timestamp: tailEvents[tailEvents.length - 1]!.timestamp,
+    lines,
+  };
+}
+
+function summarizeWorkerToolActivity(events: AgentToolCallEvent[]): string[] {
+  const groupedEvents = new Map<
+    string,
+    {
+      toolName?: string;
+      started?: string;
+      updated?: string;
+      completed?: string;
+      isError?: boolean;
+      order: number;
+    }
+  >();
+  const eventOrder: string[] = [];
+
+  for (const event of events) {
+    const key = event.toolCallId ?? `${event.timestamp}:${event.toolName ?? "tool"}`;
+    let summary = groupedEvents.get(key);
+    if (!summary) {
+      summary = {
+        toolName: event.toolName,
+        order: eventOrder.length,
+      };
+      groupedEvents.set(key, summary);
+      eventOrder.push(key);
+    }
+
+    summary.toolName ??= event.toolName;
+    if (event.kind === "tool_execution_start") {
+      summary.started = event.text;
+    } else if (event.kind === "tool_execution_end") {
+      summary.completed = event.text;
+      summary.isError = event.isError;
+    } else {
+      summary.updated = event.text;
+    }
+  }
+
+  return eventOrder.slice(-3).map((key) => formatWorkerToolActivityLine(groupedEvents.get(key)!));
+}
+
+function formatWorkerToolActivityLine(summary: {
+  toolName?: string;
+  started?: string;
+  updated?: string;
+  completed?: string;
+  isError?: boolean;
+}): string {
+  const toolName = summary.toolName ?? "tool";
+  if (summary.completed !== undefined) {
+    const detail = formatWorkerToolActivityDetail(summary.completed);
+    return `- ${toolName}: ${summary.isError ? "errored" : "completed"}${detail ? ` (${detail})` : ""}`;
+  }
+
+  if (summary.started !== undefined) {
+    const detail = formatWorkerToolActivityDetail(summary.started);
+    return `- ${toolName}: started${detail ? ` (${detail})` : ""}`;
+  }
+
+  const detail = formatWorkerToolActivityDetail(summary.updated);
+  return `- ${toolName}: updated${detail ? ` (${detail})` : ""}`;
+}
+
+function formatWorkerToolActivityDetail(value: string | undefined): string {
+  const trimmed = value?.trim();
+  if (!trimmed) {
+    return "";
+  }
+
+  return trimmed.length > 120 ? `${trimmed.slice(0, 117)}...` : trimmed;
+}
+
+function selectLatestWorkerCompletionSignal(
+  summary: ConversationMessageEvent | undefined,
+  toolActivity: WorkerToolActivitySummary | undefined,
+): ConversationMessageEvent | WorkerToolActivitySummary | undefined {
+  if (!summary) {
+    return toolActivity;
+  }
+
+  if (!toolActivity) {
+    return summary;
+  }
+
+  return toolActivity.timestamp.localeCompare(summary.timestamp) > 0 ? toolActivity : summary;
 }
 
 function toSwarmdDeliveryMode(delivery?: RequestedDeliveryMode): SwarmdDeliveryMode {

@@ -193,8 +193,6 @@ export function extractPiMessageDelta(
 ): string | null {
   switch (event.assistantMessageEvent.type) {
     case "text_delta":
-    case "thinking_delta":
-    case "toolcall_delta":
       return event.assistantMessageEvent.delta;
     default:
       return null;

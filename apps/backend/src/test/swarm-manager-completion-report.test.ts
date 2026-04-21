@@ -28,6 +28,8 @@ import {
   messageCompletedEvent,
   messageStartedEvent,
   runMigrations,
+  toolCompletedEvent,
+  toolStartedEvent,
   type SessionRecord,
   type SessionRuntimeConfig,
   type SwarmdCoreHandle,
@@ -270,6 +272,43 @@ function publishAssistantCompletionWithoutSummary(
   });
 }
 
+function publishToolCompletion(
+  harness: Harness,
+  agentId: string,
+  input: {
+    toolCallId: string;
+    toolName: string;
+    startText?: Record<string, unknown>;
+    resultText?: Record<string, unknown>;
+    isError?: boolean;
+  },
+): void {
+  harness.eventBus.publish({
+    ...toolStartedEvent({
+      sessionId: agentId,
+      threadId: null,
+      source: "backend",
+      toolName: input.toolName,
+      toolCallId: input.toolCallId,
+      toolInput: input.startText ?? {},
+    }),
+    cursor: null,
+  });
+
+  harness.eventBus.publish({
+    ...toolCompletedEvent({
+      sessionId: agentId,
+      threadId: null,
+      source: "backend",
+      toolName: input.toolName,
+      toolCallId: input.toolCallId,
+      ok: input.isError !== true,
+      result: input.resultText ?? {},
+    }),
+    cursor: null,
+  });
+}
+
 function managerReportTexts(manager: SwarmManager, managerId: string): string[] {
   return manager
     .getVisibleTranscript(managerId)
@@ -341,6 +380,86 @@ describe("SwarmManager worker completion reports", () => {
         "",
         "Last assistant message:",
         "Investigated the failing build and updated the migration.",
+      ].join("\n"),
+    ]);
+  });
+
+  it("keeps assistant summaries ahead of tool-activity fallback when both are present", async () => {
+    const harness = await createHarness();
+    harnesses.push(harness);
+
+    await harness.addAgent({
+      agentId: "manager-1",
+      managerId: "manager-1",
+      role: "manager",
+      status: "idle",
+    });
+    await harness.addAgent({
+      agentId: "worker-1",
+      managerId: "manager-1",
+      role: "worker",
+      status: "busy",
+    });
+
+    publishToolCompletion(harness, "worker-1", {
+      toolCallId: "tool-1",
+      toolName: "bash",
+      startText: { command: "pwd" },
+      resultText: { stdout: "/tmp/project" },
+    });
+    publishAssistantCompletion(harness, "worker-1", {
+      messageId: "msg-1",
+      text: "I verified the working directory and documented the result.",
+      includeStarted: true,
+    });
+    harness.sessionService.applyRuntimeStatus("worker-1", "idle");
+
+    await waitForCondition(() => managerReportTexts(harness.manager, "manager-1").length === 1);
+
+    expect(managerReportTexts(harness.manager, "manager-1")).toEqual([
+      [
+        "SYSTEM: Worker worker-1 completed its turn.",
+        "",
+        "Last assistant message:",
+        "I verified the working directory and documented the result.",
+      ].join("\n"),
+    ]);
+  });
+
+  it("summarizes recent tool activity when a worker turn has no assistant summary", async () => {
+    const harness = await createHarness();
+    harnesses.push(harness);
+
+    await harness.addAgent({
+      agentId: "manager-1",
+      managerId: "manager-1",
+      role: "manager",
+      status: "idle",
+    });
+    await harness.addAgent({
+      agentId: "worker-1",
+      managerId: "manager-1",
+      role: "worker",
+      status: "busy",
+    });
+
+    publishToolCompletion(harness, "worker-1", {
+      toolCallId: "tool-1",
+      toolName: "bash",
+      startText: { command: "pwd" },
+      resultText: { stdout: "/tmp/project" },
+    });
+    publishAssistantCompletionWithoutSummary(harness, "worker-1", "msg-1");
+    harness.sessionService.applyRuntimeStatus("worker-1", "idle");
+
+    await waitForCondition(() => managerReportTexts(harness.manager, "manager-1").length === 1);
+
+    expect(managerReportTexts(harness.manager, "manager-1")).toEqual([
+      [
+        "SYSTEM: Worker worker-1 completed its turn.",
+        "",
+        "Recent tool activity:",
+        '- bash: completed ({"stdout":"/tmp/project"})',
       ].join("\n"),
     ]);
   });

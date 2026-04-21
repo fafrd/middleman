@@ -27,7 +27,7 @@ const worker: AgentDescriptor = {
 };
 
 describe("useVisibleMessages", () => {
-  it("keeps manager transcript views on conversation messages without merging activity", () => {
+  it("includes subordinate worker tool activity in manager transcript views", () => {
     const messages: ConversationEntry[] = [
       {
         type: "conversation_message",
@@ -67,7 +67,7 @@ describe("useVisibleMessages", () => {
     });
 
     expect(result.allMessages).toBe(messages);
-    expect(result.visibleMessages).toEqual(messages);
+    expect(result.visibleMessages).toEqual([messages[0]!, activityMessages[0]!, messages[1]!]);
   });
 
   it("keeps runtime error logs visible in manager transcript views", () => {

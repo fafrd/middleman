@@ -36,6 +36,10 @@ const VISIBLE_TRANSCRIPT_SQL_PREDICATE = `
     )
     OR (
       role = 'system'
+      AND json_extract(metadata_json, '$.middleman.renderAs') = 'agent_tool_call'
+    )
+    OR (
+      role = 'system'
       AND json_extract(metadata_json, '$.middleman.renderAs') = 'hidden'
       AND json_extract(metadata_json, '$.middleman.visibility') = 'internal'
     )
