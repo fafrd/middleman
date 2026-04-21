@@ -57,6 +57,7 @@ import {
 } from "./swarm-manager-transcript.js";
 import { SwarmRuntimeContextService, MANAGER_ARCHETYPE_ID } from "./swarm-runtime-context.js";
 import { buildSwarmTools, type SwarmToolHost } from "./swarm-tools.js";
+import { formatRuntimeErrorMessage } from "./runtime-error-classifier.js";
 import {
   MIDDLEMAN_STORE_MIGRATIONS,
   MiddlemanAgentRepo,
@@ -1056,7 +1057,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       readString(errorObject?.message)?.trim() ?? readString(payloadObject?.message)?.trim() ?? "";
 
     if (message.length > 0) {
-      return message;
+      return formatRuntimeErrorMessage(message);
     }
 
     return "Agent runtime failed.";

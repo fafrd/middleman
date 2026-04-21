@@ -529,6 +529,52 @@ describe("SwarmManager worker completion reports", () => {
     ]);
   });
 
+  it("surfaces Anthropic usage exhaustion errors instead of sending a generic completion ping", async () => {
+    const harness = await createHarness();
+    harnesses.push(harness);
+
+    await harness.addAgent({
+      agentId: "manager-1",
+      managerId: "manager-1",
+      role: "manager",
+      status: "idle",
+    });
+    await harness.addAgent({
+      agentId: "worker-1",
+      managerId: "manager-1",
+      role: "worker",
+      status: "busy",
+    });
+
+    publishToolCompletion(harness, "worker-1", {
+      toolCallId: "tool-1",
+      toolName: "bash",
+      startText: { command: "pwd" },
+      resultText: { stdout: "/tmp/project" },
+    });
+
+    harness.sessionService.reportRuntimeError("worker-1", {
+      code: "PROMPT_DISPATCH_FAILED",
+      message:
+        '400 invalid_request_error: "You\'re out of extra usage. Add more at claude.ai/settings/usage and keep going."',
+      retryable: false,
+    });
+
+    await waitForCondition(() => managerReportTexts(harness.manager, "manager-1").length === 1);
+
+    expect(managerReportTexts(harness.manager, "manager-1")).toEqual([
+      "SYSTEM: Worker worker-1 errored: Anthropic usage exhausted: You're out of extra usage. Add more at claude.ai/settings/usage and keep going.",
+    ]);
+    expect(
+      harness.manager
+        .getVisibleTranscript("worker-1")
+        .filter((entry) => entry.type === "conversation_log")
+        .map((entry) => entry.text),
+    ).toEqual([
+      "Anthropic usage exhausted: You're out of extra usage. Add more at claude.ai/settings/usage and keep going.",
+    ]);
+  });
+
   it("does not repeat the last summary content after a worker restarts without new output", async () => {
     const harness = await createHarness();
     harnesses.push(harness);
