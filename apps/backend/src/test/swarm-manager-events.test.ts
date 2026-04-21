@@ -274,6 +274,60 @@ describe("SwarmManager core event projection", () => {
     expect(harness.appendedMessages).toHaveLength(3);
   });
 
+  it("projects assistant error completions as visible error logs and clears pending generic summaries", () => {
+    const descriptor = makeDescriptor({
+      agentId: "worker-1",
+      managerId: "manager-1",
+      role: "worker",
+    });
+    const harness = createManagerHarness(descriptor);
+    vi.spyOn(harness.manager as any, "maybeEmitWorkerErrorReport").mockResolvedValue(undefined);
+
+    (harness.manager as any).handleCoreEvent({
+      id: "evt-error-tool",
+      sessionId: "worker-1",
+      threadId: null,
+      source: "worker",
+      type: "tool.started",
+      timestamp: "2026-03-15T00:00:04.000Z",
+      payload: {
+        toolName: "bash",
+        toolCallId: "tool-1",
+        input: { command: "pwd" },
+      },
+    });
+    (harness.manager as any).handleCoreEvent({
+      id: "evt-error-complete",
+      sessionId: "worker-1",
+      threadId: null,
+      source: "worker",
+      type: "message.completed",
+      timestamp: "2026-03-15T00:00:05.000Z",
+      payload: {
+        role: "assistant",
+        stopReason: "error",
+        errorMessage:
+          '400 invalid_request_error: "You\'re out of extra usage. Add more at claude.ai/settings/usage and keep going."',
+      },
+    });
+
+    expect(harness.conversationLogs).toEqual([
+      {
+        type: "conversation_log",
+        agentId: "worker-1",
+        timestamp: "2026-03-15T00:00:05.000Z",
+        source: "runtime_log",
+        kind: "message_end",
+        role: "assistant",
+        text: "Anthropic usage exhausted: You're out of extra usage. Add more at claude.ai/settings/usage and keep going.",
+        isError: true,
+      },
+    ]);
+    expect((harness.manager as any).pendingWorkerCompletionReportAgentIds.has("worker-1")).toBe(
+      false,
+    );
+  });
+
   it("also emits worker tool activity to the owning manager subscription", () => {
     const managerDescriptor = makeDescriptor({
       agentId: "manager-1",

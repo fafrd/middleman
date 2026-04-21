@@ -272,6 +272,27 @@ function publishAssistantCompletionWithoutSummary(
   });
 }
 
+function publishAssistantErrorCompletion(
+  harness: Harness,
+  agentId: string,
+  input: { messageId: string; errorMessage: string },
+): void {
+  harness.eventBus.publish({
+    ...messageCompletedEvent({
+      sessionId: agentId,
+      threadId: null,
+      source: "backend",
+      messageId: input.messageId,
+      payload: {
+        role: "assistant",
+        stopReason: "error",
+        errorMessage: input.errorMessage,
+      },
+    }),
+    cursor: null,
+  });
+}
+
 function publishToolCompletion(
   harness: Harness,
   agentId: string,
@@ -529,7 +550,7 @@ describe("SwarmManager worker completion reports", () => {
     ]);
   });
 
-  it("surfaces Anthropic usage exhaustion errors instead of sending a generic completion ping", async () => {
+  it("surfaces Anthropic usage exhaustion from assistant error completions instead of sending a generic completion ping", async () => {
     const harness = await createHarness();
     harnesses.push(harness);
 
@@ -552,13 +573,12 @@ describe("SwarmManager worker completion reports", () => {
       startText: { command: "pwd" },
       resultText: { stdout: "/tmp/project" },
     });
-
-    harness.sessionService.reportRuntimeError("worker-1", {
-      code: "PROMPT_DISPATCH_FAILED",
-      message:
+    publishAssistantErrorCompletion(harness, "worker-1", {
+      messageId: "msg-error-1",
+      errorMessage:
         '400 invalid_request_error: "You\'re out of extra usage. Add more at claude.ai/settings/usage and keep going."',
-      retryable: false,
     });
+    harness.sessionService.applyRuntimeStatus("worker-1", "idle");
 
     await waitForCondition(() => managerReportTexts(harness.manager, "manager-1").length === 1);
 
@@ -569,9 +589,12 @@ describe("SwarmManager worker completion reports", () => {
       harness.manager
         .getVisibleTranscript("worker-1")
         .filter((entry) => entry.type === "conversation_log")
-        .map((entry) => entry.text),
+        .map((entry) => ({ text: entry.text, isError: entry.isError })),
     ).toEqual([
-      "Anthropic usage exhausted: You're out of extra usage. Add more at claude.ai/settings/usage and keep going.",
+      {
+        text: "Anthropic usage exhausted: You're out of extra usage. Add more at claude.ai/settings/usage and keep going.",
+        isError: true,
+      },
     ]);
   });
 

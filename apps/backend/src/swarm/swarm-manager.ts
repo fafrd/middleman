@@ -959,6 +959,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       }
       case "message.completed": {
         const role = this.resolveCompletedMessageRole(descriptor.agentId, event.payload);
+        const completedMessageError = this.resolveCompletedMessageError(descriptor, event.payload);
         const messageCompletedEvent: ConversationLogEvent = {
           type: "conversation_log",
           agentId: descriptor.agentId,
@@ -966,11 +967,18 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
           source: "runtime_log",
           kind: "message_end",
           role,
-          text: extractEventText(event.payload) ?? "",
+          text: completedMessageError?.message ?? extractEventText(event.payload) ?? "",
+          ...(completedMessageError ? { isError: true } : {}),
         };
         this.persistConversationLog(messageCompletedEvent);
         this.emitConversationLog(messageCompletedEvent);
         if (descriptor.role === "worker" && (role === "assistant" || role === "system")) {
+          if (completedMessageError) {
+            this.pendingWorkerCompletionReportAgentIds.delete(descriptor.agentId);
+            void this.maybeEmitWorkerErrorReport(descriptor.agentId, completedMessageError.message);
+            return;
+          }
+
           this.pendingWorkerCompletionReportAgentIds.add(descriptor.agentId);
           void this.maybeEmitWorkerCompletionSummary(descriptor.agentId);
         }
@@ -1054,13 +1062,38 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     const payloadObject = readObject(payload);
     const errorObject = readObject(payloadObject?.error);
     const message =
-      readString(errorObject?.message)?.trim() ?? readString(payloadObject?.message)?.trim() ?? "";
+      readString(errorObject?.message)?.trim() ??
+      readString(payloadObject?.errorMessage)?.trim() ??
+      readString(payloadObject?.message)?.trim() ??
+      "";
 
     if (message.length > 0) {
       return formatRuntimeErrorMessage(message);
     }
 
     return "Agent runtime failed.";
+  }
+
+  private resolveCompletedMessageError(
+    descriptor: AgentDescriptor,
+    payload: unknown,
+  ): { message: string } | null {
+    const payloadObject = readObject(payload);
+    const stopReason = readString(payloadObject?.stopReason)?.trim();
+    const errorMessage =
+      readString(payloadObject?.errorMessage)?.trim() ??
+      readString(readObject(payloadObject?.error)?.message)?.trim() ??
+      "";
+
+    if (stopReason !== "error" && errorMessage.length === 0) {
+      return null;
+    }
+
+    return {
+      message:
+        this.resolveRuntimeErrorMessage(descriptor, payload) ||
+        (errorMessage.length > 0 ? errorMessage : "Agent runtime failed."),
+    };
   }
 
   private async handleHostCall(sessionId: string, request: HostCallRequest): Promise<unknown> {
