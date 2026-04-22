@@ -40,8 +40,8 @@ describe("SwarmRuntimeContextService", () => {
       { backend: "claude", model: "claude-sonnet-4-6" },
     ],
     [
-      { provider: "anthropic-claude-code", modelId: "claude-haiku-4-6", thinkingLevel: "medium" },
-      { backend: "claude", model: "claude-haiku-4-6" },
+      { provider: "anthropic-claude-code", modelId: "claude-haiku-4-5", thinkingLevel: "medium" },
+      { backend: "claude", model: "claude-haiku-4-5" },
     ],
     [
       { provider: "anthropic", modelId: "claude-sonnet-4-6", thinkingLevel: "high" },

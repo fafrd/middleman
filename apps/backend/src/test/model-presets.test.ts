@@ -17,7 +17,7 @@ describe("model presets", () => {
     ],
     ["pi-opus", { provider: "anthropic", modelId: "claude-opus-4-7", thinkingLevel: "xhigh" }],
     ["pi-sonnet", { provider: "anthropic", modelId: "claude-sonnet-4-6", thinkingLevel: "high" }],
-    ["pi-haiku", { provider: "anthropic", modelId: "claude-haiku-4-6", thinkingLevel: "medium" }],
+    ["pi-haiku", { provider: "anthropic", modelId: "claude-haiku-4-5", thinkingLevel: "medium" }],
     [
       "codex-app",
       { provider: "openai-codex-app-server", modelId: "gpt-5.4", thinkingLevel: "xhigh" },
@@ -50,7 +50,7 @@ describe("model presets", () => {
       "claude-code-haiku",
       {
         provider: "anthropic-claude-code",
-        modelId: "claude-haiku-4-6",
+        modelId: "claude-haiku-4-5",
         thinkingLevel: "medium",
       },
     ],
@@ -63,12 +63,12 @@ describe("model presets", () => {
     ["pi-codex-mini", { provider: "openai-codex", modelId: "gpt-5.4-mini" }],
     ["pi-opus", { provider: "anthropic", modelId: "claude-opus-4-7" }],
     ["pi-sonnet", { provider: "anthropic", modelId: "claude-sonnet-4-6" }],
-    ["pi-haiku", { provider: "anthropic", modelId: "claude-haiku-4-6" }],
+    ["pi-haiku", { provider: "anthropic", modelId: "claude-haiku-4-5" }],
     ["codex-app", { provider: "openai-codex-app-server", modelId: "gpt-5.4" }],
     ["codex-app-mini", { provider: "openai-codex-app-server", modelId: "gpt-5.4-mini" }],
     ["claude-code", { provider: "anthropic-claude-code", modelId: "claude-opus-4-7" }],
     ["claude-code-sonnet", { provider: "anthropic-claude-code", modelId: "claude-sonnet-4-6" }],
-    ["claude-code-haiku", { provider: "anthropic-claude-code", modelId: "claude-haiku-4-6" }],
+    ["claude-code-haiku", { provider: "anthropic-claude-code", modelId: "claude-haiku-4-5" }],
   ] as const)("infers %s from the descriptor", (preset, descriptor) => {
     expect(inferSwarmModelPresetFromDescriptor(descriptor)).toBe(preset);
   });
@@ -115,7 +115,7 @@ describe("model presets", () => {
     [{ provider: "openai-codex", modelId: "gpt-5.4" }, "openai-codex"],
     [{ provider: "openai-codex-app-server", modelId: "gpt-5.4-mini" }, "openai-codex"],
     [{ provider: "anthropic", modelId: "claude-opus-4-7" }, "anthropic"],
-    [{ provider: "anthropic-claude-code", modelId: "claude-haiku-4-6" }, "anthropic"],
+    [{ provider: "anthropic-claude-code", modelId: "claude-haiku-4-5" }, "anthropic"],
   ] as const)("infers auth provider %s for descriptor %#", (descriptor, expected) => {
     expect(inferSettingsAuthProviderFromDescriptor(descriptor)).toBe(expected);
   });

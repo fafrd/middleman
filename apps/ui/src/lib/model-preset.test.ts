@@ -28,10 +28,10 @@ describe("inferModelPreset", () => {
   it.each([
     ["openai-codex", "gpt-5.4-mini", "pi-codex-mini"],
     ["anthropic", "claude-sonnet-4-6", "pi-sonnet"],
-    ["anthropic", "claude-haiku-4-6", "pi-haiku"],
+    ["anthropic", "claude-haiku-4-5", "pi-haiku"],
     ["openai-codex-app-server", "gpt-5.4-mini", "codex-app-mini"],
     ["anthropic-claude-code", "claude-sonnet-4-6", "claude-code-sonnet"],
-    ["anthropic-claude-code", "claude-haiku-4-6", "claude-code-haiku"],
+    ["anthropic-claude-code", "claude-haiku-4-5", "claude-code-haiku"],
   ] as const)("maps %s/%s to %s", (provider, modelId, expectedPreset) => {
     expect(inferModelPreset(buildAgent(provider, modelId))).toBe(expectedPreset);
   });
@@ -44,7 +44,7 @@ describe("inferModelPreset", () => {
     ["openai-codex", "gpt-5.4-mini", "pi-codex"],
     ["anthropic", "claude-sonnet-4-6", "pi-claude"],
     ["openai-codex-app-server", "gpt-5.4-mini", "codex-app"],
-    ["anthropic-claude-code", "claude-haiku-4-6", "claude-code"],
+    ["anthropic-claude-code", "claude-haiku-4-5", "claude-code"],
   ] as const)("maps %s/%s to icon family %s", (provider, modelId, expectedIconFamily) => {
     expect(inferModelPresetIconFamily(buildAgent(provider, modelId))).toBe(expectedIconFamily);
   });

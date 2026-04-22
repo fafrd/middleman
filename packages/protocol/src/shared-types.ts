@@ -69,7 +69,7 @@ export const MANAGER_MODEL_PRESET_REGISTRY = {
   },
   "pi-haiku": {
     provider: "anthropic",
-    modelId: "claude-haiku-4-6",
+    modelId: "claude-haiku-4-5",
     defaultThinkingLevel: "medium",
     contextWindow: 200_000,
     telemetryBacked: true,
@@ -124,7 +124,7 @@ export const MANAGER_MODEL_PRESET_REGISTRY = {
   },
   "claude-code-haiku": {
     provider: "anthropic-claude-code",
-    modelId: "claude-haiku-4-6",
+    modelId: "claude-haiku-4-5",
     defaultThinkingLevel: "medium",
     contextWindow: 200_000,
     telemetryBacked: true,
