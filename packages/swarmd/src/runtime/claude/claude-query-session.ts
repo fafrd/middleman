@@ -166,6 +166,17 @@ export class ClaudeQuerySession {
       return this.currentCheckpoint ?? this.started.promise;
     }
 
+    const forceSafePermissions = process.env.MIDDLEMAN_CLAUDE_FORCE_SAFE_PERMS === "1";
+    const isRoot = typeof process.getuid === "function" && process.getuid() === 0;
+    const permissionOptions = forceSafePermissions || isRoot
+      ? {
+          permissionMode: "default",
+        }
+      : {
+          permissionMode: "bypassPermissions",
+          allowDangerouslySkipPermissions: true,
+        };
+
     this.queryHandle = this.options.sdk.query({
       prompt: this.createInputStream(),
       options: {
@@ -176,8 +187,7 @@ export class ClaudeQuerySession {
         ...this.options.queryOptions,
         persistSession: true,
         includePartialMessages: true,
-        permissionMode: "bypassPermissions",
-        allowDangerouslySkipPermissions: true,
+        ...permissionOptions,
         ...(this.options.mcpServers ? { mcpServers: this.options.mcpServers } : {}),
         ...(this.options.allowedTools ? { allowedTools: this.options.allowedTools } : {}),
         settingSources: [],

@@ -210,6 +210,8 @@ function createSystemInput(id: string, text: string): UserInput {
 
 afterEach(() => {
   vi.useRealTimers();
+  vi.restoreAllMocks();
+  delete process.env.MIDDLEMAN_CLAUDE_FORCE_SAFE_PERMS;
 });
 
 describe("ClaudeEventMapper", () => {
@@ -470,6 +472,8 @@ describe("ClaudeQuerySession", () => {
   });
 
   it("becomes idle during bootstrap when a provisional checkpoint is supplied", async () => {
+    vi.spyOn(process, "getuid").mockReturnValue(1000);
+
     const callbacks = createCallbacks();
     const handle = new FakeClaudeQueryHandle();
     const sdk: Pick<ClaudeSdkModule, "query"> = {
@@ -514,6 +518,97 @@ describe("ClaudeQuerySession", () => {
         sessionId: "00000000-0000-4000-8000-000000000000",
       },
     ]);
+
+    await session.dispose();
+  });
+
+  it("uses safe Claude permissions when running as root", async () => {
+    vi.spyOn(process, "getuid").mockReturnValue(0);
+
+    const callbacks = createCallbacks();
+    const handle = new FakeClaudeQueryHandle();
+    const sdk: Pick<ClaudeSdkModule, "query"> = {
+      query: vi.fn(({ prompt }) => {
+        handle.attachPrompt(prompt);
+        return handle;
+      }),
+    };
+
+    const session = new ClaudeQuerySession({
+      sdk,
+      callbacks: callbacks.callbacks,
+      config: createConfig(),
+      sessionId: "ses_runtime",
+      threadId: "thr_runtime",
+    });
+
+    const startPromise = session.start();
+    handle.pushEvent({
+      type: "system:init",
+      session_id: "claude-session-live",
+    });
+
+    await expect(startPromise).resolves.toEqual({
+      backend: "claude",
+      sessionId: "claude-session-live",
+    });
+    expect(sdk.query).toHaveBeenCalledWith(
+      expect.objectContaining({
+        options: expect.objectContaining({
+          permissionMode: "default",
+          settingSources: [],
+        }),
+      }),
+    );
+    expect((sdk.query as ReturnType<typeof vi.fn>).mock.calls[0]?.[0]?.options).not.toHaveProperty(
+      "allowDangerouslySkipPermissions",
+    );
+
+    await session.dispose();
+  });
+
+  it("uses safe Claude permissions when explicitly forced by env", async () => {
+    process.env.MIDDLEMAN_CLAUDE_FORCE_SAFE_PERMS = "1";
+    vi.spyOn(process, "getuid").mockReturnValue(1000);
+
+    const callbacks = createCallbacks();
+    const handle = new FakeClaudeQueryHandle();
+    const sdk: Pick<ClaudeSdkModule, "query"> = {
+      query: vi.fn(({ prompt }) => {
+        handle.attachPrompt(prompt);
+        return handle;
+      }),
+    };
+
+    const session = new ClaudeQuerySession({
+      sdk,
+      callbacks: callbacks.callbacks,
+      config: createConfig(),
+      sessionId: "ses_runtime",
+      threadId: "thr_runtime",
+    });
+
+    const startPromise = session.start();
+    handle.pushEvent({
+      type: "system:init",
+      session_id: "claude-session-live",
+    });
+
+    await expect(startPromise).resolves.toEqual({
+      backend: "claude",
+      sessionId: "claude-session-live",
+    });
+    expect(sdk.query).toHaveBeenCalledWith(
+      expect.objectContaining({
+        options: expect.objectContaining({
+          permissionMode: "default",
+          settingSources: [],
+        }),
+      }),
+    );
+    expect((sdk.query as ReturnType<typeof vi.fn>).mock.calls[0]?.[0]?.options).not.toHaveProperty(
+      "allowDangerouslySkipPermissions",
+    );
 
     await session.dispose();
   });
