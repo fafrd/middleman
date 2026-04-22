@@ -511,6 +511,9 @@ describe("ClaudeQuerySession", () => {
         }),
       }),
     );
+    expect((sdk.query as ReturnType<typeof vi.fn>).mock.calls[0]?.[0]?.options).not.toHaveProperty(
+      "canUseTool",
+    );
     expect(session.getStatus()).toBe("idle");
     expect(callbacks.checkpoints).toEqual([
       {
@@ -557,12 +560,57 @@ describe("ClaudeQuerySession", () => {
         options: expect.objectContaining({
           permissionMode: "default",
           settingSources: [],
+          canUseTool: expect.any(Function),
         }),
       }),
     );
     expect((sdk.query as ReturnType<typeof vi.fn>).mock.calls[0]?.[0]?.options).not.toHaveProperty(
       "allowDangerouslySkipPermissions",
     );
+
+    await session.dispose();
+  });
+
+  it("auto-approves Claude tool requests in safe permission mode", async () => {
+    vi.spyOn(process, "getuid").mockReturnValue(0);
+
+    const callbacks = createCallbacks();
+    const handle = new FakeClaudeQueryHandle();
+    const sdk: Pick<ClaudeSdkModule, "query"> = {
+      query: vi.fn(({ prompt }) => {
+        handle.attachPrompt(prompt);
+        return handle;
+      }),
+    };
+
+    const session = new ClaudeQuerySession({
+      sdk,
+      callbacks: callbacks.callbacks,
+      config: createConfig(),
+      sessionId: "ses_runtime",
+      threadId: "thr_runtime",
+    });
+
+    const startPromise = session.start();
+    handle.pushEvent({
+      type: "system:init",
+      session_id: "claude-session-live",
+    });
+
+    await expect(startPromise).resolves.toEqual({
+      backend: "claude",
+      sessionId: "claude-session-live",
+    });
+
+    const canUseTool = (sdk.query as ReturnType<typeof vi.fn>).mock.calls[0]?.[0]?.options
+      ?.canUseTool as
+      | ((toolName: string, input: Record<string, unknown>) => Promise<unknown>)
+      | undefined;
+
+    await expect(canUseTool?.("Bash", { command: "echo hi" })).resolves.toEqual({
+      behavior: "allow",
+      updatedInput: { command: "echo hi" },
+    });
 
     await session.dispose();
   });
@@ -603,6 +651,7 @@ describe("ClaudeQuerySession", () => {
         options: expect.objectContaining({
           permissionMode: "default",
           settingSources: [],
+          canUseTool: expect.any(Function),
         }),
       }),
     );

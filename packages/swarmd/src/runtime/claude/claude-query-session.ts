@@ -45,6 +45,38 @@ type PendingInterruptedInput = {
   acceptedDelivery: DeliveryMode;
 };
 
+type ClaudeSdkPermissionUpdate = unknown;
+type ClaudeSdkPermissionResult =
+  | {
+      behavior: "allow";
+      updatedInput?: Record<string, unknown>;
+      updatedPermissions?: ClaudeSdkPermissionUpdate[];
+      toolUseID?: string;
+      decisionClassification?: string;
+    }
+  | {
+      behavior: "deny";
+      message: string;
+      interrupt?: boolean;
+      toolUseID?: string;
+      decisionClassification?: string;
+    };
+type ClaudeSdkCanUseTool = (
+  toolName: string,
+  input: Record<string, unknown>,
+  options: {
+    signal: AbortSignal;
+    suggestions?: ClaudeSdkPermissionUpdate[];
+    blockedPath?: string;
+    decisionReason?: string;
+    title?: string;
+    displayName?: string;
+    description?: string;
+    toolUseID: string;
+    agentID?: string;
+  },
+) => Promise<ClaudeSdkPermissionResult>;
+
 type ClaudeSdkInputContent =
   | {
       type: "text";
@@ -86,6 +118,7 @@ export interface ClaudeSdkQueryOptions {
   abortController?: AbortController;
   permissionMode?: string;
   allowDangerouslySkipPermissions?: boolean;
+  canUseTool?: ClaudeSdkCanUseTool;
   settingSources?: string[];
   debug?: boolean;
   debugFile?: string;
@@ -168,14 +201,19 @@ export class ClaudeQuerySession {
 
     const forceSafePermissions = process.env.MIDDLEMAN_CLAUDE_FORCE_SAFE_PERMS === "1";
     const isRoot = typeof process.getuid === "function" && process.getuid() === 0;
-    const permissionOptions = forceSafePermissions || isRoot
-      ? {
-          permissionMode: "default",
-        }
-      : {
-          permissionMode: "bypassPermissions",
-          allowDangerouslySkipPermissions: true,
-        };
+    const permissionOptions =
+      forceSafePermissions || isRoot
+        ? {
+            permissionMode: "default",
+            canUseTool: async (_toolName: string, input: Record<string, unknown>) => ({
+              behavior: "allow" as const,
+              updatedInput: input,
+            }),
+          }
+        : {
+            permissionMode: "bypassPermissions",
+            allowDangerouslySkipPermissions: true,
+          };
 
     this.queryHandle = this.options.sdk.query({
       prompt: this.createInputStream(),
