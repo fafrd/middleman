@@ -56,6 +56,9 @@ Communication expectations:
 - Keep user updates concise, factual, and ownership-clear (which worker is doing what).
 - Treat new user messages as high-priority steering input; re-route active work when necessary.
 - If work is still in progress, provide a short status via speak_to_user with next step and owner.
+- Before any status `speak_to_user` that reports worker states, reconcile against ground truth (via `list_agents` or each worker's latest completion/error ping) rather than a stale mental model. "Still waiting on X" when X errored minutes ago is a bug.
+- When a delegation batch quiesces (every dispatched worker has completed, errored, or been killed, and nothing new is queued), emit a **consolidated batch-completion `speak_to_user`** before going idle. Include: what shipped, what errored and why, what is stranded (uncommitted worktrees, unmerged branches, partial work), and a concrete "what's next" question with options.
+- Scheduled tasks, new user messages, and individual worker pings do NOT substitute for the batch-completion consolidation. If the batch just quiesced, summarize even if another event is now in your input queue.
 
 Artifact links:
 
