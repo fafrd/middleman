@@ -142,6 +142,69 @@ export class SwarmLifecycleService {
     return this.requireDescriptor(input.agentId);
   }
 
+  async respawnAgentSessionAndRow(input: {
+    agentId: string;
+    role: "manager" | "worker";
+    managerId: string;
+    archetypeId?: string;
+    cwd: string;
+    model: AgentModelDescriptor;
+    memoryOwnerAgentId: string;
+    systemPrompt?: string;
+    replyTarget?: MessageTargetContext;
+  }): Promise<AgentDescriptor> {
+    const basePrompt =
+      input.systemPrompt?.trim() ||
+      this.options.runtimeContext.resolveSystemPromptForDescriptor({
+        role: input.role,
+        archetypeId: input.archetypeId,
+      });
+    const resources = await this.options.runtimeContext.resolveRuntimeContextResources({
+      agentId: input.agentId,
+      role: input.role,
+      managerId: input.managerId,
+      cwd: input.cwd,
+      model: input.model,
+      memoryOwnerAgentId: input.memoryOwnerAgentId,
+    });
+    const runtimeConfig = this.options.runtimeContext.buildRuntimeConfig(
+      {
+        agentId: input.agentId,
+        role: input.role,
+        managerId: input.managerId,
+        cwd: input.cwd,
+        model: input.model,
+        memoryOwnerAgentId: input.memoryOwnerAgentId,
+      },
+      resources,
+    );
+    const prompt = this.options.runtimeContext.buildSessionSystemPrompt(
+      basePrompt,
+      runtimeConfig.backend,
+      resources,
+    );
+
+    await this.stopSession(input.agentId);
+    this.options.getCore().sessionService.reconfigure(input.agentId, {
+      backend: runtimeConfig.backend,
+      cwd: input.cwd,
+      model: runtimeConfig.model,
+      systemPrompt: prompt,
+      runtimeConfig: {
+        backendConfig: runtimeConfig.backendConfig,
+      },
+      updatedAt: this.options.now(),
+    });
+
+    if (input.replyTarget) {
+      this.options.getAgentRepo().updateReplyTarget(input.agentId, input.replyTarget);
+    }
+
+    await this.options.getCore().sessionService.start(input.agentId);
+    this.invalidateDescriptorGraphCache();
+    return this.requireDescriptor(input.agentId);
+  }
+
   async deleteAgentSession(
     agentId: string,
     options?: { preserveMiddlemanRow?: boolean },

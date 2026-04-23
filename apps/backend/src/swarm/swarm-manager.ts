@@ -7,6 +7,7 @@ import type {
   EventEnvelope,
   HostCallRequest,
   SwarmdCoreHandle,
+  SwarmdMessage,
 } from "swarmd";
 import { createCore } from "swarmd";
 
@@ -57,7 +58,11 @@ import {
 } from "./swarm-manager-transcript.js";
 import { SwarmRuntimeContextService, MANAGER_ARCHETYPE_ID } from "./swarm-runtime-context.js";
 import { buildSwarmTools, type SwarmToolHost } from "./swarm-tools.js";
-import { formatRuntimeErrorMessage } from "./runtime-error-classifier.js";
+import {
+  classifyRuntimeErrorMessage,
+  formatRuntimeErrorMessage,
+  type RuntimeErrorClassification,
+} from "./runtime-error-classifier.js";
 import {
   MIDDLEMAN_STORE_MIGRATIONS,
   MiddlemanAgentRepo,
@@ -132,6 +137,20 @@ function normalizeContextUsage(value: unknown): AgentContextUsage | null | undef
   };
 }
 
+interface WorkerRetryLifecycleState {
+  phase: "candidate" | "retrying" | "reported_failure";
+  attemptCount: number;
+  maxAttempts: number | null;
+  lastErrorMessage: string;
+}
+
+interface ReplayableWorkerInput {
+  fromAgentId: string;
+  parts: ContentPart[];
+  requestedDelivery: RequestedDeliveryMode;
+  metadata: Record<string, unknown>;
+}
+
 export class SwarmManager extends EventEmitter implements SwarmToolHost {
   private readonly config: SwarmConfig;
   private readonly now: () => string;
@@ -149,6 +168,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   private readonly lastWorkerCompletionReportTimestampByAgentId = new Map<string, string>();
   private readonly pendingWorkerCompletionReportAgentIds = new Set<string>();
   private readonly suppressNextWorkerCompletionReportAgentIds = new Set<string>();
+  private readonly suppressNextWorkerCompletionSummaryAgentIds = new Set<string>();
+  private readonly workerRetryStateByAgentId = new Map<string, WorkerRetryLifecycleState>();
   private readonly compactingAgentIds = new Set<string>();
   private readonly lastToolProgressBroadcastAtByKey = new Map<string, number>();
 
@@ -255,6 +276,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     this.secretsEnvService = null;
     this.lastWorkerCompletionReportTimestampByAgentId.clear();
     this.pendingWorkerCompletionReportAgentIds.clear();
+    this.suppressNextWorkerCompletionSummaryAgentIds.clear();
+    this.workerRetryStateByAgentId.clear();
     this.lastToolProgressBroadcastAtByKey.clear();
   }
 
@@ -907,12 +930,28 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         if (descriptor.role === "worker") {
           if (status === "idle") {
             this.clearToolProgressBroadcastStateForAgent(descriptor.agentId);
+            const retryState = this.workerRetryStateByAgentId.get(descriptor.agentId);
+            if (retryState) {
+              if (retryState.phase === "candidate") {
+                void this.flushPendingTransientRetryCandidate(descriptor.agentId);
+              } else if (retryState.phase === "reported_failure") {
+                this.workerRetryStateByAgentId.delete(descriptor.agentId);
+              }
+              return;
+            }
             void this.maybeEmitWorkerCompletionSummary(descriptor.agentId);
           } else if (
             (status === "starting" || status === "busy") &&
             this.suppressNextWorkerCompletionReportAgentIds.has(descriptor.agentId)
           ) {
             this.suppressNextWorkerCompletionReportAgentIds.delete(descriptor.agentId);
+          }
+
+          if (
+            (status === "starting" || status === "busy") &&
+            this.workerRetryStateByAgentId.get(descriptor.agentId)?.phase === "reported_failure"
+          ) {
+            this.workerRetryStateByAgentId.delete(descriptor.agentId);
           }
         }
       }
@@ -925,8 +964,20 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         if (descriptor.role === "worker") {
           this.pendingWorkerCompletionReportAgentIds.delete(descriptor.agentId);
           this.suppressNextWorkerCompletionReportAgentIds.delete(descriptor.agentId);
+          if (
+            this.workerRetryStateByAgentId.get(descriptor.agentId)?.phase === "reported_failure"
+          ) {
+            this.workerRetryStateByAgentId.delete(descriptor.agentId);
+            return;
+          }
         }
+
         const runtimeErrorMessage = this.resolveRuntimeErrorMessage(descriptor, event.payload);
+        const classification = classifyRuntimeErrorMessage(runtimeErrorMessage);
+        if (descriptor.role === "worker") {
+          this.workerRetryStateByAgentId.delete(descriptor.agentId);
+        }
+
         const runtimeErrorEvent: ConversationLogEvent = {
           type: "conversation_log",
           agentId: descriptor.agentId,
@@ -939,6 +990,9 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         this.persistConversationLog(runtimeErrorEvent);
         this.emitConversationLog(runtimeErrorEvent);
         if (descriptor.role === "worker") {
+          if (this.maybeScheduleWorkerFallback(descriptor, classification)) {
+            return;
+          }
           void this.maybeEmitWorkerErrorReport(descriptor.agentId, runtimeErrorMessage);
         }
         return;
@@ -960,6 +1014,12 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       case "message.completed": {
         const role = this.resolveCompletedMessageRole(descriptor.agentId, event.payload);
         const completedMessageError = this.resolveCompletedMessageError(descriptor, event.payload);
+        const errorClassification = completedMessageError
+          ? classifyRuntimeErrorMessage(completedMessageError.message)
+          : null;
+        const trackAsTransientRetry =
+          descriptor.role === "worker" &&
+          this.shouldTrackPiTransientRetry(descriptor, errorClassification);
         const messageCompletedEvent: ConversationLogEvent = {
           type: "conversation_log",
           agentId: descriptor.agentId,
@@ -968,19 +1028,47 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
           kind: "message_end",
           role,
           text: completedMessageError?.message ?? extractEventText(event.payload) ?? "",
-          ...(completedMessageError ? { isError: true } : {}),
+          ...(completedMessageError && !trackAsTransientRetry ? { isError: true } : {}),
         };
         this.persistConversationLog(messageCompletedEvent);
         this.emitConversationLog(messageCompletedEvent);
         if (descriptor.role === "worker" && (role === "assistant" || role === "system")) {
           if (completedMessageError) {
             this.pendingWorkerCompletionReportAgentIds.delete(descriptor.agentId);
+            if (trackAsTransientRetry) {
+              this.trackPendingTransientRetryCandidate(
+                descriptor.agentId,
+                completedMessageError.message,
+              );
+              return;
+            }
+            if (this.maybeScheduleWorkerFallback(descriptor, errorClassification)) {
+              return;
+            }
             void this.maybeEmitWorkerErrorReport(descriptor.agentId, completedMessageError.message);
             return;
           }
 
           this.pendingWorkerCompletionReportAgentIds.add(descriptor.agentId);
+          if (this.workerRetryStateByAgentId.has(descriptor.agentId)) {
+            return;
+          }
           void this.maybeEmitWorkerCompletionSummary(descriptor.agentId);
+        }
+        return;
+      }
+      case "backend.raw": {
+        if (descriptor.role === "worker" && this.isCodexBackedPiWorker(descriptor)) {
+          const rawEvent = readObject(event.payload);
+          const rawType = readString(rawEvent?.type);
+          if (rawType === "auto_retry_start" && rawEvent) {
+            this.handleWorkerAutoRetryStart(descriptor, event.timestamp, rawEvent);
+            return;
+          }
+          if (rawType === "auto_retry_end" && rawEvent) {
+            void this.handleWorkerAutoRetryEnd(descriptor, event.timestamp, rawEvent);
+            return;
+          }
         }
         return;
       }
@@ -1190,6 +1278,234 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     );
   }
 
+  private shouldTrackPiTransientRetry(
+    descriptor: AgentDescriptor,
+    classification: RuntimeErrorClassification | null,
+  ): boolean {
+    return (
+      classification?.kind === "transient_provider_failure" &&
+      this.isCodexBackedPiWorker(descriptor)
+    );
+  }
+
+  private isCodexBackedPiWorker(descriptor: AgentDescriptor): boolean {
+    const preset = inferSwarmModelPresetFromDescriptor(descriptor.model);
+    return preset === "pi-codex" || preset === "pi-codex-mini";
+  }
+
+  private trackPendingTransientRetryCandidate(agentId: string, errorMessage: string): void {
+    const existing = this.workerRetryStateByAgentId.get(agentId);
+    this.workerRetryStateByAgentId.set(agentId, {
+      phase: "candidate",
+      attemptCount: existing?.attemptCount ?? 0,
+      maxAttempts: existing?.maxAttempts ?? null,
+      lastErrorMessage: errorMessage,
+    });
+  }
+
+  private async flushPendingTransientRetryCandidate(agentId: string): Promise<void> {
+    const state = this.workerRetryStateByAgentId.get(agentId);
+    if (!state || state.phase !== "candidate") {
+      return;
+    }
+
+    this.workerRetryStateByAgentId.delete(agentId);
+    await this.maybeEmitWorkerErrorReport(agentId, state.lastErrorMessage);
+  }
+
+  private handleWorkerAutoRetryStart(
+    descriptor: AgentDescriptor,
+    timestamp: string,
+    payload: Record<string, unknown>,
+  ): void {
+    const attempt = Math.max(1, readNumber(payload.attempt) ?? 0);
+    const maxAttempts = readNumber(payload.maxAttempts) ?? null;
+    const delayMs = readNumber(payload.delayMs) ?? 0;
+    const errorMessage = readString(payload.errorMessage)?.trim() || "Transient provider error.";
+
+    this.workerRetryStateByAgentId.set(descriptor.agentId, {
+      phase: "retrying",
+      attemptCount: attempt,
+      maxAttempts,
+      lastErrorMessage: errorMessage,
+    });
+
+    // TODO: Plumb provider response headers (Retry-After, ratelimit reset hints) through Pi retry events.
+    // Pi's current RPC auto_retry payloads do not expose the onResponse header metadata yet.
+    this.recordConversationLog({
+      type: "conversation_log",
+      agentId: descriptor.agentId,
+      timestamp,
+      source: "runtime_log",
+      kind: "message_end",
+      text: `Pi auto-retrying transient provider error in ${formatRetryDelay(delayMs)} (attempt ${formatRetryAttempt(attempt, maxAttempts)}): ${errorMessage}`,
+    });
+  }
+
+  private async handleWorkerAutoRetryEnd(
+    descriptor: AgentDescriptor,
+    timestamp: string,
+    payload: Record<string, unknown>,
+  ): Promise<void> {
+    const success = payload.success === true;
+    const current = this.workerRetryStateByAgentId.get(descriptor.agentId);
+    const attemptCount = Math.max(1, readNumber(payload.attempt) ?? current?.attemptCount ?? 0);
+    const lastErrorMessage =
+      readString(payload.finalError)?.trim() ||
+      current?.lastErrorMessage ||
+      "Transient provider error.";
+
+    this.workerRetryStateByAgentId.delete(descriptor.agentId);
+    this.pendingWorkerCompletionReportAgentIds.delete(descriptor.agentId);
+
+    if (success) {
+      this.suppressNextWorkerCompletionSummaryAgentIds.add(descriptor.agentId);
+      this.recordConversationLog({
+        type: "conversation_log",
+        agentId: descriptor.agentId,
+        timestamp,
+        source: "runtime_log",
+        kind: "message_end",
+        text: `Pi auto-retry recovered after ${formatRetryCount(attemptCount)}.`,
+      });
+      await this.sendWorkerManagerSystemNote(
+        descriptor.agentId,
+        `SYSTEM: Worker ${descriptor.agentId} succeeded after ${formatRetryCount(attemptCount)}.`,
+      );
+      return;
+    }
+
+    this.workerRetryStateByAgentId.set(descriptor.agentId, {
+      phase: "reported_failure",
+      attemptCount,
+      maxAttempts: current?.maxAttempts ?? null,
+      lastErrorMessage,
+    });
+    this.recordConversationLog({
+      type: "conversation_log",
+      agentId: descriptor.agentId,
+      timestamp,
+      source: "runtime_log",
+      kind: "message_end",
+      text: `Pi auto-retry exhausted after ${formatRetryAttemptsLabel(attemptCount)}: ${lastErrorMessage}`,
+      isError: true,
+    });
+    await this.maybeEmitWorkerErrorReport(
+      descriptor.agentId,
+      `Transient provider retries exhausted after ${formatRetryAttemptsLabel(attemptCount)}: ${lastErrorMessage}`,
+    );
+  }
+
+  private maybeScheduleWorkerFallback(
+    descriptor: AgentDescriptor,
+    classification: RuntimeErrorClassification | null,
+  ): boolean {
+    const sourcePreset = inferSwarmModelPresetFromDescriptor(descriptor.model);
+    if (!sourcePreset) {
+      return false;
+    }
+
+    const fallbackPreset = resolvePiAnthropicFallbackPreset(sourcePreset);
+    if (classification?.kind !== "provider_usage_exhausted" || !fallbackPreset) {
+      return false;
+    }
+
+    void this.performWorkerAutoFallback(descriptor, sourcePreset, fallbackPreset).catch(
+      async (error) => {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error(
+          `[swarm] Failed to auto-fallback worker ${descriptor.agentId} to ${fallbackPreset}: ${message}`,
+        );
+        await this.maybeEmitWorkerErrorReport(
+          descriptor.agentId,
+          `Auto-fallback to ${fallbackPreset} failed: ${message}`,
+        );
+      },
+    );
+    return true;
+  }
+
+  private async performWorkerAutoFallback(
+    descriptor: AgentDescriptor,
+    sourcePreset: SwarmModelPreset,
+    fallbackPreset: SwarmModelPreset,
+  ): Promise<void> {
+    const agentRow = this.agentRepoOrThrow().get(descriptor.agentId);
+    const session = this.coreOrThrow().sessionService.getById(descriptor.agentId);
+    if (!agentRow || !session) {
+      throw new Error(`Missing session state for ${descriptor.agentId}.`);
+    }
+
+    const fallbackMessage = `Worker ${descriptor.agentId} auto-fell-back from ${sourcePreset} to ${fallbackPreset} (Anthropic Pi emulation rejected). Session restarting.`;
+    const replayableInput = this.findLatestReplayableWorkerInput(descriptor.agentId);
+
+    this.recordConversationLog({
+      type: "conversation_log",
+      agentId: descriptor.agentId,
+      timestamp: this.now(),
+      source: "runtime_log",
+      kind: "message_end",
+      text: fallbackMessage,
+    });
+    await this.sendWorkerManagerSystemNote(descriptor.agentId, `SYSTEM: ${fallbackMessage}`);
+
+    await this.lifecycle.respawnAgentSessionAndRow({
+      agentId: descriptor.agentId,
+      role: descriptor.role,
+      managerId: descriptor.managerId,
+      archetypeId: agentRow.archetypeId,
+      cwd: descriptor.cwd,
+      model: resolveModelDescriptorFromPreset(fallbackPreset, descriptor.model.thinkingLevel),
+      memoryOwnerAgentId: agentRow.memoryOwnerSessionId,
+      systemPrompt: session.systemPrompt,
+      replyTarget: agentRow.replyTarget,
+    });
+
+    if (replayableInput) {
+      this.coreOrThrow().messageService.send(descriptor.agentId, replayableInput.parts, {
+        delivery: toSwarmdDeliveryMode(replayableInput.requestedDelivery),
+        role: "system",
+        metadata: replayableInput.metadata,
+      });
+    }
+  }
+
+  private findLatestReplayableWorkerInput(agentId: string): ReplayableWorkerInput | null {
+    const messages = this.coreOrThrow().messageStore.list(agentId);
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+      const replayable = toReplayableWorkerInput(messages[index], agentId);
+      if (replayable) {
+        return replayable;
+      }
+    }
+
+    return null;
+  }
+
+  private recordConversationLog(event: ConversationLogEvent): void {
+    this.persistConversationLog(event);
+    this.emitConversationLog(event);
+  }
+
+  private async sendWorkerManagerSystemNote(agentId: string, text: string): Promise<void> {
+    const descriptor = this.lifecycle.getAgent(agentId);
+    if (!descriptor || descriptor.role !== "worker") {
+      return;
+    }
+
+    const manager = this.lifecycle.getAgent(descriptor.managerId);
+    if (!manager || manager.role !== "manager") {
+      return;
+    }
+
+    try {
+      await this.sendMessage(agentId, manager.agentId, text, "auto");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`[swarm] Failed to send worker system note for ${agentId}: ${message}`);
+    }
+  }
+
   private persistConversationLog(event: ConversationLogEvent): void {
     this.coreOrThrow().messageStore.append(event.agentId, {
       source: "system",
@@ -1267,6 +1583,12 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       return;
     }
 
+    if (this.suppressNextWorkerCompletionSummaryAgentIds.has(agentId)) {
+      this.pendingWorkerCompletionReportAgentIds.delete(agentId);
+      this.suppressNextWorkerCompletionSummaryAgentIds.delete(agentId);
+      return;
+    }
+
     const report = buildWorkerCompletionReport(
       descriptor,
       this.getConversationHistory(agentId),
@@ -1314,6 +1636,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     this.pendingWorkerCompletionReportAgentIds.delete(agentId);
     this.lastWorkerCompletionReportTimestampByAgentId.delete(agentId);
     this.suppressNextWorkerCompletionReportAgentIds.delete(agentId);
+    this.suppressNextWorkerCompletionSummaryAgentIds.delete(agentId);
+    this.workerRetryStateByAgentId.delete(agentId);
   }
 
   private async interruptSessionIfActive(agentId: string): Promise<boolean> {
@@ -1604,6 +1928,120 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     }
     return this.secretsEnvService;
   }
+}
+
+function readNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function formatRetryDelay(delayMs: number): string {
+  if (!Number.isFinite(delayMs) || delayMs <= 0) {
+    return "0s";
+  }
+
+  if (delayMs < 1000) {
+    return `${Math.round(delayMs)}ms`;
+  }
+
+  const seconds = delayMs / 1000;
+  return `${Number.isInteger(seconds) ? seconds.toFixed(0) : seconds.toFixed(1)}s`;
+}
+
+function formatRetryAttempt(attempt: number, maxAttempts: number | null): string {
+  if (maxAttempts && maxAttempts > 0) {
+    return `${attempt}/${maxAttempts}`;
+  }
+
+  return `${attempt}`;
+}
+
+function formatRetryAttemptsLabel(attemptCount: number): string {
+  return `${attemptCount} ${attemptCount === 1 ? "attempt" : "attempts"}`;
+}
+
+function formatRetryCount(attemptCount: number): string {
+  return `${attemptCount} transient provider ${attemptCount === 1 ? "retry" : "retries"}`;
+}
+
+function resolvePiAnthropicFallbackPreset(preset: SwarmModelPreset): SwarmModelPreset | undefined {
+  switch (preset) {
+    case "pi-opus":
+      return "claude-code";
+    case "pi-sonnet":
+      return "claude-code-sonnet";
+    case "pi-haiku":
+      return "claude-code-haiku";
+    default:
+      return undefined;
+  }
+}
+
+function toReplayableWorkerInput(
+  message: SwarmdMessage | undefined,
+  agentId: string,
+): ReplayableWorkerInput | null {
+  if (!message || message.role !== "system") {
+    return null;
+  }
+
+  const middleman = readObject(readObject(message.metadata)?.middleman);
+  const routing = readObject(middleman?.routing);
+  if (
+    readString(middleman?.renderAs) !== "hidden" ||
+    readString(middleman?.visibility) !== "internal" ||
+    readString(routing?.toAgentId) !== agentId
+  ) {
+    return null;
+  }
+
+  const fromAgentId = readString(routing?.fromAgentId);
+  const parts = readStoredContentParts(message.content);
+  if (!fromAgentId || parts.length === 0) {
+    return null;
+  }
+
+  return {
+    fromAgentId,
+    parts,
+    requestedDelivery: readRequestedDeliveryModeLocal(routing?.requestedDelivery) ?? "auto",
+    metadata: { ...(message.metadata ?? {}) },
+  };
+}
+
+function readStoredContentParts(content: unknown): ContentPart[] {
+  const contentObject = readObject(content);
+  if (!contentObject) {
+    return [];
+  }
+
+  if (Array.isArray(contentObject.parts)) {
+    return contentObject.parts.filter(isContentPart);
+  }
+
+  const text = readString(contentObject.text);
+  return text ? [{ type: "text", text }] : [];
+}
+
+function isContentPart(value: unknown): value is ContentPart {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
+
+  const part = value as Record<string, unknown>;
+  switch (part.type) {
+    case "text":
+      return typeof part.text === "string";
+    case "image":
+      return typeof part.mimeType === "string" && typeof part.data === "string";
+    case "file":
+      return typeof part.mimeType === "string";
+    default:
+      return false;
+  }
+}
+
+function readRequestedDeliveryModeLocal(value: unknown): RequestedDeliveryMode | undefined {
+  return value === "auto" || value === "followUp" || value === "steer" ? value : undefined;
 }
 
 function toContentParts(text: string, attachments: ConversationAttachment[]): ContentPart[] {

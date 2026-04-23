@@ -352,6 +352,8 @@ export class PiEventMapper {
         ];
       case "auto_compaction_start":
       case "auto_compaction_end":
+      case "auto_retry_start":
+      case "auto_retry_end":
         return [
           backendRawEvent({
             sessionId: this.sessionId,

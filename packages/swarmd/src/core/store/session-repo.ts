@@ -437,6 +437,56 @@ export class SessionRepo {
       });
   }
 
+  reconfigure(
+    sessionId: string,
+    input: {
+      backend: SessionRuntimeConfig["backend"];
+      cwd: string;
+      model: string;
+      systemPrompt: string;
+      runtimeConfig?: Pick<SessionRuntimeConfig, "deliveryDefaults" | "backendConfig">;
+      updatedAt?: string;
+    },
+  ): void {
+    this.db
+      .prepare<{
+        sessionId: string;
+        backend: SessionRuntimeConfig["backend"];
+        cwd: string;
+        model: string;
+        system_prompt: string;
+        runtime_config_json: string;
+        updated_at: string;
+      }>(
+        `UPDATE sessions
+         SET backend = @backend,
+             cwd = @cwd,
+             model = @model,
+             status = 'stopped',
+             system_prompt = @system_prompt,
+             backend_checkpoint_json = NULL,
+             runtime_config_json = @runtime_config_json,
+             last_error_json = NULL,
+             context_usage_json = NULL,
+             updated_at = @updated_at
+         WHERE id = @sessionId`,
+      )
+      .run({
+        sessionId,
+        backend: input.backend,
+        cwd: input.cwd,
+        model: input.model,
+        system_prompt: input.systemPrompt,
+        runtime_config_json: serializeJson({
+          ...(input.runtimeConfig?.deliveryDefaults
+            ? { deliveryDefaults: input.runtimeConfig.deliveryDefaults }
+            : {}),
+          backendConfig: { ...(input.runtimeConfig?.backendConfig ?? {}) },
+        }),
+        updated_at: input.updatedAt ?? nowTimestamp(),
+      });
+  }
+
   delete(id: string): void {
     const removeSession = this.db.transaction((sessionId: string) => {
       this.db.prepare("DELETE FROM operations WHERE session_id = ?").run(sessionId);

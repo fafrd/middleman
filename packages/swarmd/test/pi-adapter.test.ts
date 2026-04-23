@@ -272,6 +272,53 @@ describe("PiEventMapper", () => {
       }),
     ]);
   });
+
+  it("surfaces auto retry lifecycle events as backend raw events", () => {
+    const mapper = new PiEventMapper({
+      sessionId: "ses_pi",
+      threadId: "thr_pi",
+    });
+
+    const normalized = [
+      mapper.mapEvent({
+        type: "auto_retry_start",
+        attempt: 1,
+        maxAttempts: 3,
+        delayMs: 2_000,
+        errorMessage: "Codex error: server_error",
+      }),
+      mapper.mapEvent({
+        type: "auto_retry_end",
+        success: false,
+        attempt: 3,
+        finalError: "Codex error: server_error",
+      }),
+    ].flat();
+
+    expect(normalized).toEqual([
+      expect.objectContaining({
+        type: "backend.raw",
+        source: "backend",
+        payload: {
+          type: "auto_retry_start",
+          attempt: 1,
+          maxAttempts: 3,
+          delayMs: 2_000,
+          errorMessage: "Codex error: server_error",
+        },
+      }),
+      expect.objectContaining({
+        type: "backend.raw",
+        source: "backend",
+        payload: {
+          type: "auto_retry_end",
+          success: false,
+          attempt: 3,
+          finalError: "Codex error: server_error",
+        },
+      }),
+    ]);
+  });
 });
 
 describe("Pi delivery resolution", () => {
